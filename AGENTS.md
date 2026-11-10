@@ -87,6 +87,18 @@ qq-maid-common / reqwest / serde / tokio
 - 日志优先使用结构化字段，不要将关键上下文全部拼接进文案。
 - 高频轮询、心跳和空闲状态不得使用 `debug` 或更高级别持续刷屏，必要时使用 `trace`。
 
+## 许可证与版权边界
+
+- 根 `LICENSE` 为 MIT，同时保留上游 `kuliantnt` 与本项目作者的版权行，不得删除任一版权行。
+- `qq-maid-core/src/runtime/tools/memory/storage/dream.rs` 与 `qq-maid-core/src/runtime/tools/memory/dream/`
+  改编自 `xai-org/grok-build`，适用 Apache License 2.0。修改这两个位置时必须保留文件头部版权声明，
+  并同步更新 `THIRD_PARTY-NOTICES.md`。
+- `qq-maid-llm/assets/model-catalog.json` 与 `qq-maid-llm/assets/models-dev/` 派生自 Models.dev（MIT），
+  由 `converter.rs` 生成，不得手工编辑其内容以规避上游许可。
+- 新增第三方代码、素材或数据时，必须同时更新 `THIRD_PARTY-NOTICES.md`，并在 `LICENSES/` 下补齐对应许可证全文。
+- 不得引入与 MIT/Apache-2.0 不兼容的许可证（如 GPL 系列）依赖或代码片段。
+- 不得把上游作者的赞助商素材、推广返利链接、个人社群入口重新加回仓库。
+
 ## 重要业务与兼容性约束
 
 - Cargo 由根 workspace 统一管理：根 `Cargo.lock` 是唯一锁文件，release 产物位于根 `target/release/`；不要恢复子目录 `Cargo.lock` 或旧 `qq-maid-*/target/` 路径。

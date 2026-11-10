@@ -387,14 +387,6 @@ flowchart LR
 - [ ] 真正理解人类
 - [ ] 阻止作者继续重构
 
-## 赞助小店
-
-项目接受小额赞助或相关服务合作。具体介绍和链接后续补齐。
-
-| 名称 | 说明 |
-| --- | --- |
-| <a href="https://codexauv.com/register?aff=UNKHTN42CDRT"><img src="docs/img/AUV_LOGO.png" alt="CodexAuv" width="200" /></a> | [CodexAuv](https://codexauv.com/register?aff=UNKHTN42CDRT) 提供面向开发者和企业团队的 AI 模型聚合与机器人托管服务 |
-
 ## 你可能不需要它，如果：
 
 - 你只想要一个十行 Python 自动回复脚本
@@ -405,11 +397,28 @@ flowchart LR
 
 ## License
 
-本项目基于 [MIT License](./LICENSE) 开源。
+本项目基于 [MIT License](./LICENSE) 开源，Copyright (c) 2026 kuliantnt 与 2026 费加。
 
-## 社区
+本项目是 [`kuliantnt/qq-maid-bot`](https://github.com/kuliantnt/qq-maid-bot) 的衍生作品，fork 自上游 v0.26.1
+（commit `7af34fd`）。根据 MIT License 条款，上游原始版权声明已保留。
 
-有问题、建议，或想一起折腾？欢迎来 **[雪主任的工坊](https://qm.qq.com/q/sXg1SaKJXi)** 社区交流反馈。
+仓库内包含少量以 **Apache License 2.0** 授权的衍生代码（Dream 实现），以及以 MIT 授权的
+Models.dev 模型元数据；两部分分别适用各自的许可证，不适用本项目的 MIT 条款。完整清单见
+[THIRD_PARTY-NOTICES.md](./THIRD_PARTY-NOTICES.md)。
+
+## 社区与上游
+
+本项目 fork 自 [`kuliantnt/qq-maid-bot`](https://github.com/kuliantnt/qq-maid-bot)，遵循 MIT License 保留原始版权声明。
+
+上游项目的功能疑问、缺陷反馈与社群入口请前往上游仓库；本仓库只承载本项目的改造内容。
+
+## 致谢
+
+- 上游项目「小女仆机器人」作者 kuliantnt 及全部贡献者
+- Models.dev 提供的模型元数据（MIT）
+- `xai-org/grok-build` 的 Dream 实现（Apache-2.0）
+
+完整第三方版权与许可信息见 [THIRD_PARTY-NOTICES.md](./THIRD_PARTY-NOTICES.md)。
 
 
 <!--

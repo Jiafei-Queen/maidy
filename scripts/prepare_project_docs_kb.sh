@@ -26,8 +26,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEFAULT_OUT="$REPO_ROOT/runtime/config/knowledge/project_docs"
 WIKI_URL="${WIKI_URL:-https://github.com/kuliantnt/qq-maid-bot.wiki.git}"
 WIKI_CACHE="${WIKI_CACHE:-${XDG_CACHE_HOME:-${HOME:?HOME 未设置}/.cache}/qq-maid-bot/wiki}"
-QQ_GROUP_URL="${QQ_GROUP_URL:-https://qm.qq.com/q/iAZxBO66EE}"
-QQ_GROUP_NAME="${QQ_GROUP_NAME:-雪主任的工坊}"
+# 上游作者社群信息已移除；本项目如需社群入口，请在此处或通过环境变量提供自己的地址。
+QQ_GROUP_URL="${QQ_GROUP_URL:-}"
+QQ_GROUP_NAME="${QQ_GROUP_NAME:-}"
 MARKER_NAME=".qq-maid-project-docs-kb"
 MARKER_CONTENT="qq-maid-project-docs-kb-v1"
 
@@ -232,7 +233,7 @@ index_lines = [
     "",
     f"> 同步日期：{sync_date}",
     "> 来源：GitHub Wiki + CHANGELOG",
-    f"> 交流群：{group_name} {group_url}",
+    *([f"> 交流群：{group_name} {group_url}"] if group_name or group_url else []),
     "",
     "本目录存放项目公开 Wiki 与变更日志，供机器人本地知识检索使用。",
     "不包含私有 prompt、真实群聊、密钥或用户数据。",
@@ -315,7 +316,7 @@ recent_only = [
     "# 小女仆机器人最近更新摘要",
     "",
     f"> 同步日期：{sync_date}",
-    f"> 交流群：{group_name} {group_url}",
+    *([f"> 交流群：{group_name} {group_url}"] if group_name or group_url else []),
     "",
     "## 最近版本",
     "",

@@ -173,3 +173,10 @@ commit message 使用简洁中文，格式为：
 ## License
 
 贡献的代码将采用与项目一致的 [MIT License](./LICENSE)。
+
+提交贡献即表示你确认自己有权提交该内容，并同意其以上述许可证发布。
+
+注意：仓库内 `qq-maid-core/src/runtime/tools/memory/storage/dream.rs` 与
+`qq-maid-core/src/runtime/tools/memory/dream/` 属于改编自 `xai-org/grok-build` 的文件，
+适用 **Apache License 2.0** 而非 MIT。修改这些文件时需同时保留其文件头部的版权声明。
+详见 [THIRD_PARTY-NOTICES.md](./THIRD_PARTY-NOTICES.md)。
