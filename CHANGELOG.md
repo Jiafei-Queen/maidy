@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Added
+
+* 新增 OpenAI Speech TTS：`TTS_PROVIDER=openai` 使用独立 `OPENAI_TTS_API_KEY`，默认 `tts-1` / `alloy`，返回的 mp3 以 Base64 `file_data` 直传 QQ 语音；千问 URL 投递保持不变，失败仍回退原始文字。
+
 ## [v0.26.1] - 2026-10-23
 
 ### Added

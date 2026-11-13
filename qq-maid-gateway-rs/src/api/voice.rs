@@ -1,14 +1,19 @@
-//! QQ 官方语音 URL 上传与发送。
+//! QQ 官方语音上传与发送。
 //!
-//! 第一版只接受 Provider 给出的 HTTP(S) URL：在当前私聊/群聊目标下用
-//! `file_type=3` 上传，再把同一目标返回的 `file_info` 作为 `msg_type=7` 发送。
-//! 不下载音频、不发送 `file_data`，也不缓存或跨场景复用 `file_info`。
+//! Provider 可以直接给出 HTTP(S) URL，也可以给出音频字节。URL 在当前私聊/群聊
+//! 目标下用 `file_type=3` 上传；字节以 Base64 `file_data` 直传（QQ 限制 5 MiB）。
+//! 两者都取得同一目标返回的 `file_info` 后，再以 `msg_type=7` 发送，不缓存或跨场景
+//! 复用 `file_info`。
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{info, warn};
 
 use super::{ApiError, QqApiClient, SendResult};
+
+/// QQ 语音二进制直传上限约 5 MiB；上传层保留最终防线，Provider 侧会更早拦截。
+const MAX_VOICE_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 
 #[derive(Clone, Serialize, PartialEq, Eq)]
 pub struct VoiceMedia {
@@ -50,6 +55,14 @@ impl VoiceScene {
 struct VoiceUploadPayload<'a> {
     file_type: u8,
     url: &'a str,
+    srv_send_msg: bool,
+}
+
+#[derive(Serialize)]
+struct VoiceFileUploadPayload<'a> {
+    file_type: u8,
+    file_name: &'a str,
+    file_data: String,
     srv_send_msg: bool,
 }
 
@@ -111,6 +124,36 @@ impl QqApiClient {
             .map_err(|error| ApiError::VoiceSend(Box::new(error)))
     }
 
+    pub async fn send_c2c_voice_file(
+        &self,
+        user_openid: &str,
+        msg_id: Option<&str>,
+        bytes: &[u8],
+        file_name: &str,
+    ) -> SendResult {
+        let authorization = self
+            .auth
+            .authorization_header()
+            .await
+            .map_err(ApiError::from)
+            .map_err(|error| ApiError::VoiceUpload(Box::new(error)))?;
+        let media = upload_voice_file(
+            &self.client,
+            &self.api_base,
+            VoiceScene::C2c,
+            user_openid,
+            &authorization,
+            bytes,
+            file_name,
+        )
+        .await
+        .map_err(|error| ApiError::VoiceUpload(Box::new(error)))?;
+        let payload = build_c2c_voice_payload(&media, msg_id, self.next_msg_seq());
+        self.post_c2c_message(user_openid, msg_id, "voice", &payload)
+            .await
+            .map_err(|error| ApiError::VoiceSend(Box::new(error)))
+    }
+
     pub async fn send_group_voice_url(
         &self,
         group_openid: &str,
@@ -138,6 +181,36 @@ impl QqApiClient {
             .await
             .map_err(|error| ApiError::VoiceSend(Box::new(error)))
     }
+
+    pub async fn send_group_voice_file(
+        &self,
+        group_openid: &str,
+        msg_id: Option<&str>,
+        bytes: &[u8],
+        file_name: &str,
+    ) -> SendResult {
+        let authorization = self
+            .auth
+            .authorization_header()
+            .await
+            .map_err(ApiError::from)
+            .map_err(|error| ApiError::VoiceUpload(Box::new(error)))?;
+        let media = upload_voice_file(
+            &self.client,
+            &self.api_base,
+            VoiceScene::Group,
+            group_openid,
+            &authorization,
+            bytes,
+            file_name,
+        )
+        .await
+        .map_err(|error| ApiError::VoiceUpload(Box::new(error)))?;
+        let payload = build_group_voice_payload(&media, msg_id, self.next_msg_seq());
+        self.post_group_message(group_openid, msg_id, "voice", &payload)
+            .await
+            .map_err(|error| ApiError::VoiceSend(Box::new(error)))
+    }
 }
 
 async fn upload_voice_url(
@@ -149,27 +222,95 @@ async fn upload_voice_url(
     audio_url: &str,
 ) -> Result<VoiceMedia, ApiError> {
     validate_audio_url(audio_url)?;
-    let endpoint = format!(
+    let endpoint = voice_files_endpoint(api_base, scene, peer_id);
+    post_voice_upload(
+        client,
+        &endpoint,
+        authorization,
+        &VoiceUploadPayload {
+            file_type: 3,
+            url: audio_url,
+            srv_send_msg: false,
+        },
+        scene,
+        "url",
+    )
+    .await
+}
+
+/// 二进制语音走 `/files` 的 `file_data` 直传；QQ 限制 5 MiB，超出需要走分片上传。
+async fn upload_voice_file(
+    client: &reqwest::Client,
+    api_base: &str,
+    scene: VoiceScene,
+    peer_id: &str,
+    authorization: &str,
+    bytes: &[u8],
+    file_name: &str,
+) -> Result<VoiceMedia, ApiError> {
+    if bytes.is_empty() {
+        return Err(ApiError::InvalidMedia("cannot upload empty voice audio"));
+    }
+    if bytes.len() > MAX_VOICE_UPLOAD_BYTES {
+        return Err(ApiError::InvalidMedia("voice audio exceeds 5 MiB"));
+    }
+    let file_name = file_name.trim();
+    if file_name.is_empty() || file_name.contains(['/', '\\']) {
+        return Err(ApiError::InvalidMedia(
+            "voice audio has an invalid file name",
+        ));
+    }
+    let endpoint = voice_files_endpoint(api_base, scene, peer_id);
+    post_voice_upload(
+        client,
+        &endpoint,
+        authorization,
+        &VoiceFileUploadPayload {
+            file_type: 3,
+            file_name,
+            file_data: STANDARD.encode(bytes),
+            srv_send_msg: false,
+        },
+        scene,
+        "file",
+    )
+    .await
+}
+
+fn voice_files_endpoint(api_base: &str, scene: VoiceScene, peer_id: &str) -> String {
+    format!(
         "{}/v2/{}/{}/files",
         api_base.trim_end_matches('/'),
         scene.endpoint_prefix(),
         peer_id
-    );
+    )
+}
+
+async fn post_voice_upload<T: Serialize>(
+    client: &reqwest::Client,
+    endpoint: &str,
+    authorization: &str,
+    payload: &T,
+    scene: VoiceScene,
+    stage: &'static str,
+) -> Result<VoiceMedia, ApiError> {
     let response = client
         .post(endpoint)
         .header("Authorization", authorization)
-        .json(&VoiceUploadPayload {
-            file_type: 3,
-            url: audio_url,
-            srv_send_msg: false,
-        })
+        .json(payload)
         .send()
         .await
         .map_err(ApiError::Http)?;
     let status = response.status();
     if !status.is_success() {
+        // 错误体可能回显请求信息；不读取正文即可完成阶段化分类。
         let _ = response.bytes().await;
-        warn!(scene = scene.label(), status = %status, "QQ 语音 URL 上传返回非成功状态码");
+        warn!(
+            scene = scene.label(),
+            stage = stage,
+            status = %status,
+            "QQ 语音上传返回非成功状态码"
+        );
         return Err(ApiError::Status {
             status,
             body: String::new(),
@@ -185,7 +326,7 @@ async fn upload_voice_url(
             "voice upload response missing file_info",
         ));
     }
-    info!(scene = scene.label(), "QQ 语音上传成功");
+    info!(scene = scene.label(), stage = stage, "QQ 语音上传成功");
     Ok(VoiceMedia {
         file_info: file_info.to_owned(),
     })
@@ -279,6 +420,72 @@ mod tests {
             drop(uploads);
         }
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn mp3_bytes_are_uploaded_as_base64_file_data_for_c2c_and_group() {
+        let (base, state, task) = mock_server().await;
+        let audio = b"ID3mock-mp3-audio";
+        for (scene, peer, expected_path) in [
+            (VoiceScene::C2c, "user-1", "users/user-1"),
+            (VoiceScene::Group, "group-1", "groups/group-1"),
+        ] {
+            let media = upload_voice_file(
+                &qq_maid_common::http_client::client(),
+                &base,
+                scene,
+                peer,
+                "QQBot test-token",
+                audio,
+                "voice.mp3",
+            )
+            .await
+            .unwrap();
+            assert_eq!(media.file_info, "voice-file-info");
+            let uploads = state.uploads.lock().unwrap();
+            let (path, payload) = uploads.last().unwrap();
+            assert_eq!(path, expected_path);
+            assert_eq!(payload["file_type"], 3);
+            assert_eq!(payload["file_name"], "voice.mp3");
+            assert_eq!(payload["file_data"], STANDARD.encode(audio));
+            assert_eq!(payload["srv_send_msg"], false);
+            assert!(payload.get("url").is_none());
+            drop(uploads);
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn voice_file_rejects_empty_or_unsafe_input_before_upload() {
+        let client = qq_maid_common::http_client::client();
+        assert!(matches!(
+            upload_voice_file(
+                &client,
+                "http://127.0.0.1:1",
+                VoiceScene::C2c,
+                "user-1",
+                "token",
+                b"",
+                "voice.mp3",
+            )
+            .await,
+            Err(ApiError::InvalidMedia(_))
+        ));
+        for file_name in ["", "../voice.mp3", "dir/voice.mp3"] {
+            assert!(matches!(
+                upload_voice_file(
+                    &client,
+                    "http://127.0.0.1:1",
+                    VoiceScene::C2c,
+                    "user-1",
+                    "token",
+                    b"audio",
+                    file_name,
+                )
+                .await,
+                Err(ApiError::InvalidMedia(_))
+            ));
+        }
     }
 
     #[test]

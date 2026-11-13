@@ -24,10 +24,11 @@ function ttsField(key: string, savedValue: unknown): ConfigFieldSnapshot {
 }
 
 describe("TTS Provider 下拉", () => {
-  it("映射关闭与千问", () => {
+  it("映射关闭、千问与 OpenAI", () => {
     expect(ttsProviderOptions("qwen")).toEqual([
       ["disabled", "关闭"],
       ["qwen", "千问"],
+      ["openai", "OpenAI"],
     ]);
   });
 
@@ -42,6 +43,7 @@ describe("TTS 数字范围", () => {
     expect(ttsNumberRange("delivery.tts.request_timeout_seconds")).toEqual([1, 120]);
     expect(ttsNumberRange("delivery.tts.max_text_chars")).toEqual([1, 600]);
     expect(ttsNumberRange("delivery.tts.qwen_model")).toBeNull();
+    expect(ttsNumberRange("delivery.tts.openai_model")).toBeNull();
   });
 
   it("拒绝空值、越界值和小数", () => {

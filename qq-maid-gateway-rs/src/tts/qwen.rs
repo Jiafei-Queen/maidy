@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::time::timeout;
 
-use super::{TtsError, TtsFuture, TtsProvider};
+use super::{TtsAudio, TtsError, TtsFuture, TtsProvider};
 
 #[derive(Clone)]
 pub struct QwenTtsConfig {
@@ -72,7 +72,7 @@ impl QwenTtsProvider {
         Self { client, config }
     }
 
-    async fn synthesize_inner(&self, text: &str) -> Result<String, TtsError> {
+    async fn synthesize_inner(&self, text: &str) -> Result<TtsAudio, TtsError> {
         let text = text.trim();
         if text.is_empty() {
             return Err(TtsError::EmptyText);
@@ -120,7 +120,7 @@ impl QwenTtsProvider {
                 .filter(|url| !url.is_empty())
                 .ok_or(TtsError::InvalidResponse)?;
             validate_audio_url(&audio_url)?;
-            Ok(audio_url)
+            Ok(TtsAudio::Url(audio_url))
         };
         timeout(self.config.request_timeout, request)
             .await

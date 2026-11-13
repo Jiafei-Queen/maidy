@@ -105,6 +105,10 @@ enum FakeCall {
     },
     Image,
     Voice(String),
+    VoiceFile {
+        bytes: Vec<u8>,
+        file_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -195,6 +199,32 @@ impl OutboundSender for FakeOutboundSender {
             }
         })
     }
+
+    fn send_voice_file<'a>(
+        &'a self,
+        _target: &'a C2cReplyTarget,
+        bytes: &'a [u8],
+        file_name: &'a str,
+    ) -> SendFuture<'a> {
+        Box::pin(async move {
+            self.calls.lock().unwrap().push(FakeCall::VoiceFile {
+                bytes: bytes.to_vec(),
+                file_name: file_name.to_owned(),
+            });
+            match *self.voice_failure.lock().unwrap() {
+                Some(FakeVoiceFailure::Upload) => Err(ApiError::VoiceUpload(Box::new(
+                    ApiError::InvalidMedia("mock upload failure"),
+                ))),
+                Some(FakeVoiceFailure::Send) => Err(ApiError::VoiceSend(Box::new(
+                    ApiError::InvalidMedia("mock send failure"),
+                ))),
+                None => Ok(SendMessageIds {
+                    message_id: Some("voice-file-id".to_owned()),
+                    ref_index_id: None,
+                }),
+            }
+        })
+    }
 }
 
 async fn qwen_mock_server(
@@ -250,9 +280,41 @@ fn enable_mock_qwen(config: &mut AppConfig, base_url: String) {
         qwen_base_url: base_url,
         qwen_model: "qwen3-tts-flash".to_owned(),
         qwen_voice: "Cherry".to_owned(),
+        openai_api_key: None,
+        openai_base_url: qq_maid_core::config::DEFAULT_OPENAI_TTS_BASE_URL.to_owned(),
+        openai_model: qq_maid_core::config::DEFAULT_OPENAI_TTS_MODEL.to_owned(),
+        openai_voice: qq_maid_core::config::DEFAULT_OPENAI_TTS_VOICE.to_owned(),
         request_timeout: Duration::from_secs(1),
         max_text_chars: 600,
     };
+}
+
+fn enable_mock_openai(config: &mut AppConfig, base_url: String) {
+    config.voice = VoiceFeatureConfig {
+        provider: TtsProviderMode::OpenAi,
+        status: VoiceFeatureStatus::Available,
+        qwen_api_key: None,
+        qwen_base_url: qq_maid_core::config::DEFAULT_QWEN_TTS_BASE_URL.to_owned(),
+        qwen_model: qq_maid_core::config::DEFAULT_QWEN_TTS_MODEL.to_owned(),
+        qwen_voice: qq_maid_core::config::DEFAULT_QWEN_TTS_VOICE.to_owned(),
+        openai_api_key: Some("test-key".to_owned()),
+        openai_base_url: base_url,
+        openai_model: "tts-1".to_owned(),
+        openai_voice: "alloy".to_owned(),
+        request_timeout: Duration::from_secs(1),
+        max_text_chars: 600,
+    };
+}
+
+async fn openai_mock_server() -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let app = Router::new().route(
+        "/speech",
+        post(|| async { (StatusCode::OK, b"ID3mock-mp3-audio".to_vec()) }),
+    );
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{address}/speech"), task)
 }
 
 fn voice_response() -> CoreResponse {
@@ -301,6 +363,37 @@ async fn voice_delivery_uses_common_speakable_markdown_and_skips_text_send_on_su
     assert_eq!(
         requests.lock().unwrap()[0]["input"]["text"],
         "应朗读的标题\n\n· 项目主页"
+    );
+    assert_eq!(fallback_text, "平台文字 fallback");
+    assert_eq!(response, original);
+}
+
+#[tokio::test]
+async fn openai_voice_delivery_sends_synthesized_file_without_text_fallback() {
+    let (base_url, task) = openai_mock_server().await;
+    let mut config = test_config();
+    enable_mock_openai(&mut config, base_url);
+    let sender = FakeOutboundSender::default();
+    let response = voice_response();
+    let original = response.clone();
+
+    let (_, fallback_text) = send_c2c_respond_response_with_sender(
+        &sender,
+        &c2c_message(),
+        &response,
+        &config,
+        &ReplyCapability::qq_official_c2c(&config),
+    )
+    .await
+    .unwrap();
+    task.abort();
+
+    assert_eq!(
+        sender.calls(),
+        vec![FakeCall::VoiceFile {
+            bytes: b"ID3mock-mp3-audio".to_vec(),
+            file_name: "voice.mp3".to_owned(),
+        }]
     );
     assert_eq!(fallback_text, "平台文字 fallback");
     assert_eq!(response, original);
