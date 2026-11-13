@@ -19,10 +19,12 @@ import {
   type AgentSceneName,
 } from "./agent-draft.js";
 import {
+  WEB_SEARCH_CREDENTIALS,
   readAgentWebSearchConfig,
-  tavilyCredentialNotice,
   webSearchBackendLabel,
+  webSearchCredentialNotice,
   type AgentWebSearchBackend,
+  type AgentWebSearchTimeRange,
 } from "./agent-web-search.js";
 import { ModelRouteEditor } from "./model-route-editor.js";
 import type { ConfigurationBusinessGroup } from "./configuration-navigation.js";
@@ -37,6 +39,8 @@ const WEB_SEARCH_BACKEND_OPTIONS: ReadonlyArray<readonly [AgentWebSearchBackend,
   ["provider_native", "Provider 原生搜索"],
   ["tavily", "Tavily"],
   ["deepseek", "DeepSeek Search"],
+  ["exa", "Exa"],
+  ["firecrawl", "Firecrawl"],
   ["disabled", "关闭联网搜索"],
 ];
 
@@ -45,10 +49,10 @@ const SELECT_CLASS = "rounded-console border border-line bg-input px-3 py-2 text
 /**
  * Agent 策略结构化编辑器：知识检索、联网搜索、模型路线与场景白名单。
  *
- * 保存契约与旧版一致：完整保存提交 set_knowledge / set_web_search /
- * set_model_route / set_search_route / set_scene 操作序列；场景白名单另支持
- * 按场景单独保存。草稿跨业务域 Tab 共享，revision 变化（保存成功或外部修改）
- * 后以服务端返回为准重建。
+ * 保存契约：完整保存提交 set_knowledge / set_web_search / set_web_search_exa /
+ * set_web_search_firecrawl / set_model_route / set_search_route / set_scene 操作序列；
+ * 场景白名单另支持按场景单独保存。草稿跨业务域 Tab 共享，revision 变化（保存成功或
+ * 外部修改）后以服务端返回为准重建。
  */
 export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapshot; group: ConfigurationBusinessGroup }) {
   const queryClient = useQueryClient();
@@ -64,8 +68,11 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
     setDraft(agent && agent.fileExists ? createAgentDraft(agent) : null);
   }
 
-  const tavilyKeyConfigured = snapshot.fields.some(
-    (field) => field.key === "tools.web_search.tavily.api_key" && field.configured,
+  const webSearchCredentials: Partial<Record<AgentWebSearchBackend, boolean>> = Object.fromEntries(
+    WEB_SEARCH_CREDENTIALS.map((credential) => [
+      credential.backend,
+      snapshot.fields.some((field) => field.key === credential.key && field.configured),
+    ]),
   );
 
   const saveMutation = useMutation({
@@ -159,7 +166,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
       ) : null}
 
       {showWebSearch ? (
-        <WebSearchSection draft={draft} onDraftChange={setDraft} editable={editable} tavilyKeyConfigured={tavilyKeyConfigured} runningValue={runningDocument} />
+        <WebSearchSection draft={draft} onDraftChange={setDraft} editable={editable} credentials={webSearchCredentials} runningValue={runningDocument} />
       ) : null}
 
       {showRoutes ? (
@@ -216,20 +223,26 @@ const SCENE_SEARCH_ROUTE_FIELDS: ReadonlyArray<readonly ["private_search" | "gro
   ["group_search", "群聊搜索路线"],
 ];
 
-/** 联网搜索表单：后端、Tavily 参数、超时链与凭据状态提示。 */
-function WebSearchSection({ draft, onDraftChange, editable, tavilyKeyConfigured, runningValue }: {
+/** 联网搜索表单：后端、共享参数、Tavily/Exa/Firecrawl 参数、超时链与凭据状态。 */
+function WebSearchSection({ draft, onDraftChange, editable, credentials, runningValue }: {
   draft: AgentDraft;
   onDraftChange: (draft: AgentDraft) => void;
   editable: boolean;
-  tavilyKeyConfigured: boolean;
+  credentials: Partial<Record<AgentWebSearchBackend, boolean>>;
   runningValue: unknown;
 }) {
   const webSearch = draft.webSearch;
   const runningBackend = readAgentWebSearchConfig(runningValue).backend;
   const backendPendingRestart = runningBackend !== webSearch.backend;
-  const notice = tavilyCredentialNotice(webSearch.backend, tavilyKeyConfigured);
+  const notice = webSearchCredentialNotice(webSearch.backend, credentials);
+  const credential = WEB_SEARCH_CREDENTIALS.find((item) => item.backend === webSearch.backend);
   const patch = (changes: Partial<AgentDraft["webSearch"]>) =>
     onDraftChange({ ...draft, webSearch: { ...webSearch, ...changes } });
+  const patchExa = (changes: Partial<AgentDraft["webSearch"]["exa"]>) =>
+    patch({ exa: { ...webSearch.exa, ...changes } });
+  const patchFirecrawl = (changes: Partial<AgentDraft["webSearch"]["firecrawl"]>) =>
+    patch({ firecrawl: { ...webSearch.firecrawl, ...changes } });
+  const timeRangeValue = (value: AgentWebSearchTimeRange | null) => value ?? "";
 
   return (
     <section aria-label="联网搜索" className="flex flex-col gap-3">
@@ -253,7 +266,7 @@ function WebSearchSection({ draft, onDraftChange, editable, tavilyKeyConfigured,
           </select>
         )}
       </Field>
-      {webSearch.backend === "deepseek" && <p>DeepSeek Search 复用 DeepSeek API Key 和 Base URL，无需搜索模型路线。仅使用查询词与结果数；Tavily 专属参数不生效。</p>}
+      {webSearch.backend === "deepseek" && <p>DeepSeek Search 复用 DeepSeek API Key 和 Base URL，无需搜索模型路线。仅使用查询词与结果数；Tavily/Exa/Firecrawl 专属参数不生效。</p>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="搜索结果数" id="agent-web-search-max-results" hint="1 到 10 之间的整数">
           {(props) => (
@@ -266,52 +279,6 @@ function WebSearchSection({ draft, onDraftChange, editable, tavilyKeyConfigured,
               value={String(webSearch.maxResults)}
               onChange={(event) => patch({ maxResults: Number(event.target.value) })}
             />
-          )}
-        </Field>
-        <Field label="Tavily 搜索深度" id="agent-web-search-depth">
-          {(props) => (
-            <select
-              {...props}
-              disabled={!editable}
-              value={webSearch.searchDepth}
-              onChange={(event) => patch({ searchDepth: event.target.value === "advanced" ? "advanced" : "basic" })}
-              className={SELECT_CLASS}
-            >
-              <option value="basic">basic</option>
-              <option value="advanced">advanced</option>
-            </select>
-          )}
-        </Field>
-        <Field label="Tavily 主题" id="agent-web-search-topic">
-          {(props) => (
-            <select
-              {...props}
-              disabled={!editable}
-              value={webSearch.topic}
-              onChange={(event) => patch({ topic: event.target.value as AgentDraft["webSearch"]["topic"] })}
-              className={SELECT_CLASS}
-            >
-              <option value="general">通用</option>
-              <option value="news">新闻</option>
-              <option value="finance">金融</option>
-            </select>
-          )}
-        </Field>
-        <Field label="Tavily 时间范围" id="agent-web-search-time-range">
-          {(props) => (
-            <select
-              {...props}
-              disabled={!editable}
-              value={webSearch.timeRange ?? ""}
-              onChange={(event) => patch({ timeRange: event.target.value === "" ? null : event.target.value as AgentDraft["webSearch"]["timeRange"] })}
-              className={SELECT_CLASS}
-            >
-              <option value="">不限</option>
-              <option value="day">最近一天</option>
-              <option value="week">最近一周</option>
-              <option value="month">最近一月</option>
-              <option value="year">最近一年</option>
-            </select>
           )}
         </Field>
         <Field label="连接超时（秒）" id="agent-web-search-connect-timeout">
@@ -351,16 +318,252 @@ function WebSearchSection({ draft, onDraftChange, editable, tavilyKeyConfigured,
           )}
         </Field>
       </div>
-      <p
-        aria-live="polite"
-        className={`m-0 text-xs leading-relaxed ${notice ? "font-semibold text-warning" : "text-muted"}`}
-      >
-        {notice
-          ? notice
-          : tavilyKeyConfigured
-            ? "Tavily API Key：已配置。密钥保存在安全配置中心，不会写入 agent.toml 或回传浏览器。"
-            : "Tavily API Key：未配置。可在“联网与工具”中配置；未选择 Tavily 时不影响其他搜索后端。"}
-      </p>
+
+      {webSearch.backend === "tavily" ? (
+        <div className="flex flex-col gap-3 border-t border-line-inner pt-4">
+          <h4 className="m-0 text-sm font-bold">Tavily 参数</h4>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="搜索深度" id="agent-web-search-depth">
+              {(props) => (
+                <select
+                  {...props}
+                  disabled={!editable}
+                  value={webSearch.searchDepth}
+                  onChange={(event) => patch({ searchDepth: event.target.value === "advanced" ? "advanced" : "basic" })}
+                  className={SELECT_CLASS}
+                >
+                  <option value="basic">basic</option>
+                  <option value="advanced">advanced</option>
+                </select>
+              )}
+            </Field>
+            <Field label="主题" id="agent-web-search-topic">
+              {(props) => (
+                <select
+                  {...props}
+                  disabled={!editable}
+                  value={webSearch.topic}
+                  onChange={(event) => patch({ topic: event.target.value as AgentDraft["webSearch"]["topic"] })}
+                  className={SELECT_CLASS}
+                >
+                  <option value="general">通用</option>
+                  <option value="news">新闻</option>
+                  <option value="finance">金融</option>
+                </select>
+              )}
+            </Field>
+            <Field label="时间范围" id="agent-web-search-time-range">
+              {(props) => (
+                <select
+                  {...props}
+                  disabled={!editable}
+                  value={timeRangeValue(webSearch.timeRange)}
+                  onChange={(event) => patch({ timeRange: event.target.value === "" ? null : event.target.value as AgentWebSearchTimeRange })}
+                  className={SELECT_CLASS}
+                >
+                  <option value="">不限</option>
+                  <option value="day">最近一天</option>
+                  <option value="week">最近一周</option>
+                  <option value="month">最近一月</option>
+                  <option value="year">最近一年</option>
+                </select>
+              )}
+            </Field>
+          </div>
+        </div>
+      ) : null}
+
+      {webSearch.backend === "exa" ? (
+        <div className="flex flex-col gap-3 border-t border-line-inner pt-4">
+          <h4 className="m-0 text-sm font-bold">Exa 参数</h4>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="搜索模式" id="agent-exa-search-type" hint="auto 平衡质量与延迟">
+              {(props) => (
+                <select {...props} disabled={!editable} value={webSearch.exa.searchType}
+                  onChange={(event) => patchExa({ searchType: event.target.value as AgentDraft["webSearch"]["exa"]["searchType"] })}
+                  className={SELECT_CLASS}>
+                  <option value="auto">auto</option>
+                  <option value="lite">lite</option>
+                  <option value="deep-lite">deep-lite</option>
+                  <option value="deep">deep</option>
+                </select>
+              )}
+            </Field>
+            <Field label="内容分类" id="agent-exa-category">
+              {(props) => (
+                <select {...props} disabled={!editable} value={webSearch.exa.category}
+                  onChange={(event) => patchExa({ category: event.target.value as AgentDraft["webSearch"]["exa"]["category"] })}
+                  className={SELECT_CLASS}>
+                  <option value="">不限定</option>
+                  <option value="company">公司</option>
+                  <option value="publication">学术出版物</option>
+                  <option value="news">新闻</option>
+                  <option value="personal site">个人站点</option>
+                  <option value="financial report">财报</option>
+                  <option value="people">人物</option>
+                </select>
+              )}
+            </Field>
+            <Field label="内容提取" id="agent-exa-contents">
+              {(props) => (
+                <select {...props} disabled={!editable} value={webSearch.exa.contents}
+                  onChange={(event) => patchExa({ contents: event.target.value as AgentDraft["webSearch"]["exa"]["contents"] })}
+                  className={SELECT_CLASS}>
+                  <option value="highlights">highlights（相关片段）</option>
+                  <option value="summary">summary（摘要）</option>
+                  <option value="text">text（正文）</option>
+                </select>
+              )}
+            </Field>
+            <Field label="正文最大字符数" id="agent-exa-text-max" hint="仅 text 模式生效，留空使用服务端默认">
+              {(props) => (
+                <Input {...props} type="number" min={1} max={1_000_000} disabled={!editable || webSearch.exa.contents !== "text"}
+                  value={webSearch.exa.textMaxCharacters === null ? "" : String(webSearch.exa.textMaxCharacters)}
+                  onChange={(event) => patchExa({ textMaxCharacters: event.target.value === "" ? null : Number(event.target.value) })} />
+              )}
+            </Field>
+            <Field label="缓存时效（小时）" id="agent-exa-max-age" hint="-1 仅用缓存，0 实时抓取，1–720">
+              {(props) => (
+                <Input {...props} type="number" min={-1} max={720} disabled={!editable}
+                  value={webSearch.exa.maxAgeHours === null ? "" : String(webSearch.exa.maxAgeHours)}
+                  onChange={(event) => patchExa({ maxAgeHours: event.target.value === "" ? null : Number(event.target.value) })} />
+              )}
+            </Field>
+            <Field label="默认时间范围" id="agent-exa-time-range">
+              {(props) => (
+                <select {...props} disabled={!editable} value={timeRangeValue(webSearch.exa.timeRange)}
+                  onChange={(event) => patchExa({ timeRange: event.target.value === "" ? null : event.target.value as AgentWebSearchTimeRange })}
+                  className={SELECT_CLASS}>
+                  <option value="">不限</option>
+                  <option value="day">最近一天</option>
+                  <option value="week">最近一周</option>
+                  <option value="month">最近一月</option>
+                  <option value="year">最近一年</option>
+                </select>
+              )}
+            </Field>
+            <Field label="限定域名" id="agent-exa-include-domains" hint="逗号分隔；与排除域名互斥">
+              {(props) => (
+                <Input {...props} disabled={!editable} value={webSearch.exa.includeDomains}
+                  onChange={(event) => patchExa({ includeDomains: event.target.value })} />
+              )}
+            </Field>
+            <Field label="排除域名" id="agent-exa-exclude-domains" hint="逗号分隔；与限定域名互斥">
+              {(props) => (
+                <Input {...props} disabled={!editable} value={webSearch.exa.excludeDomains}
+                  onChange={(event) => patchExa({ excludeDomains: event.target.value })} />
+              )}
+            </Field>
+            <Field label="用户地区" id="agent-exa-user-location" hint="两位国家码，例如 CN；留空不指定">
+              {(props) => (
+                <Input {...props} maxLength={2} disabled={!editable} value={webSearch.exa.userLocation}
+                  onChange={(event) => patchExa({ userLocation: event.target.value })} />
+              )}
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input type="checkbox" disabled={!editable} checked={webSearch.exa.moderation}
+              onChange={(event) => patchExa({ moderation: event.target.checked })}
+              className="size-3.5 accent-[var(--console-accent)]" />
+            内容审核
+          </label>
+        </div>
+      ) : null}
+
+      {webSearch.backend === "firecrawl" ? (
+        <div className="flex flex-col gap-3 border-t border-line-inner pt-4">
+          <h4 className="m-0 text-sm font-bold">Firecrawl 参数</h4>
+          <div className="flex flex-wrap gap-4 text-sm text-ink">
+            {(["web", "news"] as const).map((source) => (
+              <label key={source} className="flex items-center gap-2">
+                <input type="checkbox" disabled={!editable} checked={webSearch.firecrawl.sources.includes(source)}
+                  onChange={(event) => patchFirecrawl({
+                    sources: event.target.checked
+                      ? [...webSearch.firecrawl.sources, source].filter((item, index, list) => list.indexOf(item) === index)
+                      : webSearch.firecrawl.sources.filter((item) => item !== source),
+                  })}
+                  className="size-3.5 accent-[var(--console-accent)]" />
+                来源 {source}
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm text-ink">
+            {(["research", "pdf", "developer", "gov"] as const).map((category) => (
+              <label key={category} className="flex items-center gap-2">
+                <input type="checkbox" disabled={!editable} checked={webSearch.firecrawl.categories.includes(category)}
+                  onChange={(event) => patchFirecrawl({
+                    categories: event.target.checked
+                      ? [...webSearch.firecrawl.categories, category]
+                      : webSearch.firecrawl.categories.filter((item) => item !== category),
+                  })}
+                  className="size-3.5 accent-[var(--console-accent)]" />
+                分类 {category}
+              </label>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="时间过滤" id="agent-firecrawl-tbs" hint="例如 qdr:w、sbd:1 或 cdr:1,cd_min:...">
+              {(props) => (
+                <Input {...props} disabled={!editable} value={webSearch.firecrawl.tbs}
+                  onChange={(event) => patchFirecrawl({ tbs: event.target.value })} />
+              )}
+            </Field>
+            <Field label="国家" id="agent-firecrawl-country" hint="两位国家码，例如 US；留空使用服务端默认">
+              {(props) => (
+                <Input {...props} maxLength={2} disabled={!editable} value={webSearch.firecrawl.country}
+                  onChange={(event) => patchFirecrawl({ country: event.target.value })} />
+              )}
+            </Field>
+            <Field label="地区" id="agent-firecrawl-location" hint="例如 San Francisco,California,United States">
+              {(props) => (
+                <Input {...props} disabled={!editable} value={webSearch.firecrawl.location}
+                  onChange={(event) => patchFirecrawl({ location: event.target.value })} />
+              )}
+            </Field>
+            <Field label="正文抓取" id="agent-firecrawl-scrape" hint="markdown 会为每条结果额外消耗 credits">
+              {(props) => (
+                <select {...props} disabled={!editable} value={webSearch.firecrawl.scrapeFormat}
+                  onChange={(event) => patchFirecrawl({ scrapeFormat: event.target.value as AgentDraft["webSearch"]["firecrawl"]["scrapeFormat"] })}
+                  className={SELECT_CLASS}>
+                  <option value="none">不抓取</option>
+                  <option value="markdown">markdown</option>
+                </select>
+              )}
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-4 text-sm text-ink">
+            <label className="flex items-center gap-2">
+              <input type="checkbox" disabled={!editable} checked={webSearch.firecrawl.onlyMainContent}
+                onChange={(event) => patchFirecrawl({ onlyMainContent: event.target.checked })}
+                className="size-3.5 accent-[var(--console-accent)]" />
+              仅正文
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" disabled={!editable} checked={webSearch.firecrawl.safe}
+                onChange={(event) => patchFirecrawl({ safe: event.target.checked })}
+                className="size-3.5 accent-[var(--console-accent)]" />
+              安全搜索
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" disabled={!editable} checked={webSearch.firecrawl.highlights}
+                onChange={(event) => patchFirecrawl({ highlights: event.target.checked })}
+                className="size-3.5 accent-[var(--console-accent)]" />
+              查询相关高亮
+            </label>
+          </div>
+        </div>
+      ) : null}
+
+      {credential ? (
+        <p
+          aria-live="polite"
+          className={`m-0 text-xs leading-relaxed ${notice ? "font-semibold text-warning" : "text-muted"}`}
+        >
+          {notice
+            ? notice
+            : `${credential.label} 凭据（${credential.env}）：${credentials[credential.backend] ? "已配置" : "未配置"}。密钥保存在安全配置中心，不会写入 agent.toml 或回传浏览器。`}
+        </p>
+      ) : null}
     </section>
   );
 }

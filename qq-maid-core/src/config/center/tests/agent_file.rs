@@ -271,6 +271,8 @@ fn agent_web_search_backend_switches_preserve_routes_and_parameters() {
     for (backend, expected) in [
         ("tavily", WebSearchBackend::Tavily),
         ("deepseek", WebSearchBackend::DeepSeek),
+        ("exa", WebSearchBackend::Exa),
+        ("firecrawl", WebSearchBackend::Firecrawl),
         ("disabled", WebSearchBackend::Disabled),
         ("provider_native", WebSearchBackend::ProviderNative),
     ] {
@@ -294,6 +296,7 @@ fn agent_web_search_backend_switches_preserve_routes_and_parameters() {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[tools.web_search.routes.private_search]"));
         assert!(text.contains("[tools.web_search.routes.group_search]"));
+        assert!(text.contains("[tools.web_search.tavily]"));
         let reloaded = AgentRuntimeConfig::from_toml(
             &text,
             AgentConfigSource::File(path.to_string_lossy().into_owned()),
@@ -306,6 +309,84 @@ fn agent_web_search_backend_switches_preserve_routes_and_parameters() {
             "gpt-5.6-luna"
         );
     }
+}
+
+#[test]
+fn agent_web_search_provider_options_round_trip() {
+    use qq_maid_llm::web_search::{ExaSearchType, FirecrawlScrapeFormat, FirecrawlSource};
+
+    let (file, _running, _database, path) = test_agent_file();
+    let mut revision = file.snapshot().unwrap().revision;
+
+    let saved = file
+        .update(
+            &revision,
+            &[AgentConfigChange::SetWebSearchExa {
+                options: AgentWebSearchExaUpdate {
+                    search_type: Some("deep".to_owned()),
+                    category: Some("publication".to_owned()),
+                    contents: Some("summary".to_owned()),
+                    text_max_characters: None,
+                    max_age_hours: Some(24),
+                    include_domains: vec!["arxiv.org".to_owned()],
+                    exclude_domains: Vec::new(),
+                    user_location: Some("cn".to_owned()),
+                    moderation: true,
+                    time_range: Some("month".to_owned()),
+                },
+            }],
+        )
+        .unwrap();
+    revision = saved.revision;
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("[tools.web_search.exa]"));
+    let reloaded = AgentRuntimeConfig::from_toml(
+        &text,
+        AgentConfigSource::File(path.to_string_lossy().into_owned()),
+    )
+    .unwrap();
+    assert_eq!(reloaded.web_search().exa.search_type, ExaSearchType::Deep);
+    assert_eq!(
+        reloaded.web_search().exa.user_location.as_deref(),
+        Some("CN")
+    );
+
+    file.update(
+        &revision,
+        &[AgentConfigChange::SetWebSearchFirecrawl {
+            options: AgentWebSearchFirecrawlUpdate {
+                sources: vec!["web".to_owned(), "news".to_owned()],
+                categories: vec!["pdf".to_owned()],
+                tbs: Some("qdr:w".to_owned()),
+                country: Some("jp".to_owned()),
+                location: None,
+                scrape_format: Some("markdown".to_owned()),
+                only_main_content: false,
+                safe: true,
+                highlights: false,
+            },
+        }],
+    )
+    .unwrap();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("[tools.web_search.firecrawl]"));
+    let reloaded = AgentRuntimeConfig::from_toml(
+        &text,
+        AgentConfigSource::File(path.to_string_lossy().into_owned()),
+    )
+    .unwrap();
+    let firecrawl = &reloaded.web_search().firecrawl;
+    assert_eq!(
+        firecrawl.sources,
+        vec![FirecrawlSource::Web, FirecrawlSource::News]
+    );
+    assert_eq!(firecrawl.scrape_format, FirecrawlScrapeFormat::Markdown);
+    assert_eq!(firecrawl.country.as_deref(), Some("JP"));
+    assert!(!firecrawl.only_main_content);
+    assert!(firecrawl.safe);
+    assert!(!firecrawl.highlights);
 }
 
 #[test]

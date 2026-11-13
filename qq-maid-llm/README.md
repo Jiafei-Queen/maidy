@@ -41,9 +41,22 @@ qq-maid-common / reqwest / serde / tokio
 
 将 `agent.toml` 的 `[tools.web_search] backend` 设为 `"deepseek"`（控制台选项为 **DeepSeek Search**），并配置现有 `DEEPSEEK_API_KEY`。执行器使用 `DEEPSEEK_BASE_URL` 下的 `/v1/tools/search`；末尾 `/v1` 会去重，网关部署前缀保留。无需指定搜索模型，聊天模型可继续使用其他 Provider。
 
-此后端与 `provider_native` 的 Responses 内置搜索独立，默认配置不变。`/查` 和 Agent 搜索共用路由、场景权限及每次请求 1–10 条结果的硬上限。查询词按官方限制校验为 1–128 个 Unicode 字符，超长明确报错，不静默截断；只发送查询词、结果数和 `need_content=false`，不发送原始会话上下文或身份。优先以 `summary` 提供来源摘要，空摘要回退 `snippet`；`answer` 汇总逐条检索摘要后再追加参考来源链接，`sources` 仍保留完整结构，`/查` 现有正文长度上限不变。answer 预算把编号、展示标题、摘要和参考来源分别计入：链接按整行优先保留，放不下的来源整条省略，长标题只影响自身条目，不会挤掉后续摘要。Tavily 专属的主题、时间范围和搜索深度不生效；需要限定站点或日期时可在查询词中使用 `site:`、`after:`、`before:`。
+此后端与 `provider_native` 的 Responses 内置搜索独立，默认配置不变。`/查` 和 Agent 搜索共用路由、场景权限及每次请求 1–10 条结果的硬上限。查询词按官方限制校验为 1–128 个 Unicode 字符，超长明确报错，不静默截断；只发送查询词、结果数和 `need_content=false`，不发送原始会话上下文或身份。优先以 `summary` 提供来源摘要，空摘要回退 `snippet`；`answer` 汇总逐条检索摘要后再追加参考来源链接，`sources` 仍保留完整结构，`/查` 现有正文长度上限不变。answer 预算把编号、展示标题、摘要和参考来源分别计入：链接按整行优先保留，放不下的来源整条省略，长标题只影响自身条目，不会挤掉后续摘要。Tavily、Exa 和 Firecrawl 的专属参数不生效；需要限定站点或日期时可在查询词中使用 `site:`、`after:`、`before:`。
 
 HTTP 鉴权、余额、限流和超时失败按真实错误返回；缺少 DeepSeek Key、401/402 使用 DeepSeek 自己的提示，不再指向 Tavily；正常空结果保留为空结果。此改动只接入搜索，不注册 Fetch 网页抓取工具。接口契约见 [DeepSeek Search 官方文档](https://api-docs.deepseek.com/api/search/)。
+
+## Exa 与 Firecrawl 独立 Search API
+
+将 `[tools.web_search] backend` 设为 `"exa"` 或 `"firecrawl"`，并分别在配置中心配置 `EXA_API_KEY` / `FIRECRAWL_API_KEY`。两者都不绑定聊天模型，`/查` 和 Agent 搜索继续共用场景权限、结果数硬上限和超时链。
+
+参数位于 `[tools.web_search.exa]` 和 `[tools.web_search.firecrawl]`：
+
+- Exa：`search_type`（auto/lite/deep-lite/deep）、`category`、`contents`（highlights/summary/text）、`text_max_characters`、`max_age_hours`、`include_domains`/`exclude_domains`（互斥）、`user_location`、`moderation`、`time_range`。
+- Firecrawl：`sources`（web/news）、`categories`（research/pdf/developer/gov）、`tbs`、`country`、`location`、`scrape_format`（none/markdown）、`only_main_content`、`safe`、`highlights`。`markdown` 会为每条结果额外消耗 credits，默认关闭。
+
+请求级 `topic=news` / `time_range` 会按后端翻译：Exa 使用 `category` 和 `startPublishedDate`，Firecrawl 使用 `sources` 和 `tbs`；`finance` 仅映射到 Exa 的 `financial report`。Exa 的 `company`/`people` 分类不支持发布日期过滤，`lite` 模式不支持 `contents=summary`，配置校验会拒绝这些组合。响应为空时仍按“执行成功、无结果”返回，不伪装成可重试故障。摘要正文复用独立搜索后端共享的「逐条摘要 + 参考来源」预算渲染。
+
+Tavily 参数现统一位于 `[tools.web_search.tavily]`；旧版顶层 `search_depth`/`topic`/`time_range` 仍兼容读取，配置中心保存后会迁移到子表。
 
 ## DeepSeek Responses 使用边界
 
@@ -98,7 +111,7 @@ qq-maid-llm/src/
 ├── service.rs        # LlmService 统一入口
 ├── sse.rs            # 通用 SSE frame 解析（聊天与 Web Search 共用）
 ├── tool.rs           # Tool trait、ToolRegistry、工具超时和输出大小限制
-├── web_search/       # Provider 原生搜索路由、Responses/Gemini/Tavily 执行器与测试
+├── web_search/       # Provider 原生搜索路由、Responses/Gemini/Tavily/DeepSeek/Exa/Firecrawl 执行器与测试
 └── provider/
     ├── mod.rs        # LlmProvider trait、DynLlmProvider、ChatOutcome、ToolChatRequest、候选链路由
     ├── types.rs      # ChatMessage、ChatRole、ChatRequest、ModelId、ModelRoute、ModelProvider、TokenUsage
@@ -132,8 +145,8 @@ qq-maid-llm/src/
 - `openai_compatible_providers`：由 `agent.toml [providers.*]` 声明的自定义 Chat Completions provider，例如 `mimo`；实际 API key 由 core 按 `api_key_env` 从环境变量读取。
 - `openai_responses_providers`：配置驱动的 Responses provider；复用内置 OpenAI 的文字 / `input_image` 图片请求、SSE 和 Function Tool Calling，可独立设置 Provider ID、Base URL、认证和超时。Core 的公开 `agent.toml` 暂不允许启用 Chat fallback，避免普通聊天与 Tool Loop 出现不同协议语义。
 - `request_timeout`、`stream`、`max_output_tokens`。
-- `web_search`：统一联网搜索后端及默认参数；`provider_native` 将裸模型兼容为内置 OpenAI，并严格按显式前缀选择 OpenAI/DeepSeek Responses、自定义 `openai_responses` 或 Gemini Google Search；`tavily` 调用 Tavily Search，`disabled` 关闭联网搜索。
-- `tavily_api_key`：Tavily Search 密钥；由 core 从安全配置中心或兼容环境变量 `TAVILY_API_KEY` 注入，不写入 `agent.toml`。
+- `web_search`：统一联网搜索后端及默认参数；`provider_native` 将裸模型兼容为内置 OpenAI，并严格按显式前缀选择 OpenAI/DeepSeek Responses、自定义 `openai_responses` 或 Gemini Google Search；`tavily`、`deepseek`、`exa`、`firecrawl` 调用各自独立 Search API，`disabled` 关闭联网搜索。Tavily/Exa/Firecrawl 的请求参数分别放在 `tavily`、`exa`、`firecrawl` 子结构中。
+- `tavily_api_key`、`exa_api_key`、`firecrawl_api_key`：独立 Search API 密钥；由 core 从安全配置中心或兼容环境变量 `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` 注入，不写入 `agent.toml`。
 
 Tool Calling、轮数预算与工具白名单由 core 从 `agent.toml` 的 Profile / Scene 解析；本 crate 只接收已经构造好的 `ToolChatRequest`。Todo、标题、记忆、Compact、翻译等业务路线同样由 core 的 Agent Profile 管理，Provider 凭证和连接参数以 [runtime/config/.env.example](../runtime/config/.env.example) 为准。
 

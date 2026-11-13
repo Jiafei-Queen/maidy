@@ -4,6 +4,8 @@
 //! 搜索 provider 路由、请求 payload、HTTP transport、SSE 文本增量、answer 和 sources 提取。
 
 mod deepseek;
+mod exa;
+mod firecrawl;
 mod gemini;
 mod openai;
 mod routing;
@@ -23,6 +25,8 @@ use crate::{
 };
 use qq_maid_common::time_context::RequestTimeContext;
 
+use exa::{ExaWebSearchExecutor, MissingExaWebSearchExecutor};
+use firecrawl::{FirecrawlWebSearchExecutor, MissingFirecrawlWebSearchExecutor};
 use gemini::{GeminiWebSearchExecutor, MissingGeminiWebSearchExecutor};
 use openai::{ChatOnlyWebSearchExecutor, MissingWebSearchExecutor, ResponsesWebSearchExecutor};
 use routing::RoutedWebSearchExecutor;
@@ -43,6 +47,8 @@ pub enum WebSearchBackend {
     ProviderNative,
     Tavily,
     DeepSeek,
+    Exa,
+    Firecrawl,
     Disabled,
 }
 
@@ -52,9 +58,11 @@ impl WebSearchBackend {
             "provider_native" => Ok(Self::ProviderNative),
             "tavily" => Ok(Self::Tavily),
             "deepseek" => Ok(Self::DeepSeek),
+            "exa" => Ok(Self::Exa),
+            "firecrawl" => Ok(Self::Firecrawl),
             "disabled" => Ok(Self::Disabled),
             _ => Err(LlmError::config(format!(
-                "{name} must be provider_native, tavily, deepseek, or disabled"
+                "{name} must be provider_native, tavily, deepseek, exa, firecrawl, or disabled"
             ))),
         }
     }
@@ -64,6 +72,8 @@ impl WebSearchBackend {
             Self::ProviderNative => "provider_native",
             Self::Tavily => "tavily",
             Self::DeepSeek => "deepseek",
+            Self::Exa => "exa",
+            Self::Firecrawl => "firecrawl",
             Self::Disabled => "disabled",
         }
     }
@@ -158,7 +168,284 @@ impl WebSearchTimeRange {
     }
 }
 
-/// 统一联网搜索配置。独立 Search API 共用结果数和超时，搜索深度、主题和时间范围仅用于 Tavily。
+/// Tavily 独立搜索参数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TavilySearchOptions {
+    pub search_depth: WebSearchDepth,
+    pub topic: WebSearchTopic,
+    pub time_range: Option<WebSearchTimeRange>,
+}
+
+impl Default for TavilySearchOptions {
+    fn default() -> Self {
+        Self {
+            search_depth: WebSearchDepth::Basic,
+            topic: WebSearchTopic::General,
+            time_range: None,
+        }
+    }
+}
+
+/// Exa 搜索模式；默认 auto 平衡质量与延迟。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExaSearchType {
+    #[default]
+    Auto,
+    Lite,
+    DeepLite,
+    Deep,
+}
+
+impl ExaSearchType {
+    pub fn parse_config(value: &str, name: &str) -> Result<Self, LlmError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "lite" => Ok(Self::Lite),
+            "deep-lite" => Ok(Self::DeepLite),
+            "deep" => Ok(Self::Deep),
+            _ => Err(LlmError::config(format!(
+                "{name} must be auto, lite, deep-lite, or deep"
+            ))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Lite => "lite",
+            Self::DeepLite => "deep-lite",
+            Self::Deep => "deep",
+        }
+    }
+
+    /// `lite` 只接受有限的 contents 选项，不支持 summary。
+    pub fn supports_summary(self) -> bool {
+        !matches!(self, Self::Lite)
+    }
+}
+
+/// Exa 内容分类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExaCategory {
+    Company,
+    Publication,
+    News,
+    PersonalSite,
+    FinancialReport,
+    People,
+}
+
+impl ExaCategory {
+    pub fn parse_config(value: &str, name: &str) -> Result<Self, LlmError> {
+        match value.trim().to_ascii_lowercase().replace('_', " ").as_str() {
+            "company" => Ok(Self::Company),
+            "publication" => Ok(Self::Publication),
+            "news" => Ok(Self::News),
+            "personal site" => Ok(Self::PersonalSite),
+            "financial report" => Ok(Self::FinancialReport),
+            "people" => Ok(Self::People),
+            _ => Err(LlmError::config(format!(
+                "{name} must be company, publication, news, personal site, financial report, or people"
+            ))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Company => "company",
+            Self::Publication => "publication",
+            Self::News => "news",
+            Self::PersonalSite => "personal site",
+            Self::FinancialReport => "financial report",
+            Self::People => "people",
+        }
+    }
+
+    /// Exa 的 company/people 分类不接受发布日期过滤。
+    pub fn supports_published_date(self) -> bool {
+        !matches!(self, Self::Company | Self::People)
+    }
+}
+
+/// Exa 结果内容提取方式。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExaContentsMode {
+    #[default]
+    Highlights,
+    Summary,
+    Text,
+}
+
+impl ExaContentsMode {
+    pub fn parse_config(value: &str, name: &str) -> Result<Self, LlmError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "highlights" => Ok(Self::Highlights),
+            "summary" => Ok(Self::Summary),
+            "text" => Ok(Self::Text),
+            _ => Err(LlmError::config(format!(
+                "{name} must be highlights, summary, or text"
+            ))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Highlights => "highlights",
+            Self::Summary => "summary",
+            Self::Text => "text",
+        }
+    }
+}
+
+/// Exa Search API 参数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExaSearchOptions {
+    pub search_type: ExaSearchType,
+    pub category: Option<ExaCategory>,
+    pub contents: ExaContentsMode,
+    /// 仅 `contents = text` 时生效。
+    pub text_max_characters: Option<u32>,
+    /// 页面缓存时效；-1 仅用缓存，0 实时抓取，1–720 小时。
+    pub max_age_hours: Option<i32>,
+    pub include_domains: Vec<String>,
+    pub exclude_domains: Vec<String>,
+    pub user_location: Option<String>,
+    pub moderation: bool,
+    /// 可选默认时间范围；请求级时间范围优先。
+    pub time_range: Option<WebSearchTimeRange>,
+}
+
+impl Default for ExaSearchOptions {
+    fn default() -> Self {
+        Self {
+            search_type: ExaSearchType::Auto,
+            category: None,
+            contents: ExaContentsMode::Highlights,
+            text_max_characters: None,
+            max_age_hours: None,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            user_location: None,
+            moderation: false,
+            time_range: None,
+        }
+    }
+}
+
+/// Firecrawl 搜索来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirecrawlSource {
+    Web,
+    News,
+}
+
+impl FirecrawlSource {
+    pub fn parse_config(value: &str, name: &str) -> Result<Self, LlmError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "web" => Ok(Self::Web),
+            "news" => Ok(Self::News),
+            _ => Err(LlmError::config(format!("{name} must be web or news"))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::News => "news",
+        }
+    }
+}
+
+/// Firecrawl 搜索分类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirecrawlCategory {
+    Research,
+    Pdf,
+    Developer,
+    Gov,
+}
+
+impl FirecrawlCategory {
+    pub fn parse_config(value: &str, name: &str) -> Result<Self, LlmError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "research" => Ok(Self::Research),
+            "pdf" => Ok(Self::Pdf),
+            "developer" => Ok(Self::Developer),
+            "gov" => Ok(Self::Gov),
+            _ => Err(LlmError::config(format!(
+                "{name} must be research, pdf, developer, or gov"
+            ))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Research => "research",
+            Self::Pdf => "pdf",
+            Self::Developer => "developer",
+            Self::Gov => "gov",
+        }
+    }
+}
+
+/// Firecrawl 搜索结果正文抓取格式；抓取会为每条结果增加 credits 消耗。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FirecrawlScrapeFormat {
+    #[default]
+    None,
+    Markdown,
+}
+
+impl FirecrawlScrapeFormat {
+    pub fn parse_config(value: &str, name: &str) -> Result<Self, LlmError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Ok(Self::None),
+            "markdown" => Ok(Self::Markdown),
+            _ => Err(LlmError::config(format!("{name} must be none or markdown"))),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Markdown => "markdown",
+        }
+    }
+}
+
+/// Firecrawl Search API 参数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FirecrawlSearchOptions {
+    pub sources: Vec<FirecrawlSource>,
+    pub categories: Vec<FirecrawlCategory>,
+    /// 默认时间过滤，例如 `qdr:w`、`sbd:1` 或自定义 `cdr:...`；请求级时间范围优先。
+    pub tbs: Option<String>,
+    pub country: Option<String>,
+    pub location: Option<String>,
+    pub scrape_format: FirecrawlScrapeFormat,
+    pub only_main_content: bool,
+    pub safe: bool,
+    pub highlights: bool,
+}
+
+impl Default for FirecrawlSearchOptions {
+    fn default() -> Self {
+        Self {
+            sources: vec![FirecrawlSource::Web],
+            categories: Vec::new(),
+            tbs: None,
+            country: None,
+            location: None,
+            scrape_format: FirecrawlScrapeFormat::None,
+            only_main_content: true,
+            safe: false,
+            highlights: true,
+        }
+    }
+}
+
+/// 统一联网搜索配置。独立 Search API 共用结果数和超时，各自的请求参数放在
+/// `tavily`、`exa`、`firecrawl` 子结构中，避免新增后端时继续膨胀共享字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebSearchConfig {
     /// 默认搜索后端；请求未带场景 route 时使用。
@@ -167,9 +454,9 @@ pub struct WebSearchConfig {
     pub default_model: String,
     /// 每个底层搜索子请求的结果数硬上限。
     pub max_results: u8,
-    pub search_depth: WebSearchDepth,
-    pub topic: WebSearchTopic,
-    pub time_range: Option<WebSearchTimeRange>,
+    pub tavily: TavilySearchOptions,
+    pub exa: ExaSearchOptions,
+    pub firecrawl: FirecrawlSearchOptions,
     pub connect_timeout_seconds: u64,
     pub first_response_timeout_seconds: u64,
     pub total_timeout_seconds: u64,
@@ -181,9 +468,9 @@ impl Default for WebSearchConfig {
             default_backend: WebSearchBackend::ProviderNative,
             default_model: "gpt-search".to_owned(),
             max_results: DEFAULT_MAX_RESULTS,
-            search_depth: WebSearchDepth::Basic,
-            topic: WebSearchTopic::General,
-            time_range: None,
+            tavily: TavilySearchOptions::default(),
+            exa: ExaSearchOptions::default(),
+            firecrawl: FirecrawlSearchOptions::default(),
             connect_timeout_seconds: 10,
             first_response_timeout_seconds: 30,
             total_timeout_seconds: 60,
@@ -203,10 +490,10 @@ pub struct WebSearchRequest {
     pub max_results: Option<u8>,
     /// 搜索上下文大小（"low"、"medium"、"high"）。
     pub context_size: Option<String>,
-    /// 搜索主题；当前由 Tavily 后端消费，Provider 原生后端保持自身协议语义。
+    /// 搜索主题；由 Tavily/Exa/Firecrawl 独立后端消费，Provider 原生后端保持自身协议语义。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic: Option<String>,
-    /// 相对时间范围；当前由 Tavily 后端消费。
+    /// 相对时间范围；由 Tavily/Exa/Firecrawl 独立后端消费。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_range: Option<String>,
     /// 请求级搜索后端；由 Core 根据场景 route 注入，模型不能覆盖。
@@ -331,6 +618,20 @@ pub fn build_web_search_executor(config: &LlmConfig) -> Result<DynWebSearchExecu
         )?),
         None => Arc::new(MissingTavilyWebSearchExecutor),
     };
+    let exa: DynWebSearchExecutor = match config.exa_api_key.clone() {
+        Some(api_key) => Arc::new(ExaWebSearchExecutor::new(
+            api_key,
+            config.web_search.clone(),
+        )?),
+        None => Arc::new(MissingExaWebSearchExecutor),
+    };
+    let firecrawl: DynWebSearchExecutor = match config.firecrawl_api_key.clone() {
+        Some(api_key) => Arc::new(FirecrawlWebSearchExecutor::new(
+            api_key,
+            config.web_search.clone(),
+        )?),
+        None => Arc::new(MissingFirecrawlWebSearchExecutor),
+    };
     let mut native_providers = HashMap::new();
     insert_native_provider(&mut native_providers, ModelProvider::OpenAi, openai)?;
     insert_native_provider(&mut native_providers, ModelProvider::Gemini, gemini)?;
@@ -380,9 +681,13 @@ pub fn build_web_search_executor(config: &LlmConfig) -> Result<DynWebSearchExecu
         config.web_search.default_model.clone(),
         config.web_search.max_results,
         native_providers,
-        tavily,
-        Arc::new(deepseek::DeepSeekSearchExecutor::new(config)?),
-        Arc::new(DisabledWebSearchExecutor),
+        routing::BackendExecutors {
+            tavily,
+            exa,
+            firecrawl,
+            deepseek: Arc::new(deepseek::DeepSeekSearchExecutor::new(config)?),
+            disabled: Arc::new(DisabledWebSearchExecutor),
+        },
     )))
 }
 

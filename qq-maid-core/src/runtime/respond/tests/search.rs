@@ -97,6 +97,42 @@ fn deepseek_search_errors_use_deepseek_guidance_instead_of_tavily() {
     }
 }
 
+#[test]
+fn exa_and_firecrawl_errors_use_provider_guidance() {
+    // 新后端与 Tavily/DeepSeek 共用 401/402 等错误码，但用户需要操作的是
+    // EXA_API_KEY / FIRECRAWL_API_KEY，不能回落到 Tavily 文案。
+    let cases = [
+        (
+            "web_search_not_configured",
+            "exa_search_config",
+            "EXA_API_KEY",
+        ),
+        ("authentication_failed", "exa_http", "Exa API Key"),
+        ("quota_exhausted", "exa_http", "Exa 查询额度"),
+        (
+            "web_search_not_configured",
+            "firecrawl_search_config",
+            "FIRECRAWL_API_KEY",
+        ),
+        (
+            "authentication_failed",
+            "firecrawl_http",
+            "Firecrawl API Key",
+        ),
+        ("quota_exhausted", "firecrawl_http", "Firecrawl 查询额度"),
+    ];
+
+    for (code, stage, expected) in cases {
+        let error = LlmError::new(code, "upstream detail", stage);
+        let reply = crate::runtime::tools::search::format_web_search_error_reply(&error);
+        assert!(
+            reply.contains(expected),
+            "unexpected reply for {code}/{stage}: {reply}"
+        );
+        assert!(!reply.contains("Tavily"), "leaked Tavily hint: {reply}");
+    }
+}
+
 #[async_trait]
 impl WebSearchExecutor for LongAnswerWebSearchExecutor {
     async fn query(&self, req: WebSearchRequest) -> Result<WebSearchOutcome, LlmError> {

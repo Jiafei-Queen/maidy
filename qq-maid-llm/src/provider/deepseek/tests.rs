@@ -69,6 +69,8 @@ fn config(base_url: String, stream: bool) -> LlmConfig {
             ..Default::default()
         },
         tavily_api_key: None,
+        exa_api_key: None,
+        firecrawl_api_key: None,
         openai_api_key: None,
         openai_base_url: None,
         openai_api_mode: OpenAiApiMode::ChatOnly,

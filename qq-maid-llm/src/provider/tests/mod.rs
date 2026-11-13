@@ -415,6 +415,8 @@ fn app_config(provider: ProviderMode, model: &str) -> LlmConfig {
             ..crate::web_search::WebSearchConfig::default()
         },
         tavily_api_key: None,
+        exa_api_key: None,
+        firecrawl_api_key: None,
         openai_api_key: Some("test-openai-key".to_owned()),
         openai_base_url: None,
         openai_api_mode: OpenAiApiMode::Auto,

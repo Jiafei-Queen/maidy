@@ -19,6 +19,17 @@ const WEB_SEARCH_TAVILY_KEY_MISSING_REPLY: &str =
     "【联网查询】\n\n已选择 Tavily，但还没有配置 TAVILY_API_KEY。请在配置中心完成设置后重启。";
 const WEB_SEARCH_TAVILY_AUTH_REPLY: &str =
     "【联网查询】\n\nTavily API Key 无效或已失效，请在配置中心检查后重启。";
+const WEB_SEARCH_EXA_KEY_MISSING_REPLY: &str =
+    "【联网查询】\n\n已选择 Exa，但还没有配置 EXA_API_KEY。请在配置中心完成设置后重启。";
+const WEB_SEARCH_EXA_AUTH_REPLY: &str =
+    "【联网查询】\n\nExa API Key 无效或已失效，请在配置中心检查后重启。";
+const WEB_SEARCH_EXA_QUOTA_REPLY: &str =
+    "【联网查询】\n\nExa 查询额度已用尽或账户不可用，请检查账户额度。";
+const WEB_SEARCH_FIRECRAWL_KEY_MISSING_REPLY: &str = "【联网查询】\n\n已选择 Firecrawl，但还没有配置 FIRECRAWL_API_KEY。请在配置中心完成设置后重启。";
+const WEB_SEARCH_FIRECRAWL_AUTH_REPLY: &str =
+    "【联网查询】\n\nFirecrawl API Key 无效或已失效，请在配置中心检查后重启。";
+const WEB_SEARCH_FIRECRAWL_QUOTA_REPLY: &str =
+    "【联网查询】\n\nFirecrawl 查询额度已用尽或账户不可用，请检查账户额度。";
 const WEB_SEARCH_DEEPSEEK_KEY_MISSING_REPLY: &str = "【联网查询】\n\n已选择 DeepSeek Search，但还没有配置 DEEPSEEK_API_KEY。请在配置中心完成设置后重启。";
 const WEB_SEARCH_DEEPSEEK_AUTH_REPLY: &str =
     "【联网查询】\n\nDeepSeek API Key 无效或已失效，请在配置中心检查后重启。";
@@ -190,18 +201,29 @@ const DEEPSEEK_SEARCH_STAGE_PREFIX: &str = "deepseek_search";
 
 /// 把搜索工具错误映射为用户可执行的稳定文案；上游原始错误只进入日志和诊断。
 pub(crate) fn format_web_search_error_reply(err: &LlmError) -> String {
-    // DeepSeek 缺少 Key、401/402 与 Tavily 共用部分错误码，但操作入口不同。`/查`
+    // Exa / Firecrawl / DeepSeek 与 Tavily 共用部分错误码，但操作入口不同。`/查`
     // 错误保留路由 Provider，Agent 和多目标调研只透传 stage，因此两处都要识别。
+    let exa = err.upstream_provider() == Some("exa") || err.stage.starts_with("exa_");
+    let firecrawl =
+        err.upstream_provider() == Some("firecrawl") || err.stage.starts_with("firecrawl_");
     let deepseek = err.upstream_provider() == Some("deepseek")
         || err.stage.starts_with(DEEPSEEK_SEARCH_STAGE_PREFIX);
     match err.code.as_str() {
         "config" => WEB_SEARCH_CONFIG_ERROR_REPLY.to_owned(),
         "web_search_disabled" => WEB_SEARCH_DISABLED_REPLY.to_owned(),
+        "web_search_not_configured" if exa => WEB_SEARCH_EXA_KEY_MISSING_REPLY.to_owned(),
+        "web_search_not_configured" if firecrawl => {
+            WEB_SEARCH_FIRECRAWL_KEY_MISSING_REPLY.to_owned()
+        }
         "web_search_not_configured" if deepseek => WEB_SEARCH_DEEPSEEK_KEY_MISSING_REPLY.to_owned(),
         "web_search_not_configured" => WEB_SEARCH_TAVILY_KEY_MISSING_REPLY.to_owned(),
         "tavily_auth_error" => WEB_SEARCH_TAVILY_AUTH_REPLY.to_owned(),
+        "authentication_failed" if exa => WEB_SEARCH_EXA_AUTH_REPLY.to_owned(),
+        "authentication_failed" if firecrawl => WEB_SEARCH_FIRECRAWL_AUTH_REPLY.to_owned(),
         "authentication_failed" if deepseek => WEB_SEARCH_DEEPSEEK_AUTH_REPLY.to_owned(),
         "rate_limited" => WEB_SEARCH_RATE_LIMIT_REPLY.to_owned(),
+        "quota_exhausted" if exa => WEB_SEARCH_EXA_QUOTA_REPLY.to_owned(),
+        "quota_exhausted" if firecrawl => WEB_SEARCH_FIRECRAWL_QUOTA_REPLY.to_owned(),
         "quota_exhausted" if deepseek => WEB_SEARCH_DEEPSEEK_QUOTA_REPLY.to_owned(),
         "quota_exhausted" => WEB_SEARCH_QUOTA_REPLY.to_owned(),
         "empty_result" => WEB_SEARCH_EMPTY_RESULT_REPLY.to_owned(),
