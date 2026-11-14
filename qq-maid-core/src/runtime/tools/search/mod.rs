@@ -1,8 +1,9 @@
 //! 联网搜索 Tool。
 //!
-//! 该 Tool 复用 `qq-maid-llm` 的统一 WebSearchExecutor，把 Provider 原生搜索与 Tavily
-//! 纳入服务端白名单 ToolRegistry。`/查` 只作为显式触发入口，仍在 respond/search_flow/mod.rs
-//! 负责参数兼容、session 记录和入口编排；搜索结果、来源与错误文案由本领域门面统一提供。
+//! 该 Tool 复用 `qq-maid-llm` 的统一 WebSearchExecutor，把 Provider 原生搜索、Tavily、
+//! DeepSeek Search、Exa 与 Firecrawl 纳入服务端白名单 ToolRegistry。`/查` 只作为显式
+//! 触发入口，仍在 respond/search_flow/mod.rs 负责参数兼容、session 记录和入口编排；
+//! 搜索结果、来源与错误文案由本领域门面统一提供。
 
 use std::{future::Future, pin::Pin, time::Duration};
 

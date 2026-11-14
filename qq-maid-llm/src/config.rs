@@ -155,4 +155,8 @@ pub struct LlmConfig {
     pub web_search: WebSearchConfig,
     /// Tavily API 密钥；仅在选择 Tavily 后端时使用。
     pub tavily_api_key: Option<String>,
+    /// Exa Search API 密钥；仅在选择 Exa 后端时使用。
+    pub exa_api_key: Option<String>,
+    /// Firecrawl Search API 密钥；仅在选择 Firecrawl 后端时使用。
+    pub firecrawl_api_key: Option<String>,
 }

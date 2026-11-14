@@ -16,7 +16,7 @@ use crate::{
     provider::types::ModelProvider,
     web_search::{
         DynWebSearchExecutor, WebSearchBackend, WebSearchExecutor, WebSearchRequest,
-        routing::RoutedWebSearchExecutor,
+        routing::{BackendExecutors, RoutedWebSearchExecutor},
     },
 };
 
@@ -174,9 +174,13 @@ async fn same_model_name_routes_to_each_configured_responses_base_url() {
         "routera:same-model".to_owned(),
         5,
         native_providers,
-        Arc::new(MissingWebSearchExecutor),
-        Arc::new(MissingWebSearchExecutor),
-        Arc::new(MissingWebSearchExecutor),
+        BackendExecutors {
+            tavily: Arc::new(MissingWebSearchExecutor),
+            exa: Arc::new(MissingWebSearchExecutor),
+            firecrawl: Arc::new(MissingWebSearchExecutor),
+            deepseek: Arc::new(MissingWebSearchExecutor),
+            disabled: Arc::new(MissingWebSearchExecutor),
+        },
     );
 
     let first = router.query(request("routera:same-model")).await.unwrap();

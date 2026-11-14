@@ -748,12 +748,43 @@ function applyAgentChanges(changes: unknown[]): void {
       const webSearch = agentDocument.tools.web_search;
       if (typeof entry.backend === "string") webSearch.backend = entry.backend;
       if (typeof entry.max_results === "number") webSearch.max_results = entry.max_results;
-      if (typeof entry.search_depth === "string") webSearch.search_depth = entry.search_depth;
-      if (typeof entry.topic === "string") webSearch.topic = entry.topic;
-      webSearch.time_range = typeof entry.time_range === "string" ? entry.time_range : null;
+      if (typeof entry.search_depth === "string") webSearch.tavily.search_depth = entry.search_depth;
+      if (typeof entry.topic === "string") webSearch.tavily.topic = entry.topic;
+      webSearch.tavily.time_range = typeof entry.time_range === "string" ? entry.time_range : null;
       for (const key of ["connect_timeout_seconds", "first_response_timeout_seconds", "total_timeout_seconds"] as const) {
         if (typeof entry[key] === "number") webSearch[key] = entry[key];
       }
+    } else if (action === "set_web_search_exa") {
+      const options = typeof entry.options === "object" && entry.options !== null
+        ? entry.options as Record<string, unknown>
+        : {};
+      agentDocument.tools.web_search.exa = {
+        search_type: typeof options.search_type === "string" ? options.search_type : "auto",
+        category: typeof options.category === "string" ? options.category : null,
+        contents: typeof options.contents === "string" ? options.contents : "highlights",
+        text_max_characters: typeof options.text_max_characters === "number" ? options.text_max_characters : null,
+        max_age_hours: typeof options.max_age_hours === "number" ? options.max_age_hours : null,
+        include_domains: Array.isArray(options.include_domains) ? options.include_domains.map(String) : [],
+        exclude_domains: Array.isArray(options.exclude_domains) ? options.exclude_domains.map(String) : [],
+        user_location: typeof options.user_location === "string" ? options.user_location : null,
+        moderation: options.moderation === true,
+        time_range: typeof options.time_range === "string" ? options.time_range : null,
+      };
+    } else if (action === "set_web_search_firecrawl") {
+      const options = typeof entry.options === "object" && entry.options !== null
+        ? entry.options as Record<string, unknown>
+        : {};
+      agentDocument.tools.web_search.firecrawl = {
+        sources: Array.isArray(options.sources) ? options.sources.map(String) : ["web"],
+        categories: Array.isArray(options.categories) ? options.categories.map(String) : [],
+        tbs: typeof options.tbs === "string" ? options.tbs : null,
+        country: typeof options.country === "string" ? options.country : null,
+        location: typeof options.location === "string" ? options.location : null,
+        scrape_format: typeof options.scrape_format === "string" ? options.scrape_format : "none",
+        only_main_content: options.only_main_content !== false,
+        safe: options.safe === true,
+        highlights: options.highlights !== false,
+      };
     }
   }
   bumpAgentRevision();

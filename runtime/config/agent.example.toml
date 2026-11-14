@@ -51,12 +51,41 @@ candidates = ["openai:gpt-5.6-luna", "gemini:gemini-2.5-flash", "mimo:mimo-v2.5"
 backend = "provider_native"
 # 每个底层搜索子请求的结果数硬上限；多目标调研逐目标应用，模型只能下调。
 max_results = 5
-search_depth = "basic"
-topic = "general"
-# time_range = "week"
 connect_timeout_seconds = 10
 first_response_timeout_seconds = 30
 total_timeout_seconds = 60
+
+# Tavily 独立搜索参数。旧版写在 [tools.web_search] 顶层的 search_depth/topic/
+# time_range 仍兼容读取；配置中心保存后会统一迁移到这里。
+[tools.web_search.tavily]
+search_depth = "basic"
+topic = "general"
+# time_range = "week"
+
+# Exa 示例：将 backend 改为 "exa"，并在配置中心设置 EXA_API_KEY。
+# [tools.web_search.exa]
+# search_type = "auto"          # auto | lite | deep-lite | deep
+# category = ""                # 留空不限定；可选 company | publication | news | personal site | financial report | people
+# contents = "highlights"       # highlights | summary | text
+# text_max_characters = 4000    # 仅 contents = "text"
+# max_age_hours = -1            # -1 仅缓存 / 0 实时 / 1–720；lite 不支持
+# include_domains = []
+# exclude_domains = []          # people 分类不支持排除域名
+# user_location = ""            # 可选两位国家码
+# moderation = false
+# time_range = "week"           # 可选默认时间范围
+
+# Firecrawl 示例：将 backend 改为 "firecrawl"，并在配置中心设置 FIRECRAWL_API_KEY。
+# [tools.web_search.firecrawl]
+# sources = ["web"]             # web | news
+# categories = []               # research | pdf | developer | gov
+# tbs = ""                      # qdr:h/d/w/m/y、sbd:1 或 cdr:...；仅 web，启用时 sources 必须为 ["web"]
+# country = "US"
+# location = ""
+# scrape_format = "none"        # none | markdown；markdown 会额外消耗 credits
+# only_main_content = true
+# safe = false
+# highlights = true
 
 [tools.web_search.routes.private_search]
 model = "gpt-5.6-luna"
@@ -68,8 +97,9 @@ model = "gpt-5.6-luna"
 # 自定义 Responses 示例：声明 `[providers.xai] kind = "openai_responses"` 后使用
 # `model = "xai:grok-4"`；openai_compatible 不提供 Provider 原生搜索。
 # DeepSeek Search 示例：将 backend 改为 "deepseek"，复用 DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL。
-# 独立 Search API 无需模型 route；仅查询词、max_results 和超时配置生效。
-# Tavily 示例：将 backend 改为 "tavily"，并在配置中心设置 TAVILY_API_KEY。
+# 独立 Search API 无需模型 route；仅查询词、max_results 和各后端参数生效。
+# Tavily / Exa / Firecrawl 示例：将 backend 改为对应值，并在配置中心设置
+# TAVILY_API_KEY / EXA_API_KEY / FIRECRAWL_API_KEY。
 
 # fast / balanced / deep 是可复用档位；main_route 引用内置或显式声明的模型路线。
 # aux_route 是标题、Memory 草稿、会话压缩和翻译共用的辅助模型路线；省略时继承 main_route。

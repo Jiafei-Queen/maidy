@@ -658,6 +658,8 @@ export const configFields: MockConfigField[] = [
   field("features.todo.daily_reminder_enabled", "features", "boolean", true),
   field("features.todo.daily_reminder_time", "features", "string", "08:30"),
   field("tools.web_search.tavily.api_key", "tools", "string", null, { sensitivity: "secret", configured: false }),
+  field("tools.web_search.exa.api_key", "tools", "string", null, { sensitivity: "secret", configured: false }),
+  field("tools.web_search.firecrawl.api_key", "tools", "string", null, { sensitivity: "secret", configured: false }),
   field("weather.qweather.api_key", "weather", "string", null, { sensitivity: "secret", configured: false }),
   field("weather.qweather.api_host", "weather", "string", "https://geoapi.qweather.com", { configured: false }),
 ];
@@ -681,9 +683,34 @@ export interface MockAgentDocument {
     web_search: {
       backend: string;
       max_results: number;
-      search_depth: string;
-      topic: string;
-      time_range: string | null;
+      tavily: {
+        search_depth: string;
+        topic: string;
+        time_range: string | null;
+      };
+      exa: {
+        search_type: string;
+        category: string | null;
+        contents: string;
+        text_max_characters: number | null;
+        max_age_hours: number | null;
+        include_domains: string[];
+        exclude_domains: string[];
+        user_location: string | null;
+        moderation: boolean;
+        time_range: string | null;
+      };
+      firecrawl: {
+        sources: string[];
+        categories: string[];
+        tbs: string | null;
+        country: string | null;
+        location: string | null;
+        scrape_format: string;
+        only_main_content: boolean;
+        safe: boolean;
+        highlights: boolean;
+      };
       connect_timeout_seconds: number;
       first_response_timeout_seconds: number;
       total_timeout_seconds: number;
@@ -702,9 +729,34 @@ export const agentDocument: MockAgentDocument = {
     web_search: {
       backend: "tavily",
       max_results: 5,
-      search_depth: "basic",
-      topic: "general",
-      time_range: null,
+      tavily: {
+        search_depth: "basic",
+        topic: "general",
+        time_range: null,
+      },
+      exa: {
+        search_type: "auto",
+        category: null,
+        contents: "highlights",
+        text_max_characters: null,
+        max_age_hours: null,
+        include_domains: [],
+        exclude_domains: [],
+        user_location: null,
+        moderation: false,
+        time_range: null,
+      },
+      firecrawl: {
+        sources: ["web"],
+        categories: [],
+        tbs: null,
+        country: null,
+        location: null,
+        scrape_format: "none",
+        only_main_content: true,
+        safe: false,
+        highlights: true,
+      },
       connect_timeout_seconds: 10,
       first_response_timeout_seconds: 30,
       total_timeout_seconds: 90,

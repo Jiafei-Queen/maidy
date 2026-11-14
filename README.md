@@ -144,6 +144,7 @@ runtime/botctl.sh status
 <details>
 <summary>展开查看 26.x / 25.x / 24.x 版本更新</summary>
 
+- **Exa / Firecrawl 搜索后端**（Unreleased）：`/查` 与 Agent 搜索新增 Exa、Firecrawl 独立 Search API，支持搜索模式、分类、内容提取、时间过滤、域名过滤和 Firecrawl 正文抓取等各家参数；Tavily 参数迁移到 `[tools.web_search.tavily]` 并兼容旧顶层字段。配置中心可分别保存 `EXA_API_KEY` / `FIRECRAWL_API_KEY`，默认 `provider_native` 行为不变。
 - **DeepSeek 独立搜索**（v0.26.1）：控制台可选择 DeepSeek Search，复用现有 DeepSeek 凭据，无需绑定搜索模型。配置与限制见 [LLM 文档](qq-maid-llm/README.md#deepseek-独立-search-api)。
 - **Web Console React 改版**（v0.26.0，PR #703）：全部管理页面与首次认证流程迁移到 React 19 + Vite；配置中心恢复供应商连接、模型发现与覆盖、Agent 策略、主题和背景编辑。Todo、Memory、知识库等仍调用原有受保护 API，敏感值只显示配置状态，保存继续使用 revision 冲突保护。现有 `/console/` 地址、管理员会话、同源与 CSRF 边界不变；无需 SQLite migration、必填环境变量或配置迁移。升级后请刷新控制台并重新登录，再核对供应商连接和模型路线。
 

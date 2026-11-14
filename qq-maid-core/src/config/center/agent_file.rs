@@ -9,8 +9,8 @@ use toml::Value;
 
 use crate::config::agent::{
     AgentConfigDocument, AgentConfigSource, AgentProfileConfig, AgentProviderKind,
-    AgentRuntimeConfig, AgentSceneConfig, ChatScene, KnowledgeEmbeddingConfig,
-    KnowledgeRetrievalMode, ProviderFile, RouteFile, SearchRouteFile,
+    AgentRuntimeConfig, AgentSceneConfig, ChatScene, ExaConfigFile, FirecrawlConfigFile,
+    KnowledgeEmbeddingConfig, KnowledgeRetrievalMode, ProviderFile, RouteFile, SearchRouteFile,
 };
 
 use super::{
@@ -54,6 +54,12 @@ pub enum AgentConfigChange {
         first_response_timeout_seconds: u64,
         total_timeout_seconds: u64,
     },
+    SetWebSearchExa {
+        options: AgentWebSearchExaUpdate,
+    },
+    SetWebSearchFirecrawl {
+        options: AgentWebSearchFirecrawlUpdate,
+    },
     RemoveSearchRoute {
         name: String,
     },
@@ -91,6 +97,56 @@ pub struct AgentProviderUpdate {
     pub request_timeout_seconds: Option<u64>,
     #[serde(default)]
     pub chat_fallback: Option<bool>,
+}
+
+/// Web 配置中心可写入的 Exa 搜索参数；完整替换 `[tools.web_search.exa]`。
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWebSearchExaUpdate {
+    #[serde(default)]
+    pub search_type: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub contents: Option<String>,
+    #[serde(default)]
+    pub text_max_characters: Option<u32>,
+    #[serde(default)]
+    pub max_age_hours: Option<i32>,
+    #[serde(default)]
+    pub include_domains: Vec<String>,
+    #[serde(default)]
+    pub exclude_domains: Vec<String>,
+    #[serde(default)]
+    pub user_location: Option<String>,
+    #[serde(default)]
+    pub moderation: bool,
+    #[serde(default)]
+    pub time_range: Option<String>,
+}
+
+/// Web 配置中心可写入的 Firecrawl 搜索参数；完整替换 `[tools.web_search.firecrawl]`。
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWebSearchFirecrawlUpdate {
+    #[serde(default = "default_firecrawl_sources")]
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub categories: Vec<String>,
+    #[serde(default)]
+    pub tbs: Option<String>,
+    #[serde(default)]
+    pub country: Option<String>,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub scrape_format: Option<String>,
+    #[serde(default = "default_true")]
+    pub only_main_content: bool,
+    #[serde(default)]
+    pub safe: bool,
+    #[serde(default = "default_true")]
+    pub highlights: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -325,12 +381,44 @@ fn apply_change(
             let web_search = &mut document.tools.web_search;
             web_search.backend = backend.clone();
             web_search.max_results = *max_results;
-            web_search.search_depth = search_depth.clone();
-            web_search.topic = topic.clone();
-            web_search.time_range = time_range.clone();
+            // 新格式统一写入 `[tools.web_search.tavily]`，并清空旧顶层字段，
+            // 避免两份 Tavily 参数同时存在时产生歧义。
+            web_search.tavily.search_depth = Some(search_depth.clone());
+            web_search.tavily.topic = Some(topic.clone());
+            web_search.tavily.time_range = time_range.clone();
+            web_search.search_depth = None;
+            web_search.topic = None;
+            web_search.time_range = None;
             web_search.connect_timeout_seconds = *connect_timeout_seconds;
             web_search.first_response_timeout_seconds = *first_response_timeout_seconds;
             web_search.total_timeout_seconds = *total_timeout_seconds;
+        }
+        AgentConfigChange::SetWebSearchExa { options } => {
+            document.tools.web_search.exa = ExaConfigFile {
+                search_type: options.search_type.clone(),
+                category: options.category.clone(),
+                contents: options.contents.clone(),
+                text_max_characters: options.text_max_characters,
+                max_age_hours: options.max_age_hours,
+                include_domains: options.include_domains.clone(),
+                exclude_domains: options.exclude_domains.clone(),
+                user_location: options.user_location.clone(),
+                moderation: options.moderation,
+                time_range: options.time_range.clone(),
+            };
+        }
+        AgentConfigChange::SetWebSearchFirecrawl { options } => {
+            document.tools.web_search.firecrawl = FirecrawlConfigFile {
+                sources: Some(options.sources.clone()),
+                categories: options.categories.clone(),
+                tbs: options.tbs.clone(),
+                country: options.country.clone(),
+                location: options.location.clone(),
+                scrape_format: options.scrape_format.clone(),
+                only_main_content: options.only_main_content,
+                safe: options.safe,
+                highlights: options.highlights,
+            };
         }
         AgentConfigChange::RemoveSearchRoute { name } => {
             let name = entry_name(name)?;
@@ -364,6 +452,14 @@ fn provider_entry_name(name: &str) -> Result<String, ConfigCenterError> {
 
 fn default_provider_auth_header() -> String {
     "Authorization".to_owned()
+}
+
+fn default_firecrawl_sources() -> Vec<String> {
+    vec!["web".to_owned()]
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_provider_enabled() -> bool {

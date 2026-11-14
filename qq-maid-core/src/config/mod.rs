@@ -596,6 +596,8 @@ impl AppConfig {
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             web_search,
             tavily_api_key: env_optional("TAVILY_API_KEY"),
+            exa_api_key: env_optional("EXA_API_KEY"),
+            firecrawl_api_key: env_optional("FIRECRAWL_API_KEY"),
         }
     }
 }

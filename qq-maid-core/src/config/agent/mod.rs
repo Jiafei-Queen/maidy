@@ -17,8 +17,10 @@ mod provider_config;
 mod web_search_config;
 
 use provider_config::{default_auth_header, default_auth_scheme, provider_from_file};
-pub(in crate::config) use web_search_config::ToolsConfigFile;
 use web_search_config::web_search_from_file;
+pub(in crate::config) use web_search_config::{
+    ExaConfigFile, FirecrawlConfigFile, ToolsConfigFile,
+};
 
 pub const DEFAULT_AGENT_CONFIG_PATH: &str = "config/agent.toml";
 pub const AGENT_CONFIG_FILE_ENV: &str = "AGENT_CONFIG_FILE";
@@ -551,12 +553,15 @@ impl AgentRuntimeConfig {
                     ))
                 })?,
             // 独立搜索后端和 disabled 不调用模型原生搜索，允许配置中完全移除旧 search route。
-            WebSearchBackend::Tavily | WebSearchBackend::DeepSeek | WebSearchBackend::Disabled => {
-                self.web_search_routes
-                    .get(search_route_name)
-                    .cloned()
-                    .unwrap_or_default()
-            }
+            WebSearchBackend::Tavily
+            | WebSearchBackend::DeepSeek
+            | WebSearchBackend::Exa
+            | WebSearchBackend::Firecrawl
+            | WebSearchBackend::Disabled => self
+                .web_search_routes
+                .get(search_route_name)
+                .cloned()
+                .unwrap_or_default(),
         };
         let max_tool_rounds = scene_policy
             .max_tool_rounds
@@ -600,9 +605,34 @@ impl AgentRuntimeConfig {
                 "web_search": {
                     "backend": self.web_search.default_backend.as_str(),
                     "max_results": self.web_search.max_results,
-                    "search_depth": self.web_search.search_depth.as_str(),
-                    "topic": self.web_search.topic.as_str(),
-                    "time_range": self.web_search.time_range.map(WebSearchTimeRange::as_str),
+                    "tavily": {
+                        "search_depth": self.web_search.tavily.search_depth.as_str(),
+                        "topic": self.web_search.tavily.topic.as_str(),
+                        "time_range": self.web_search.tavily.time_range.map(WebSearchTimeRange::as_str),
+                    },
+                    "exa": {
+                        "search_type": self.web_search.exa.search_type.as_str(),
+                        "category": self.web_search.exa.category.map(|category| category.as_str()),
+                        "contents": self.web_search.exa.contents.as_str(),
+                        "text_max_characters": self.web_search.exa.text_max_characters,
+                        "max_age_hours": self.web_search.exa.max_age_hours,
+                        "include_domains": &self.web_search.exa.include_domains,
+                        "exclude_domains": &self.web_search.exa.exclude_domains,
+                        "user_location": &self.web_search.exa.user_location,
+                        "moderation": self.web_search.exa.moderation,
+                        "time_range": self.web_search.exa.time_range.map(WebSearchTimeRange::as_str),
+                    },
+                    "firecrawl": {
+                        "sources": self.web_search.firecrawl.sources.iter().map(|source| source.as_str()).collect::<Vec<_>>(),
+                        "categories": self.web_search.firecrawl.categories.iter().map(|category| category.as_str()).collect::<Vec<_>>(),
+                        "tbs": &self.web_search.firecrawl.tbs,
+                        "country": &self.web_search.firecrawl.country,
+                        "location": &self.web_search.firecrawl.location,
+                        "scrape_format": self.web_search.firecrawl.scrape_format.as_str(),
+                        "only_main_content": self.web_search.firecrawl.only_main_content,
+                        "safe": self.web_search.firecrawl.safe,
+                        "highlights": self.web_search.firecrawl.highlights,
+                    },
                     "connect_timeout_seconds": self.web_search.connect_timeout_seconds,
                     "first_response_timeout_seconds": self.web_search.first_response_timeout_seconds,
                     "total_timeout_seconds": self.web_search.total_timeout_seconds,

@@ -12,15 +12,23 @@ use super::{
     DynWebSearchExecutor, WebSearchBackend, WebSearchExecutor, WebSearchOutcome, WebSearchRequest,
 };
 
+/// 独立搜索后端执行器集合；与 provider 原生搜索执行器分开传递，避免构造函数
+/// 参数持续膨胀。
+pub(super) struct BackendExecutors {
+    pub tavily: DynWebSearchExecutor,
+    pub exa: DynWebSearchExecutor,
+    pub firecrawl: DynWebSearchExecutor,
+    pub deepseek: DynWebSearchExecutor,
+    pub disabled: DynWebSearchExecutor,
+}
+
 /// 先按统一后端配置分流；provider_native 再按完整 `provider:model` 身份选择执行器。
 pub(super) struct RoutedWebSearchExecutor {
     default_backend: WebSearchBackend,
     default_model: String,
     default_max_results: u8,
     native_providers: HashMap<ModelProvider, DynWebSearchExecutor>,
-    tavily: DynWebSearchExecutor,
-    deepseek: DynWebSearchExecutor,
-    disabled: DynWebSearchExecutor,
+    backends: BackendExecutors,
 }
 
 impl RoutedWebSearchExecutor {
@@ -29,18 +37,14 @@ impl RoutedWebSearchExecutor {
         default_model: String,
         default_max_results: u8,
         native_providers: HashMap<ModelProvider, DynWebSearchExecutor>,
-        tavily: DynWebSearchExecutor,
-        deepseek: DynWebSearchExecutor,
-        disabled: DynWebSearchExecutor,
+        backends: BackendExecutors,
     ) -> Self {
         Self {
             default_backend,
             default_model,
             default_max_results,
             native_providers,
-            tavily,
-            deepseek,
-            disabled,
+            backends,
         }
     }
 
@@ -62,9 +66,11 @@ impl RoutedWebSearchExecutor {
             .as_deref()
             .unwrap_or(self.default_model.as_str());
         match backend {
-            WebSearchBackend::DeepSeek => Ok((self.deepseek.clone(), req)),
-            WebSearchBackend::Tavily => Ok((self.tavily.clone(), req)),
-            WebSearchBackend::Disabled => Ok((self.disabled.clone(), req)),
+            WebSearchBackend::DeepSeek => Ok((self.backends.deepseek.clone(), req)),
+            WebSearchBackend::Tavily => Ok((self.backends.tavily.clone(), req)),
+            WebSearchBackend::Exa => Ok((self.backends.exa.clone(), req)),
+            WebSearchBackend::Firecrawl => Ok((self.backends.firecrawl.clone(), req)),
+            WebSearchBackend::Disabled => Ok((self.backends.disabled.clone(), req)),
             WebSearchBackend::ProviderNative => {
                 let model = ModelId::parse(configured_model, "request")?;
                 // 裸模型是历史公开配置格式，只在这一处明确兼容为内置 OpenAI；
@@ -80,7 +86,7 @@ impl RoutedWebSearchExecutor {
                 {
                     return Err(LlmError::new(
                         "bad_request",
-                        "DeepSeek 旧 Chat 模型不支持 provider_native 搜索；请将 tools.web_search.routes.<name>.model 改为 deepseek:deepseek-v4-flash，或使用 Tavily",
+                        "DeepSeek 旧 Chat 模型不支持 provider_native 搜索；请将 tools.web_search.routes.<name>.model 改为 deepseek:deepseek-v4-flash，或改用 Tavily、Exa、Firecrawl",
                         "request",
                     ));
                 }
@@ -181,9 +187,13 @@ mod tests {
             "openai:gpt-search".to_owned(),
             8,
             native_providers,
-            Arc::new(MarkerExecutor("tavily")),
-            Arc::new(MarkerExecutor("deepseek")),
-            Arc::new(MarkerExecutor("disabled")),
+            BackendExecutors {
+                tavily: Arc::new(MarkerExecutor("tavily")),
+                exa: Arc::new(MarkerExecutor("exa")),
+                firecrawl: Arc::new(MarkerExecutor("firecrawl")),
+                deepseek: Arc::new(MarkerExecutor("deepseek")),
+                disabled: Arc::new(MarkerExecutor("disabled")),
+            },
         );
         let base_req = WebSearchRequest {
             query: "测试".to_owned(),
@@ -248,6 +258,19 @@ mod tests {
         };
         assert_eq!(err.code, "bad_request");
         assert!(err.message.contains("not configured for provider_native"));
+
+        for (backend, provider_name) in [
+            (WebSearchBackend::Exa, "exa"),
+            (WebSearchBackend::Firecrawl, "firecrawl"),
+        ] {
+            let (provider, _) = executor
+                .route_request(WebSearchRequest {
+                    backend_override: Some(backend),
+                    ..base_req.clone()
+                })
+                .unwrap();
+            assert_eq!(provider.provider_name(), provider_name);
+        }
 
         let (provider, routed_req) = executor
             .route_request(WebSearchRequest {

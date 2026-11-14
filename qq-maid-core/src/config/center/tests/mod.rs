@@ -235,6 +235,24 @@ fn tavily_api_key_is_managed_as_restart_secret() {
 }
 
 #[test]
+fn exa_and_firecrawl_api_keys_are_managed_as_restart_secrets() {
+    let fields = crate::config::managed_config_fields();
+    for (key, env_name) in [
+        ("tools.web_search.exa.api_key", "EXA_API_KEY"),
+        ("tools.web_search.firecrawl.api_key", "FIRECRAWL_API_KEY"),
+    ] {
+        let field = fields
+            .iter()
+            .find(|field| field.key == key)
+            .unwrap_or_else(|| panic!("managed field `{key}`"));
+        assert_eq!(field.env_name, env_name);
+        assert_eq!(field.sensitivity, ManagedConfigSensitivity::Secret);
+        assert_eq!(field.apply_mode, ManagedConfigApplyMode::Restart);
+        assert!(field.web_editable);
+    }
+}
+
+#[test]
 fn compatibility_environment_alias_is_an_editable_fallback() {
     let (database, directory) =
         SqliteDatabase::open_temp_directory("qq-maid-config-alias", &[CONFIG_SECRET_SCHEMA_V1])

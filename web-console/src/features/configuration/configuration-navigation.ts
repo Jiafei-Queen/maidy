@@ -30,6 +30,8 @@ export const FIELD_LABELS: Record<string, string> = {
   "provider.mimo.api_key": "MiMo API Key",
   "provider.opencode.api_key": "OpenCode API Key",
   "tools.web_search.tavily.api_key": "Tavily API Key",
+  "tools.web_search.exa.api_key": "Exa API Key",
+  "tools.web_search.firecrawl.api_key": "Firecrawl API Key",
   "weather.qweather.api_key": "和风天气 API Key",
   "weather.qweather.api_host": "QWeather API Host",
   "weather.qweather.geo_host": "QWeather Geo Host",
