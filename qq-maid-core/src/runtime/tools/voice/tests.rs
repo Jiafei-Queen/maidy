@@ -194,12 +194,36 @@ fn metadata_is_side_effecting_and_limited_to_one_call() {
     assert_eq!(tool.max_calls_per_request(), Some(1));
 }
 
+#[tokio::test]
+async fn onebot_requests_bind_a_normalized_voice_target() {
+    let sink = Arc::new(RecordingSink::success());
+    let tool = SendVoiceTool::new(sink.clone(), 600);
+    let mut request = private_request();
+    request.platform = "onebot".to_owned();
+    request.account_id = Some("10001".to_owned());
+    request.conversation_id = Some("20002".to_owned());
+    let scoped = tool
+        .scoped_for_request(&request)
+        .expect("onebot request should provide a voice target");
+    assert!(SendVoiceTool::supports_request(&request));
+
+    let output = scoped
+        .execute(context(), json!({"text": "晚安"}))
+        .await
+        .unwrap();
+    assert_eq!(output.value["ok"], true);
+    let calls = sink.calls();
+    assert_eq!(calls[0].target.platform, "onebot11");
+    assert_eq!(calls[0].target.account_id.as_deref(), Some("10001"));
+    assert_eq!(calls[0].target.target_id, "20002");
+}
+
 #[test]
-fn only_qq_official_requests_can_bind_a_voice_target() {
+fn unsupported_platforms_cannot_bind_a_voice_target() {
     let sink = Arc::new(RecordingSink::success());
     let tool = SendVoiceTool::new(sink, 600);
     let mut request = private_request();
-    request.platform = "onebot11".to_owned();
+    request.platform = "wechat_service".to_owned();
     assert!(tool.scoped_for_request(&request).is_none());
     assert!(!SendVoiceTool::supports_request(&request));
 }

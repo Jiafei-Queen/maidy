@@ -46,15 +46,19 @@ pub enum OneBotSendError {
     InvalidTargetId,
     #[error("invalid OneBot image payload: missing URL, absolute local path, or base64 data")]
     InvalidImage,
+    #[error("invalid OneBot voice payload: missing audio file or base64 data")]
+    InvalidVoice,
 }
 
 impl OneBotSendError {
     fn retcode(&self) -> Option<i64> {
         match self {
             Self::Rejected { retcode, .. } => Some(*retcode),
-            Self::Transport(_) | Self::InvalidData | Self::InvalidTargetId | Self::InvalidImage => {
-                None
-            }
+            Self::Transport(_)
+            | Self::InvalidData
+            | Self::InvalidTargetId
+            | Self::InvalidImage
+            | Self::InvalidVoice => None,
         }
     }
 }
@@ -139,6 +143,24 @@ impl OneBotSender {
             image,
         )
         .await
+    }
+
+    pub async fn send_private_voice(
+        &self,
+        user_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        self.send_voice(SEND_PRIVATE_MSG, "user_id", user_id, file)
+            .await
+    }
+
+    pub async fn send_group_voice(
+        &self,
+        group_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        self.send_voice(SEND_GROUP_MSG, "group_id", group_id, file)
+            .await
     }
 
     async fn send_text(
@@ -261,6 +283,42 @@ impl OneBotSender {
         }
         result
     }
+
+    async fn send_voice(
+        &self,
+        action: &'static str,
+        target_key: &'static str,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        let started = Instant::now();
+        let target_id = parse_target_id(target_id)?;
+        let params = build_voice_params(target_key, target_id, file)?;
+        let result = self
+            .connection
+            .call(action, params)
+            .await
+            .map_err(OneBotSendError::from)
+            .and_then(validate_send_response);
+        let elapsed_ms = started.elapsed().as_millis();
+        let target = mask_identifier(&target_id.to_string());
+        match &result {
+            Ok(_) => info!(
+                action,
+                elapsed_ms,
+                target = %target,
+                "OneBot 11 语音已发送"
+            ),
+            Err(error) => warn!(
+                action,
+                retcode = ?error.retcode(),
+                elapsed_ms,
+                target = %target,
+                "OneBot 11 语音发送失败"
+            ),
+        }
+        result
+    }
 }
 
 fn onebot_image_file(image: &ImagePayload) -> Result<String, OneBotSendError> {
@@ -319,6 +377,21 @@ fn build_image_params(
     Ok(json!({
         target_key: Value::Number(Number::from(target_id)),
         "message": message,
+    }))
+}
+
+fn build_voice_params(
+    target_key: &'static str,
+    target_id: u64,
+    file: &str,
+) -> Result<Value, OneBotSendError> {
+    let file = file.trim();
+    if file.is_empty() {
+        return Err(OneBotSendError::InvalidVoice);
+    }
+    Ok(json!({
+        target_key: Value::Number(Number::from(target_id)),
+        "message": [{"type": "record", "data": {"file": file}}],
     }))
 }
 
@@ -538,5 +611,21 @@ mod tests {
                 ],
             })
         );
+    }
+
+    #[test]
+    fn voice_params_use_record_segment_and_reject_empty_file() {
+        let params = build_voice_params("user_id", 456, "base64://aGVsbG8=").unwrap();
+        assert_eq!(
+            params,
+            json!({
+                "user_id": 456,
+                "message": [{"type": "record", "data": {"file": "base64://aGVsbG8="}}],
+            })
+        );
+        assert!(matches!(
+            build_voice_params("user_id", 456, "   "),
+            Err(OneBotSendError::InvalidVoice)
+        ));
     }
 }

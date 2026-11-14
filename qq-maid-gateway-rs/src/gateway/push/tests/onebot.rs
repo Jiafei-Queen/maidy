@@ -267,3 +267,40 @@ async fn onebot_transport_failure_is_propagated_for_outbox_retry() {
 
     assert!(err.to_string().contains("outbound queue is closed"));
 }
+
+#[tokio::test]
+async fn onebot_voice_tool_sends_record_segment_for_private_and_group_targets() {
+    use qq_maid_core::runtime::tools::voice::{VoiceSendIntent, VoiceSendSink};
+
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    sink.set_voice_provider(Some(Arc::new(StaticTtsProvider)));
+
+    let private = sink
+        .send_voice(VoiceSendIntent {
+            target: PushTarget::onebot11("bot-1", PushTargetType::Private, "20002"),
+            reply_to_message_id: None,
+            text: "晚安".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(private.message_id.as_deref(), Some("ob-private-voice-1"));
+
+    let group = sink
+        .send_voice(VoiceSendIntent {
+            target: PushTarget::onebot11("bot-1", PushTargetType::Group, "30003"),
+            reply_to_message_id: None,
+            text: "群里晚安".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(group.message_id.as_deref(), Some("ob-group-voice-1"));
+    assert_eq!(
+        sender.calls(),
+        vec![
+            "private-voice:20002:https://audio.example.test/voice.wav",
+            "group-voice:30003:https://audio.example.test/voice.wav",
+        ]
+    );
+}

@@ -24,6 +24,18 @@ struct MockOneBotSender {
     fail: bool,
 }
 
+struct StaticTtsProvider;
+
+impl TtsProvider for StaticTtsProvider {
+    fn synthesize<'a>(&'a self, _text: &'a str) -> crate::tts::TtsFuture<'a> {
+        Box::pin(async {
+            Ok(crate::tts::TtsAudio::Url(
+                "https://audio.example.test/voice.wav".to_owned(),
+            ))
+        })
+    }
+}
+
 impl MockOneBotSender {
     fn connected(account_id: &str) -> Self {
         Self {
@@ -102,6 +114,46 @@ impl PushOneBotSender for MockOneBotSender {
         } else {
             Ok(OneBotSendResult {
                 message_id: "ob-group-1".to_owned(),
+            })
+        }
+    }
+
+    async fn send_private_voice(
+        &self,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("private-voice:{target_id}:{file}"));
+        if self.fail {
+            Err(OneBotSendError::Transport(
+                crate::gateway::onebot11::OneBotCallError::ConnectionClosed,
+            ))
+        } else {
+            Ok(OneBotSendResult {
+                message_id: "ob-private-voice-1".to_owned(),
+            })
+        }
+    }
+
+    async fn send_group_voice(
+        &self,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("group-voice:{target_id}:{file}"));
+        if self.fail {
+            Err(OneBotSendError::Transport(
+                crate::gateway::onebot11::OneBotCallError::ConnectionClosed,
+            ))
+        } else {
+            Ok(OneBotSendResult {
+                message_id: "ob-group-voice-1".to_owned(),
             })
         }
     }
@@ -256,7 +308,7 @@ mod onebot;
 mod qq;
 
 #[tokio::test]
-async fn voice_sink_rejects_non_qq_platform_and_missing_provider() {
+async fn voice_sink_rejects_unsupported_platform_and_missing_provider() {
     use qq_maid_core::runtime::tools::voice::{VoiceSendError, VoiceSendIntent, VoiceSendSink};
 
     let sink = GatewayPushSink::unbound();
@@ -272,11 +324,15 @@ async fn voice_sink_rejects_non_qq_platform_and_missing_provider() {
     };
 
     assert!(matches!(
-        sink.send_voice(intent("onebot11")).await,
+        sink.send_voice(intent("wechat_service")).await,
         Err(VoiceSendError::UnsupportedPlatform)
     ));
     assert!(matches!(
         sink.send_voice(intent("qq_official")).await,
+        Err(VoiceSendError::Unavailable)
+    ));
+    assert!(matches!(
+        sink.send_voice(intent("onebot11")).await,
         Err(VoiceSendError::Unavailable)
     ));
 }

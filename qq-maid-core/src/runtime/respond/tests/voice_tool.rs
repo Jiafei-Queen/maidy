@@ -35,3 +35,25 @@ async fn group_restricted_voice_tool_sends_voice_and_keeps_model_reply() {
     assert!(exposed.contains(&"send_voice".to_owned()));
     assert!(!exposed.contains(&"get_weather".to_owned()));
 }
+
+#[tokio::test]
+async fn onebot_private_chat_exposes_voice_tool_and_binds_onebot_target() {
+    let provider = MockProvider::new()
+        .with_tool_protocol(ToolCallingProtocol::OpenAiResponses)
+        .with_tool_call_json("send_voice", r#"{"text":"晚安"}"#, "晚安呀");
+    let (service, sink) = test_service_with_provider_and_voice_tool(provider.clone(), None);
+    let mut request = private_message("用语音说晚安");
+    request.platform = "onebot".to_owned();
+    request.account_id = Some("10001".to_owned());
+    request.conversation_kind = ConversationKind::Private;
+    request.conversation_id = Some("20002".to_owned());
+
+    let response = service.respond(request).await.unwrap();
+
+    assert!(response.text.as_deref().unwrap().contains("晚安呀"));
+    let calls = sink.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].target.platform, "onebot11");
+    assert_eq!(calls[0].target.account_id.as_deref(), Some("10001"));
+    assert_eq!(calls[0].target.target_id, "20002");
+}

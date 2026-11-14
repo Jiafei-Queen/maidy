@@ -11,6 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use qq_maid_core::runtime::{
     push::{
         ONEBOT11_PLATFORM, PushError, PushIntent, PushResult, PushSink, PushTarget, PushTargetType,
@@ -131,6 +132,16 @@ trait PushOneBotSender: Send + Sync {
         mention_user_ids: &[String],
         text: &str,
     ) -> Result<OneBotSendResult, OneBotSendError>;
+    async fn send_private_voice(
+        &self,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError>;
+    async fn send_group_voice(
+        &self,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError>;
 }
 
 #[async_trait]
@@ -162,6 +173,22 @@ impl PushOneBotSender for OneBotSender {
         text: &str,
     ) -> Result<OneBotSendResult, OneBotSendError> {
         OneBotSender::send_group_text_with_mentions(self, target_id, mention_user_ids, text).await
+    }
+
+    async fn send_private_voice(
+        &self,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        OneBotSender::send_private_voice(self, target_id, file).await
+    }
+
+    async fn send_group_voice(
+        &self,
+        target_id: &str,
+        file: &str,
+    ) -> Result<OneBotSendResult, OneBotSendError> {
+        OneBotSender::send_group_voice(self, target_id, file).await
     }
 }
 
@@ -306,24 +333,126 @@ impl PushSink for GatewayPushSink {
 #[async_trait]
 impl VoiceSendSink for GatewayPushSink {
     async fn send_voice(&self, intent: VoiceSendIntent) -> Result<VoiceSendResult, VoiceSendError> {
-        if intent.target.platform.trim() != QQ_OFFICIAL_PLATFORM {
+        let platform = match intent.target.platform.trim() {
+            "onebot" => ONEBOT11_PLATFORM,
+            other => other,
+        };
+        if !matches!(platform, QQ_OFFICIAL_PLATFORM | ONEBOT11_PLATFORM) {
             return Err(VoiceSendError::UnsupportedPlatform);
         }
         let provider = self.voice_provider().ok_or(VoiceSendError::Unavailable)?;
         let runtime = self
-            .runtime(QQ_OFFICIAL_PLATFORM)
+            .runtime(platform)
             .await
             .map_err(|_| VoiceSendError::Unavailable)?;
         match runtime {
             RoutedPushRuntime::QqOfficial(runtime) => {
                 runtime.send_voice(provider.as_ref(), intent).await
             }
-            RoutedPushRuntime::OneBot11(_) => Err(VoiceSendError::UnsupportedPlatform),
+            RoutedPushRuntime::OneBot11(runtime) => {
+                runtime.send_voice(provider.as_ref(), intent).await
+            }
         }
     }
 }
 
 impl OneBotPushRuntime {
+    async fn send_voice(
+        &self,
+        provider: &dyn TtsProvider,
+        intent: VoiceSendIntent,
+    ) -> Result<VoiceSendResult, VoiceSendError> {
+        let target_id = intent.target.target_id.trim();
+        if target_id.is_empty() {
+            return Err(VoiceSendError::TargetMissing);
+        }
+        let target_account = intent
+            .target
+            .account_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|account| !account.is_empty())
+            .ok_or(VoiceSendError::Unavailable)?;
+        let connected_account = self
+            .sender
+            .connected_account_id()
+            .ok_or(VoiceSendError::Unavailable)?;
+        if target_account != connected_account {
+            return Err(VoiceSendError::Unavailable);
+        }
+        let text = intent.text.trim();
+        if text.is_empty() {
+            return Err(VoiceSendError::EmptyText);
+        }
+        let audio = provider
+            .synthesize(text)
+            .await
+            .map_err(|error| VoiceSendError::Tts { code: error.code() })?;
+        let file = onebot_voice_file(audio)?;
+        let result = match intent.target.target_type {
+            PushTargetType::Private => self.sender.send_private_voice(target_id, &file).await,
+            PushTargetType::Group => self.sender.send_group_voice(target_id, &file).await,
+        };
+        match result {
+            Ok(sent) => {
+                self.record_voice_ref_index(&intent.target, target_account, &sent.message_id, text);
+                info!(
+                    target_type = %intent.target.target_type.as_str(),
+                    target = %mask_identifier(target_id),
+                    "Gateway OneBot 语音工具已发送"
+                );
+                Ok(VoiceSendResult {
+                    message_id: Some(sent.message_id),
+                })
+            }
+            Err(error) => {
+                warn!(
+                    target_type = %intent.target.target_type.as_str(),
+                    target = %mask_identifier(target_id),
+                    error = %error,
+                    "Gateway OneBot 语音工具发送失败"
+                );
+                Err(voice_error_from_onebot(error))
+            }
+        }
+    }
+
+    fn record_voice_ref_index(
+        &self,
+        target: &PushTarget,
+        account_id: &str,
+        message_id: &str,
+        spoken_text: &str,
+    ) {
+        let conversation = match target.target_type {
+            PushTargetType::Private => ConversationTarget::Private {
+                target_id: target.target_id.clone(),
+            },
+            PushTargetType::Group => ConversationTarget::Group {
+                target_id: target.target_id.clone(),
+            },
+        };
+        let mut ref_index = match self.ref_index.lock() {
+            Ok(ref_index) => ref_index,
+            Err(_) => {
+                warn!(
+                    target_type = %target.target_type.as_str(),
+                    target = %mask_identifier(&target.target_id),
+                    "ref_index 锁已中毒，跳过写入 OneBot 语音引用索引"
+                );
+                return;
+            }
+        };
+        ref_index.insert_bot_outbound(
+            crate::gateway::platform::Platform::OneBot11,
+            Some(account_id),
+            &conversation,
+            Some(message_id.to_owned()),
+            spoken_text,
+            None,
+        );
+    }
+
     async fn push(&self, intent: PushIntent) -> Result<PushResult, PushError> {
         let target_id = intent.target.target_id.trim();
         let text = intent.text.trim();
@@ -716,6 +845,32 @@ fn voice_error_from_api(error: ApiError) -> VoiceSendError {
         ApiError::VoiceSend(_) => VoiceSendError::Send,
         ApiError::Unsupported(_) => VoiceSendError::UnsupportedPlatform,
         _ => VoiceSendError::Send,
+    }
+}
+
+fn onebot_voice_file(audio: TtsAudio) -> Result<String, VoiceSendError> {
+    match audio {
+        TtsAudio::Url(url) if !url.trim().is_empty() => Ok(url),
+        TtsAudio::Url(_) => Err(VoiceSendError::Tts {
+            code: "invalid_audio_url",
+        }),
+        TtsAudio::File { bytes, .. } if !bytes.is_empty() => {
+            Ok(format!("base64://{}", STANDARD.encode(bytes)))
+        }
+        TtsAudio::File { .. } => Err(VoiceSendError::Tts {
+            code: "empty_audio",
+        }),
+    }
+}
+
+fn voice_error_from_onebot(error: OneBotSendError) -> VoiceSendError {
+    match error {
+        OneBotSendError::InvalidTargetId => VoiceSendError::TargetMissing,
+        OneBotSendError::InvalidVoice => VoiceSendError::Send,
+        OneBotSendError::Transport(_)
+        | OneBotSendError::Rejected { .. }
+        | OneBotSendError::InvalidData
+        | OneBotSendError::InvalidImage => VoiceSendError::Send,
     }
 }
 

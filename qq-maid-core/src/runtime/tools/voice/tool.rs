@@ -16,7 +16,7 @@ use tracing::warn;
 use crate::{
     error::LlmError,
     runtime::{
-        push::{PushTarget, PushTargetType, QQ_OFFICIAL_PLATFORM},
+        push::{ONEBOT11_PLATFORM, PushTarget, PushTargetType, QQ_OFFICIAL_PLATFORM},
         respond::RespondRequest,
     },
 };
@@ -174,7 +174,13 @@ impl Tool for SendVoiceTool {
 }
 
 fn target_for_request(request: &RespondRequest) -> Option<VoiceSendTarget> {
-    if request.platform != QQ_OFFICIAL_PLATFORM {
+    let platform = request.platform.trim();
+    // OneBot 的 Core 平台名是 `onebot`，Gateway 投递路由名是 `onebot11`；
+    // PushTarget::new 会在边界统一规范化，这里两个值都接受。
+    if !matches!(
+        platform,
+        QQ_OFFICIAL_PLATFORM | ONEBOT11_PLATFORM | "onebot"
+    ) {
         return None;
     }
     let account_id = clean_optional(request.account_id.as_deref())?;
@@ -200,7 +206,7 @@ fn target_for_request(request: &RespondRequest) -> Option<VoiceSendTarget> {
     };
     Some(VoiceSendTarget {
         target: PushTarget::new(
-            QQ_OFFICIAL_PLATFORM,
+            platform,
             Some(account_id.to_owned()),
             target_type,
             target_id,
