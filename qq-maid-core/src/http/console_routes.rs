@@ -317,8 +317,9 @@ fn with_console_csp(mut response: Response) -> Response {
         header::CONTENT_SECURITY_POLICY,
         // img-src 允许 blob:：自定义背景通过 POST 文件接口读取为 Blob 后，
         // 前端以 object URL（blob:）渲染，CSP 必须放行才能显示。
+        // media-src 同理放行 TTS 试听生成的 Blob 音频。
         HeaderValue::from_static(
-            "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+            "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
         ),
     );
     response

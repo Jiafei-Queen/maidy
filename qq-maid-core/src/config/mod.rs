@@ -28,6 +28,7 @@ pub use agent::{
 };
 pub use managed::managed_config_fields;
 pub use voice::{
+    DEFAULT_OPENAI_TTS_BASE_URL, DEFAULT_OPENAI_TTS_MODEL, DEFAULT_OPENAI_TTS_VOICE,
     DEFAULT_QWEN_TTS_BASE_URL, DEFAULT_QWEN_TTS_MODEL, DEFAULT_QWEN_TTS_VOICE,
     DEFAULT_TTS_MAX_TEXT_CHARS, DEFAULT_TTS_REQUEST_TIMEOUT_SECONDS, TtsProviderMode,
     VoiceFeatureConfig, VoiceFeatureStatus, VoicePreflightError,

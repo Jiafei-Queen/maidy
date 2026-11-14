@@ -23,6 +23,7 @@ use qq_maid_gateway_rs::{
         console::GatewayConsoleStatusSource, ping::GatewayRuntimeStatus, push::GatewayPushSink,
     },
     respond::RespondClient,
+    tts::GatewayVoicePreview,
 };
 use time::{UtcOffset, macros::format_description};
 use tokio::sync::oneshot;
@@ -119,15 +120,17 @@ async fn run() -> anyhow::Result<()> {
             &gateway_config,
             &provider_preflight,
         );
-        return ManagementRuntime::new(
+        let voice_preview = Arc::new(GatewayVoicePreview::new())
+            as qq_maid_core::voice_preview::DynVoicePreviewService;
+        let runtime = ManagementRuntime::new(
             management_bootstrap,
             database,
             config_center.with_incomplete_setup_writes(),
             admin_auth,
             env!("CARGO_PKG_VERSION"),
         )?
-        .serve_with_shutdown(shutdown_signal())
-        .await;
+        .with_voice_preview(voice_preview);
+        return runtime.serve_with_shutdown(shutdown_signal()).await;
     }
     let core_config = core_config.expect("runtime readiness checked Core configuration");
     let gateway_config = gateway_config.expect("runtime readiness checked Gateway configuration");
@@ -160,7 +163,8 @@ async fn run() -> anyhow::Result<()> {
         Some(Arc::new(push_sink.clone())),
         console_status_source,
         env!("CARGO_PKG_VERSION"),
-    )?;
+    )?
+    .with_voice_preview(Arc::new(GatewayVoicePreview::new()));
     let core_handle = core_runtime.core_handle();
     let (core_shutdown_tx, core_shutdown_rx) = oneshot::channel::<()>();
     let mut core_http_handle = tokio::spawn(async move {

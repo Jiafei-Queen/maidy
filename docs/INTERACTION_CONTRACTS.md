@@ -133,6 +133,16 @@ Agent 使用 `PATCH /api/v1/console/configuration/agent`，所有变更共享 ag
 
 文案：`配置校验通过，未执行外部网络请求` 或 `配置未通过启动预检，未保存任何变更`。
 
+### 语音试听
+
+`POST /configuration/voice/preview` 使用当前进程已经生效的 TTS 配置生成音频并返回 raw audio，不经过 QQ 上传或消息发送：
+
+- 请求体只包含 `text`，长度受当前 `delivery.tts.max_text_chars` 约束。
+- 试听读取配置中心已保存并解密的 TTS 配置，保存后即可验证；重启后新配置才会影响实际 QQ 回复。
+- 上游非 2xx、超时、音频下载失败和空音频必须原样映射为明确错误，不能显示“试听成功”。
+- 成功响应只包含音频字节、`Content-Type`、`Content-Disposition` 和 `Cache-Control: private, no-store`；页面通过 Blob URL 播放或下载。
+- 试听与配置保存相互独立，不改变配置 revision，也不代表 QQ 语音发送链路已经验证。
+
 ### 服务重启
 
 重启前使用自定义 ConfirmDialog，而不是 `window.confirm`。确认内容必须写明：

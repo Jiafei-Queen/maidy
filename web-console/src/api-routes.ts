@@ -22,6 +22,7 @@ export const CONFIGURATION_ROUTES = {
   secrets: "/api/v1/console/configuration/secrets",
   agent: "/api/v1/console/configuration/agent",
   validate: "/api/v1/console/configuration/validate",
+  voicePreview: "/api/v1/console/configuration/voice/preview",
   testConnection: "/api/v1/console/configuration/test-connection",
 } as const;
 

@@ -12,7 +12,7 @@ use crate::{
         ApiError, C2cReplyTarget, GroupOutboundSender, GroupReplyTarget, OutboundSender,
         SendMessageIds,
     },
-    tts::TtsProvider,
+    tts::{TtsAudio, TtsProvider},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,10 +36,16 @@ pub(super) async fn try_c2c_voice_delivery<S: OutboundSender + ?Sized>(
     target: &C2cReplyTarget,
     response: &CoreResponse,
 ) -> VoiceDeliveryAttempt {
-    let Some(audio_url) = synthesize_if_requested(provider, response).await else {
+    let Some(audio) = synthesize_if_requested(provider, response).await else {
         return fallback_before_send(response);
     };
-    match sender.send_voice_url(target, &audio_url).await {
+    let result = match &audio {
+        TtsAudio::Url(url) => sender.send_voice_url(target, url).await,
+        TtsAudio::File { bytes, file_name } => {
+            sender.send_voice_file(target, bytes, file_name).await
+        }
+    };
+    match result {
         Ok(sent_ids) => {
             debug!(voice_delivery = "c2c", "QQ 语音最终回复已发送");
             VoiceDeliveryAttempt::Delivered(sent_ids)
@@ -54,10 +60,16 @@ pub(super) async fn try_group_voice_delivery<S: GroupOutboundSender + ?Sized>(
     target: &GroupReplyTarget,
     response: &CoreResponse,
 ) -> VoiceDeliveryAttempt {
-    let Some(audio_url) = synthesize_if_requested(provider, response).await else {
+    let Some(audio) = synthesize_if_requested(provider, response).await else {
         return fallback_before_send(response);
     };
-    match sender.send_voice_url(target, &audio_url).await {
+    let result = match &audio {
+        TtsAudio::Url(url) => sender.send_voice_url(target, url).await,
+        TtsAudio::File { bytes, file_name } => {
+            sender.send_voice_file(target, bytes, file_name).await
+        }
+    };
+    match result {
         Ok(sent_ids) => {
             debug!(voice_delivery = "group", "QQ 语音最终回复已发送");
             VoiceDeliveryAttempt::Delivered(sent_ids)
@@ -69,7 +81,7 @@ pub(super) async fn try_group_voice_delivery<S: GroupOutboundSender + ?Sized>(
 async fn synthesize_if_requested(
     provider: Option<&dyn TtsProvider>,
     response: &CoreResponse,
-) -> Option<String> {
+) -> Option<TtsAudio> {
     if response.delivery_hint != Some(CoreDeliveryHint::Voice) {
         return None;
     }
@@ -92,11 +104,12 @@ async fn synthesize_if_requested(
         return None;
     };
     match provider.synthesize(&text).await {
-        Ok(audio_url) => Some(audio_url),
+        Ok(audio) => Some(audio),
         Err(error) => {
             warn!(
                 voice_fallback_stage = "tts",
                 tts_error = error.code(),
+                tts_http_status = ?error.http_status(),
                 "语音合成失败，将发送原始文本"
             );
             None
@@ -155,7 +168,9 @@ mod tests {
         fn synthesize<'a>(&'a self, text: &'a str) -> TtsFuture<'a> {
             Box::pin(async move {
                 assert_eq!(text, "群聊朗读正文");
-                Ok("https://audio.example.test/group.wav".to_owned())
+                Ok(TtsAudio::Url(
+                    "https://audio.example.test/group.wav".to_owned(),
+                ))
             })
         }
     }

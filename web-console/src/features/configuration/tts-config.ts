@@ -10,6 +10,7 @@ import { configFieldLabel } from "./configuration-navigation.js";
 export const TTS_PROVIDER_OPTIONS: ReadonlyArray<readonly [string, string]> = [
   ["disabled", "关闭"],
   ["qwen", "千问"],
+  ["openai", "OpenAI"],
 ];
 
 export const TTS_NUMBER_RANGES: Readonly<Record<string, readonly [number, number]>> = {

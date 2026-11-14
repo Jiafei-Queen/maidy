@@ -43,13 +43,15 @@ runtime 或 secret 保存前会构造候选最终环境视图：未修改的当�
 | --- | --- | --- |
 | 命令 | `command.prefix`（WebUI 提供 `/`、`#`、`*` 下拉选项，重启生效） | 无 |
 | Provider | 各内置 Provider 的 Base URL、API mode，以及 `agent.toml` 中的 OpenCode Provider 元数据 | OpenAI、DeepSeek、BigModel、Gemini、MiMo、OpenCode API Key |
-| Core / 交付 | RSS、Memory、Todo 与 Todo 提醒时间、QQ 最终回复 TTS 参数 | `weather.qweather.api_key`、`tools.web_search.tavily.api_key`、`tools.web_search.exa.api_key`、`tools.web_search.firecrawl.api_key`、Qwen TTS API Key |
+| Core / 交付 | RSS、Memory、Todo 与 Todo 提醒时间、QQ 最终回复 TTS 参数 | `weather.qweather.api_key`、`tools.web_search.tavily.api_key`、`tools.web_search.exa.api_key`、`tools.web_search.firecrawl.api_key`、Qwen / OpenAI TTS API Key |
 | 控制台 | `console.enabled`、`console.allowed_origins` | 无 |
 | QQ 官方 | `platform.qq_official.enabled` | AppID、AppSecret |
 | OneBot 11 | enabled、bind host/port、WebSocket path | Access Token |
 | 微信服务号 | enabled、encryption mode、bind host/port、callback path | Token、AppID、AppSecret、EncodingAESKey |
 
 配置页按模型与供应商、模型路由、联网与工具、记忆与知识库、回复与语音、平台接入、待办与通知、系统与安全等业务场景分组；runtime 普通值、加密 Secret 与 Agent 策略仍分别使用原有写入协议和 revision。字段标签使用中文，底层稳定 key 不变。`command.prefix` 必须是一个可见非空白字符，自定义后仅新前缀可触发命令，旧 `/`、消息中段前缀和重复前缀按普通文本处理。
+
+“回复与语音”提供 TTS 试听：使用配置中心已保存的 Provider、模型、音色和密钥生成音频并在浏览器播放，不经过 QQ 上传或发送。保存后即可试听；试听不改变配置 revision，重启后新配置才会影响实际 QQ 回复。
 
 `provider.main_model`、Provider 默认模型、私聊/群聊 Tool Calling 开关等 Agent 策略不登记到 `runtime.toml`；route/profile/scene 的结构化接口统一修改 `agent.toml`。监听地址/端口、数据库路径、受管文件路径、主密钥路径、Agent/ops 文件路径和 `/ops` 执行规则属于 Bootstrap 或高风险部署项，只允许通过明确的文件/环境配置管理。
 

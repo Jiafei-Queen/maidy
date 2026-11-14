@@ -183,7 +183,7 @@ async fn voice_enable_rejects_unavailable_configs_without_writing_enabled_state(
     let configs = [
         (
             crate::config::VoiceFeatureConfig::default(),
-            "语音功能当前未启用，请先配置 TTS_PROVIDER=qwen",
+            "语音功能当前未启用，请先配置 TTS_PROVIDER=qwen 或 openai",
         ),
         (
             crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([(
@@ -191,6 +191,13 @@ async fn voice_enable_rejects_unavailable_configs_without_writing_enabled_state(
                 "qwen".to_owned(),
             )])),
             "语音功能不可用：缺少 QWEN_TTS_API_KEY",
+        ),
+        (
+            crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([(
+                "TTS_PROVIDER".to_owned(),
+                "openai".to_owned(),
+            )])),
+            "语音功能不可用：缺少 OPENAI_TTS_API_KEY",
         ),
         (
             crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([
@@ -201,7 +208,7 @@ async fn voice_enable_rejects_unavailable_configs_without_writing_enabled_state(
                     "http://invalid.example.test/tts".to_owned(),
                 ),
             ])),
-            "语音功能配置预检失败，请联系管理员检查 TTS 配置",
+            "语音功能不可用：QWEN_TTS_BASE_URL 无效",
         ),
     ];
 

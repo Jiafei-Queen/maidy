@@ -71,6 +71,8 @@ pub struct OpsHttpState {
     pub registered_tools: Arc<Vec<ConsoleToolMetadata>>,
     /// 仅复用部署目录中的受控 botctl 脚本，不直接操作 systemd 或 Docker。
     pub restart_controller: ConsoleRestartController,
+    /// 配置中心 TTS 试听服务；由根入口注入 Gateway 实现。
+    pub(crate) voice_preview: Option<crate::voice_preview::DynVoicePreviewService>,
     /// 缺少 Provider 或平台入口时仍开放管理恢复入口，但不能伪报机器人已经就绪。
     pub setup_required: bool,
 }
@@ -104,6 +106,14 @@ impl OpsHttpState {
         self
     }
 
+    pub(crate) fn with_voice_preview(
+        mut self,
+        service: crate::voice_preview::DynVoicePreviewService,
+    ) -> Self {
+        self.voice_preview = Some(service);
+        self
+    }
+
     pub fn from_parts(
         config: OpsHttpConfig,
         provider: DynLlmProvider,
@@ -132,6 +142,7 @@ impl OpsHttpState {
             knowledge_files: None,
             registered_tools: Arc::new(Vec::new()),
             restart_controller: ConsoleRestartController::default(),
+            voice_preview: None,
             setup_required: false,
         }
     }
@@ -177,6 +188,7 @@ impl OpsHttpState {
             knowledge_files: None,
             registered_tools: Arc::new(Vec::new()),
             restart_controller: ConsoleRestartController::from_current_dir(),
+            voice_preview: None,
             setup_required: false,
         }
     }
@@ -201,6 +213,7 @@ impl OpsHttpState {
             knowledge_files: None,
             registered_tools: Arc::new(Vec::new()),
             restart_controller: ConsoleRestartController::from_current_dir(),
+            voice_preview: None,
             setup_required: true,
         }
     }

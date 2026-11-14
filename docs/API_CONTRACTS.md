@@ -22,6 +22,7 @@
 | PATCH | `/api/v1/console/configuration/secrets` | 替换或清除 secret | admin + CSRF |
 | PATCH | `/api/v1/console/configuration/agent` | 保存 Agent 策略 | admin + CSRF |
 | POST | `/api/v1/console/configuration/validate` | 本地配置预检 | admin + CSRF |
+| POST | `/api/v1/console/configuration/voice/preview` | 用当前生效 TTS 配置生成试听音频 | admin + CSRF，成功返回 raw audio |
 | POST | `/api/v1/console/restart` | 提交受控重启 | admin + CSRF |
 | POST | `/api/v1/markdown/render` | 服务端 Markdown 安全预览 | 只读 |
 | POST | `/api/v1/console/knowledge/files/capabilities` | 读取知识库文件能力和限制 | admin + CSRF |

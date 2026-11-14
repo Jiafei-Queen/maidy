@@ -86,4 +86,4 @@ git diff --exit-code -- web-console/dist
 | [INTERACTION_CONTRACTS.md](../docs/INTERACTION_CONTRACTS.md) | 配置保存、修改、冲突、密钥和重启交互协议 |
 | [ADDING_A_PAGE.md](ADDING_A_PAGE.md) | 新增页面、组件、主题和 API 消费者的步骤 |
 
-当前顶层页面包含 Overview、Platforms、Todo、Memory、知识库、Configuration、Storage、Tools。知识库页面管理托管文件的查看、上传、下载、删除和失败重试；目录来源文件只读。Configuration 按模型与供应商、模型路由、联网与工具、记忆与知识库、回复与语音、平台接入、待办与通知、系统与安全组织。供应商连接和模型管理复用已有受保护 API，Secret 只呈现配置状态，诊断结果随配置 revision 失效。
+当前顶层页面包含 Overview、Platforms、Todo、Memory、知识库、Configuration、Storage、Tools。知识库页面管理托管文件的查看、上传、下载、删除和失败重试；目录来源文件只读。Configuration 按模型与供应商、模型路由、联网与工具、记忆与知识库、回复与语音、平台接入、待办与通知、系统与安全组织。供应商连接和模型管理复用已有受保护 API，Secret 只呈现配置状态，诊断结果随配置 revision 失效。“回复与语音”提供 TTS 试听：使用配置中心已保存的配置生成音频并播放，保存后即可验证 Provider、模型、音色与密钥；重启后新配置才会影响实际回复。
