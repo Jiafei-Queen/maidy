@@ -215,7 +215,7 @@ jobs:
             }
           done
 
-          # crane copy 直接复制 master 阶段已经构建的 commit manifest，不触发 Docker build。
+          # crane copy 直接复制 main 阶段已经构建的 commit manifest，不触发 Docker build。
           crane copy "${GHCR_REPOSITORY}@${digest}" "${DOCKERHUB_REPOSITORY}:${TAG_NAME}"
           dockerhub_digest="$(crane digest "${DOCKERHUB_REPOSITORY}:${TAG_NAME}")"
           [[ "${dockerhub_digest}" == "${digest}" ]] || {

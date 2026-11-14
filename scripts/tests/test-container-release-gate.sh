@@ -62,23 +62,23 @@ run_gate() {
         bash "${ROOT_DIR}/scripts/verify-container-release.sh"
 }
 
-# 默认未启用严格门禁：只要对应 master Container workflow 成功即可继续，且不会查询测试部署。
+# 默认未启用严格门禁：只要对应 main Container workflow 成功即可继续，且不会查询测试部署。
 run_gate "" "101" "" true default-disabled
-grep -Fqx 'verified master Container workflow run: 101' "${TEST_DIR}/default-disabled.summary"
+grep -Fqx 'verified main Container workflow run: 101' "${TEST_DIR}/default-disabled.summary"
 grep -Fqx \
     'test Environment deployment gate: disabled (REQUIRE_TEST_DEPLOY_FOR_RELEASE != true)' \
     "${TEST_DIR}/default-disabled.summary"
 
-# tag 紧跟 master push 时，首次查询可能看不到尚未完成的 Container workflow；等待后应继续晋级。
+# tag 紧跟 main push 时，首次查询可能看不到尚未完成的 Container workflow；等待后应继续晋级。
 run_gate "" "105" "" true delayed-container-workflow 2
 grep -Fqx \
-    'verified master Container workflow run: 105' \
+    'verified main Container workflow run: 105' \
     "${TEST_DIR}/delayed-container-workflow.summary"
 grep -Fqx '3' "${TEST_DIR}/delayed-container-workflow.container-calls"
 
-# 无论是否开启测试门禁，都必须存在对应 commit 的成功 master Container workflow。
+# 无论是否开启测试门禁，都必须存在对应 commit 的成功 main Container workflow。
 if run_gate "" "" "" true missing-container-workflow; then
-    echo "expected missing master Container workflow to reject promotion" >&2
+    echo "expected missing main Container workflow to reject promotion" >&2
     exit 1
 fi
 

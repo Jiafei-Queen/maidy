@@ -6,7 +6,7 @@ REPOSITORY="${GITHUB_REPOSITORY:-}"
 TAG_COMMIT="${TAG_COMMIT:-}"
 # 仓库未配置该变量时按 false 处理；只有精确的 true 才开启严格测试部署门禁。
 REQUIRE_TEST_DEPLOY="${REQUIRE_TEST_DEPLOY_FOR_RELEASE:-false}"
-# tag 与 master push 会分别触发 Release 和 Container workflow；两者并发时，
+# tag 与 main push 会分别触发 Release 和 Container workflow；两者并发时，
 # Release 必须给正在构建的 commit 镜像留出完成时间，避免把正常构建误判为缺失。
 CONTAINER_WAIT_SECONDS="${CONTAINER_WORKFLOW_WAIT_SECONDS:-600}"
 CONTAINER_POLL_SECONDS="${CONTAINER_WORKFLOW_POLL_SECONDS:-15}"
@@ -39,7 +39,7 @@ waited_seconds=0
 while [[ -z "${container_run_id}" ]]; do
     successful_run_ids="$("${GH_BIN}" api --method GET \
         "repos/${REPOSITORY}/actions/workflows/container.yml/runs" \
-        -f branch=master \
+        -f branch=main \
         -f event=push \
         -f status=completed \
         -f head_sha="${TAG_COMMIT}" \
@@ -48,20 +48,20 @@ while [[ -z "${container_run_id}" ]]; do
     container_run_id="$(printf '%s\n' "${successful_run_ids}" | sed -n '/[^[:space:]]/ { p; q; }')"
     [[ -z "${container_run_id}" ]] || break
     ((waited_seconds < CONTAINER_WAIT_SECONDS)) \
-        || fail "tag commit 在 ${CONTAINER_WAIT_SECONDS} 秒内没有成功的 master Container workflow，拒绝晋级容器镜像"
+        || fail "tag commit 在 ${CONTAINER_WAIT_SECONDS} 秒内没有成功的 main Container workflow，拒绝晋级容器镜像"
 
     remaining_seconds=$((CONTAINER_WAIT_SECONDS - waited_seconds))
     sleep_seconds="${CONTAINER_POLL_SECONDS}"
     if ((sleep_seconds > remaining_seconds)); then
         sleep_seconds="${remaining_seconds}"
     fi
-    printf '::notice::等待 tag commit 对应的 master Container workflow 完成（已等待 %s 秒）\n' \
+    printf '::notice::等待 tag commit 对应的 main Container workflow 完成（已等待 %s 秒）\n' \
         "${waited_seconds}"
     sleep "${sleep_seconds}"
     waited_seconds=$((waited_seconds + sleep_seconds))
 done
 
-summary "verified master Container workflow run: ${container_run_id}"
+summary "verified main Container workflow run: ${container_run_id}"
 
 if [[ "${REQUIRE_TEST_DEPLOY}" != "true" ]]; then
     summary "test Environment deployment gate: disabled (REQUIRE_TEST_DEPLOY_FOR_RELEASE != true)"

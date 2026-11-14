@@ -252,8 +252,8 @@ jobs:
             printf '%s image bytes: %s\n' "${platform}" "${size}" >> "${GITHUB_STEP_SUMMARY}"
           done
 
-          crane tag "${IMAGE_REPOSITORY}@${commit_digest}" master
-          [[ "$(crane digest "${IMAGE_REPOSITORY}:master")" == "${commit_digest}" ]]
+          crane tag "${IMAGE_REPOSITORY}@${commit_digest}" main
+          [[ "$(crane digest "${IMAGE_REPOSITORY}:main")" == "${commit_digest}" ]]
           echo "digest=${commit_digest}" >> "${GITHUB_OUTPUT}"
           printf '%s\n' "commit image: \`${IMAGE_REPOSITORY}@${commit_digest}\`" >> "${GITHUB_STEP_SUMMARY}"
 
