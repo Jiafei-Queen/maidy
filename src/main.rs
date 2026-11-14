@@ -164,7 +164,10 @@ async fn run() -> anyhow::Result<()> {
         console_status_source,
         env!("CARGO_PKG_VERSION"),
     )?
-    .with_voice_preview(Arc::new(GatewayVoicePreview::new()));
+    .with_voice_preview(Arc::new(GatewayVoicePreview::new()))
+    .with_voice_sink(Some(
+        Arc::new(push_sink.clone()) as qq_maid_core::runtime::tools::voice::DynVoiceSendSink
+    ));
     let core_handle = core_runtime.core_handle();
     let (core_shutdown_tx, core_shutdown_rx) = oneshot::channel::<()>();
     let mut core_http_handle = tokio::spawn(async move {

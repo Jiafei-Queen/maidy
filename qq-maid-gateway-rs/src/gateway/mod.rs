@@ -56,6 +56,7 @@ use crate::{
     auth::AccessTokenManager,
     config::{AppConfig, QqOfficialBindingState},
     respond::RespondClient,
+    tts::provider_from_config,
 };
 
 const DEDUPE_TTL: Duration = Duration::from_secs(10 * 60);
@@ -93,6 +94,9 @@ pub async fn run_with_application_version(
     shutdown_token: CancellationToken,
     application_version: &'static str,
 ) -> anyhow::Result<()> {
+    // 语音工具的 TTS 能力与 Gateway 出站配置共用同一份启动快照；配置中心保存后
+    // 仍需重启才会影响实际发送，和现有 TTS 配置语义保持一致。
+    push_sink.set_voice_provider(provider_from_config(&config.voice));
     let qq_auth = config
         .enabled_qq_official_credentials()
         .map(|(app_id, app_secret)| {

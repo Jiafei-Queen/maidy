@@ -11,9 +11,12 @@ use std::{
 };
 
 use async_trait::async_trait;
-use qq_maid_core::runtime::push::{
-    ONEBOT11_PLATFORM, PushError, PushIntent, PushResult, PushSink, PushTargetType,
-    QQ_OFFICIAL_PLATFORM, normalize_push_mentions,
+use qq_maid_core::runtime::{
+    push::{
+        ONEBOT11_PLATFORM, PushError, PushIntent, PushResult, PushSink, PushTarget, PushTargetType,
+        QQ_OFFICIAL_PLATFORM, normalize_push_mentions,
+    },
+    tools::voice::{VoiceSendError, VoiceSendIntent, VoiceSendResult, VoiceSendSink},
 };
 use tokio::{sync::Notify, time::Instant};
 use tracing::{info, warn};
@@ -25,7 +28,8 @@ use mention::{
 
 use crate::{
     api::{
-        QqApiClient, SendMessageIds, SendResult, build_c2c_text_payload, build_group_text_payload,
+        ApiError, QqApiClient, SendMessageIds, SendResult, build_c2c_text_payload,
+        build_group_text_payload,
     },
     gateway::{
         BotOutboundCache,
@@ -36,6 +40,7 @@ use crate::{
         ref_index::SharedRefIndex,
     },
     markdown::MarkdownPayload,
+    tts::{DynTtsProvider, TtsAudio, TtsProvider},
 };
 
 #[async_trait]
@@ -69,6 +74,8 @@ impl PushQqSender for QqApiClient {
 pub struct GatewayPushSink {
     inner: Arc<Mutex<GatewayPushState>>,
     ready: Arc<Notify>,
+    /// 语音工具使用的 TTS Provider；启动时按已生效配置注入。
+    voice_provider: Arc<Mutex<Option<DynTtsProvider>>>,
 }
 
 #[derive(Clone)]
@@ -178,7 +185,25 @@ impl GatewayPushSink {
                 onebot11: PushChannelState::Pending,
             })),
             ready: Arc::new(Notify::new()),
+            voice_provider: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// 注入语音工具使用的 TTS Provider。
+    ///
+    /// 配置不可用或未配置 Provider 时注入 `None`，语音工具在 Core 侧也不会注册。
+    pub fn set_voice_provider(&self, provider: Option<DynTtsProvider>) {
+        *self
+            .voice_provider
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = provider;
+    }
+
+    fn voice_provider(&self) -> Option<DynTtsProvider> {
+        self.voice_provider
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub(crate) fn bind(
@@ -274,6 +299,26 @@ impl PushSink for GatewayPushSink {
         match self.runtime(platform).await? {
             RoutedPushRuntime::QqOfficial(runtime) => runtime.push(intent).await,
             RoutedPushRuntime::OneBot11(runtime) => runtime.push(intent).await,
+        }
+    }
+}
+
+#[async_trait]
+impl VoiceSendSink for GatewayPushSink {
+    async fn send_voice(&self, intent: VoiceSendIntent) -> Result<VoiceSendResult, VoiceSendError> {
+        if intent.target.platform.trim() != QQ_OFFICIAL_PLATFORM {
+            return Err(VoiceSendError::UnsupportedPlatform);
+        }
+        let provider = self.voice_provider().ok_or(VoiceSendError::Unavailable)?;
+        let runtime = self
+            .runtime(QQ_OFFICIAL_PLATFORM)
+            .await
+            .map_err(|_| VoiceSendError::Unavailable)?;
+        match runtime {
+            RoutedPushRuntime::QqOfficial(runtime) => {
+                runtime.send_voice(provider.as_ref(), intent).await
+            }
+            RoutedPushRuntime::OneBot11(_) => Err(VoiceSendError::UnsupportedPlatform),
         }
     }
 }
@@ -391,6 +436,116 @@ impl OneBotPushRuntime {
 }
 
 impl GatewayPushRuntime {
+    async fn send_voice(
+        &self,
+        provider: &dyn TtsProvider,
+        intent: VoiceSendIntent,
+    ) -> Result<VoiceSendResult, VoiceSendError> {
+        let target_id = intent.target.target_id.trim();
+        if target_id.is_empty() {
+            return Err(VoiceSendError::TargetMissing);
+        }
+        validate_qq_official_voice_account(&intent.target, &self.qq_official_account_id)?;
+        let text = intent.text.trim();
+        if text.is_empty() {
+            return Err(VoiceSendError::EmptyText);
+        }
+        let audio = provider
+            .synthesize(text)
+            .await
+            .map_err(|error| VoiceSendError::Tts { code: error.code() })?;
+        let reply_to = intent.reply_to_message_id.as_deref();
+        let result = match (intent.target.target_type, audio) {
+            (PushTargetType::Private, TtsAudio::Url(url)) => {
+                self.api.send_c2c_voice_url(target_id, reply_to, &url).await
+            }
+            (PushTargetType::Private, TtsAudio::File { bytes, file_name }) => {
+                self.api
+                    .send_c2c_voice_file(target_id, reply_to, &bytes, &file_name)
+                    .await
+            }
+            (PushTargetType::Group, TtsAudio::Url(url)) => {
+                self.api
+                    .send_group_voice_url(target_id, reply_to, &url)
+                    .await
+            }
+            (PushTargetType::Group, TtsAudio::File { bytes, file_name }) => {
+                self.api
+                    .send_group_voice_file(target_id, reply_to, &bytes, &file_name)
+                    .await
+            }
+        };
+        match &result {
+            Ok(_) => self.runtime.record_qq_send_success(),
+            Err(error) => self.runtime.record_qq_send_failure(error.log_summary()),
+        }
+        match result {
+            Ok(ids) => {
+                if intent.target.target_type == PushTargetType::Group {
+                    let mut cache = self.group_outbound_cache.lock().unwrap();
+                    cache.insert(ids.message_id.clone());
+                    cache.insert_ref_index_id(ids.ref_index_id.clone());
+                }
+                self.record_voice_ref_index(&intent.target, &ids, text);
+                info!(
+                    target_type = %intent.target.target_type.as_str(),
+                    target = %mask_identifier(target_id),
+                    "Gateway 语音工具已发送"
+                );
+                Ok(VoiceSendResult {
+                    message_id: ids.message_id,
+                })
+            }
+            Err(error) => {
+                warn!(
+                    target_type = %intent.target.target_type.as_str(),
+                    target = %mask_identifier(target_id),
+                    error = %error.log_summary(),
+                    "Gateway 语音工具发送失败"
+                );
+                Err(voice_error_from_api(error))
+            }
+        }
+    }
+
+    fn record_voice_ref_index(
+        &self,
+        target: &PushTarget,
+        sent_ids: &SendMessageIds,
+        spoken_text: &str,
+    ) {
+        let Some(ref_index_id) = sent_ids.ref_index_id.as_deref() else {
+            return;
+        };
+        let conversation = match target.target_type {
+            PushTargetType::Private => ConversationTarget::Private {
+                target_id: target.target_id.clone(),
+            },
+            PushTargetType::Group => ConversationTarget::Group {
+                target_id: target.target_id.clone(),
+            },
+        };
+        let mut ref_index = match self.ref_index.lock() {
+            Ok(ref_index) => ref_index,
+            Err(_) => {
+                warn!(
+                    target_type = %target.target_type.as_str(),
+                    target = %mask_identifier(&target.target_id),
+                    "ref_index 锁已中毒，跳过写入语音引用索引"
+                );
+                return;
+            }
+        };
+        ref_index.insert_bot_outbound(
+            crate::gateway::platform::Platform::QqOfficial,
+            Some(&self.qq_official_account_id),
+            &conversation,
+            Some(ref_index_id.to_owned()),
+            spoken_text,
+            None,
+        );
+    }
+
     async fn push(&self, intent: PushIntent) -> Result<PushResult, PushError> {
         let target_id = intent.target.target_id.trim();
         let text = intent.text.trim();
@@ -539,6 +694,29 @@ fn validate_qq_official_target(
         });
     }
     Ok(())
+}
+
+fn validate_qq_official_voice_account(
+    target: &PushTarget,
+    qq_official_account_id: &str,
+) -> Result<(), VoiceSendError> {
+    if let Some(account_id) = target.account_id.as_deref().map(str::trim)
+        && !account_id.is_empty()
+        && account_id != qq_official_account_id.trim()
+    {
+        // 账号不匹配时不暴露绑定账号，只返回统一不可用分类。
+        return Err(VoiceSendError::Unavailable);
+    }
+    Ok(())
+}
+
+fn voice_error_from_api(error: ApiError) -> VoiceSendError {
+    match error {
+        ApiError::VoiceUpload(_) => VoiceSendError::Upload,
+        ApiError::VoiceSend(_) => VoiceSendError::Send,
+        ApiError::Unsupported(_) => VoiceSendError::UnsupportedPlatform,
+        _ => VoiceSendError::Send,
+    }
 }
 
 async fn send_private_push<S: PushQqSender + ?Sized>(

@@ -30,7 +30,6 @@ fn mixed_response() -> Box<CoreResponse> {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     })
 }
 
@@ -53,7 +52,6 @@ fn image_response() -> Box<CoreResponse> {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     })
 }
 

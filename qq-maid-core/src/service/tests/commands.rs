@@ -1,14 +1,6 @@
 use super::*;
-use std::collections::HashMap;
 
-fn available_voice_config() -> crate::config::VoiceFeatureConfig {
-    crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([
-        ("TTS_PROVIDER".to_owned(), "qwen".to_owned()),
-        ("QWEN_TTS_API_KEY".to_owned(), "test-key".to_owned()),
-    ]))
-}
-
-async fn voice_command_completed(output: CoreRespondOutput) -> CoreResponse {
+async fn command_completed(output: CoreRespondOutput) -> CoreResponse {
     match output {
         CoreRespondOutput::Complete(response) => *response,
         CoreRespondOutput::Stream(mut stream) => {
@@ -78,7 +70,7 @@ async fn core_help_command_is_wrapped_as_response_events() {
 async fn initiative_state_is_shared_across_core_requests() {
     let service = CoreHandle::new(test_state(TestProvider::replying("unused"), 5));
 
-    let recorded = voice_command_completed(
+    let recorded = command_completed(
         service
             .respond(private_request("/ri 12 张三"))
             .await
@@ -88,14 +80,13 @@ async fn initiative_state_is_shared_across_core_requests() {
     assert_eq!(recorded.command.as_deref(), Some("initiative"));
     assert!(recorded.text_content().unwrap().contains("张三：12"));
 
-    let listed =
-        voice_command_completed(service.respond(private_request("/init")).await.unwrap()).await;
+    let listed = command_completed(service.respond(private_request("/init")).await.unwrap()).await;
     let listed_text = listed.text_content().unwrap();
     assert!(listed_text.contains("当前：张三"), "{listed_text}");
     assert!(listed_text.contains("1. 张三：12"), "{listed_text}");
 
     let advanced =
-        voice_command_completed(service.respond(private_request("/init end")).await.unwrap()).await;
+        command_completed(service.respond(private_request("/init end")).await.unwrap()).await;
     let advanced_text = advanced.text_content().unwrap();
     assert!(
         advanced_text.contains("第 2 轮 · 当前：张三"),
@@ -103,135 +94,12 @@ async fn initiative_state_is_shared_across_core_requests() {
     );
 
     let listed_again =
-        voice_command_completed(service.respond(private_request("/init")).await.unwrap()).await;
+        command_completed(service.respond(private_request("/init")).await.unwrap()).await;
     let listed_again_text = listed_again.text_content().unwrap();
     assert!(
         listed_again_text.contains("第 2 轮 · 当前：张三"),
         "{listed_again_text}"
     );
-}
-
-#[tokio::test]
-async fn voice_preference_is_read_before_generation_and_forces_complete_without_text_delta() {
-    let provider = TestProvider::streaming(vec![
-        Ok(LlmStreamEvent::TextDelta("完整".to_owned())),
-        Ok(LlmStreamEvent::TextDelta("回复".to_owned())),
-        Ok(LlmStreamEvent::Completed {
-            usage: None,
-            finish_reason: None,
-            fallback_used: false,
-        }),
-    ]);
-    let mut state = test_state(provider.clone(), 5);
-    state.config.voice = available_voice_config();
-    let service = CoreHandle::new(state);
-
-    let enabled = voice_command_completed(
-        service
-            .respond(private_request("/语音 开启"))
-            .await
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(enabled.command.as_deref(), Some("voice"));
-    assert_eq!(enabled.text_content(), Some("语音回复已开启"));
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
-
-    let mut response_stream =
-        expect_stream(service.respond(private_request("你好")).await.unwrap());
-    assert_eq!(
-        response_stream.output_policy(),
-        CoreOutputPolicy::CompleteThenSend
-    );
-    let response = collect_completed_without_text_delta(&mut response_stream).await;
-    assert_eq!(response.text_content(), Some("完整回复"));
-    assert_eq!(response.delivery_hint, Some(CoreDeliveryHint::Voice));
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn voice_command_is_deterministic_and_group_writes_require_admin_or_owner() {
-    let provider = TestProvider::replying("不应调用");
-    let mut state = test_state(provider.clone(), 5);
-    state.config.voice = available_voice_config();
-    let service = CoreHandle::new(state);
-
-    let mut member_enable = group_request("/语音 开启");
-    member_enable.actor.group_member_role = Some(CoreGroupMemberRole::Member);
-    let denied = voice_command_completed(service.respond(member_enable).await.unwrap()).await;
-    assert_eq!(
-        denied.text_content(),
-        Some("只有群主或管理员可以修改群聊语音设置")
-    );
-
-    let mut unknown_query = group_request("/语音");
-    unknown_query.actor.group_member_role = Some(CoreGroupMemberRole::Unknown);
-    let queried = voice_command_completed(service.respond(unknown_query).await.unwrap()).await;
-    assert_eq!(queried.text_content(), Some("当前会话语音回复：已关闭"));
-
-    for role in [CoreGroupMemberRole::Admin, CoreGroupMemberRole::Owner] {
-        let mut enable = group_request("/语音 开启");
-        enable.actor.group_member_role = Some(role);
-        let enabled = voice_command_completed(service.respond(enable).await.unwrap()).await;
-        assert_eq!(enabled.text_content(), Some("语音回复已开启"));
-    }
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn voice_enable_rejects_unavailable_configs_without_writing_enabled_state() {
-    let configs = [
-        (
-            crate::config::VoiceFeatureConfig::default(),
-            "语音功能当前未启用，请先配置 TTS_PROVIDER=qwen 或 openai",
-        ),
-        (
-            crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([(
-                "TTS_PROVIDER".to_owned(),
-                "qwen".to_owned(),
-            )])),
-            "语音功能不可用：缺少 QWEN_TTS_API_KEY",
-        ),
-        (
-            crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([(
-                "TTS_PROVIDER".to_owned(),
-                "openai".to_owned(),
-            )])),
-            "语音功能不可用：缺少 OPENAI_TTS_API_KEY",
-        ),
-        (
-            crate::config::VoiceFeatureConfig::from_environment(&HashMap::from([
-                ("TTS_PROVIDER".to_owned(), "qwen".to_owned()),
-                ("QWEN_TTS_API_KEY".to_owned(), "test-key".to_owned()),
-                (
-                    "QWEN_TTS_BASE_URL".to_owned(),
-                    "http://invalid.example.test/tts".to_owned(),
-                ),
-            ])),
-            "语音功能不可用：QWEN_TTS_BASE_URL 无效",
-        ),
-    ];
-
-    for (voice, expected) in configs {
-        let provider = TestProvider::replying("不应调用");
-        let mut state = test_state(provider.clone(), 5);
-        state.config.voice = voice;
-        let service = CoreHandle::new(state);
-
-        let rejected = voice_command_completed(
-            service
-                .respond(private_request("/语音 开启"))
-                .await
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(rejected.text_content(), Some(expected));
-
-        let queried =
-            voice_command_completed(service.respond(private_request("/语音")).await.unwrap()).await;
-        assert_eq!(queried.text_content(), Some("当前会话语音回复：已关闭"));
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
-    }
 }
 
 #[tokio::test]
@@ -379,7 +247,7 @@ async fn core_dot_nn_query_is_immediate_and_returns_manual_display_name() {
     set_request.input_parts = vec![qq_maid_common::input_part::MessageInputPart::text(
         ".nn 雪雪",
     )];
-    let set_response = voice_command_completed(service.respond(set_request).await.unwrap()).await;
+    let set_response = command_completed(service.respond(set_request).await.unwrap()).await;
     assert_eq!(set_response.command.as_deref(), Some("set"));
     assert!(
         set_response
@@ -395,8 +263,7 @@ async fn core_dot_nn_query_is_immediate_and_returns_manual_display_name() {
         .unwrap();
     assert_eq!(classification.kind, CoreInboundKind::Immediate);
 
-    let query_response =
-        voice_command_completed(service.respond(query_request).await.unwrap()).await;
+    let query_response = command_completed(service.respond(query_request).await.unwrap()).await;
     assert_eq!(query_response.command.as_deref(), Some("set"));
     assert!(
         query_response
@@ -406,7 +273,7 @@ async fn core_dot_nn_query_is_immediate_and_returns_manual_display_name() {
 
     let mut help_request = group_request(".help");
     help_request.input_parts = vec![qq_maid_common::input_part::MessageInputPart::text(".help")];
-    let help_response = voice_command_completed(service.respond(help_request).await.unwrap()).await;
+    let help_response = command_completed(service.respond(help_request).await.unwrap()).await;
     assert_eq!(help_response.command.as_deref(), Some("help"));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
@@ -974,7 +841,6 @@ async fn core_command_event_failure_does_not_send_finished_or_completed() {
         StreamDeliveryConfig {
             output_policy: CoreOutputPolicy::CompleteThenSend,
             provider_stream_enabled: false,
-            delivery_hint: None,
         },
         AgentRequestBudget {
             request_timeout: Duration::from_secs(5),

@@ -290,6 +290,7 @@ async fn model_web_search_call_does_not_depend_on_text_status_intent() {
                 group_enabled_tools: None,
                 memory_dream: None,
                 knowledge_mode: None,
+                ..TestToolCallingOptions::default()
             },
         );
 

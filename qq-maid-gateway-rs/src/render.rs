@@ -293,7 +293,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         }
     }
 
@@ -306,7 +305,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         }
     }
 
@@ -439,7 +437,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         };
 
         // 已有 Markdown part 时，重复 Text part 不再单独出站，避免群聊先发一段纯文本。
@@ -476,7 +473,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         };
 
         assert_eq!(
@@ -507,7 +503,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         };
 
         assert_eq!(
@@ -535,7 +530,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         };
 
         assert_eq!(
@@ -560,7 +554,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         };
 
         assert_eq!(
@@ -588,7 +581,6 @@ mod tests {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         };
 
         assert_eq!(

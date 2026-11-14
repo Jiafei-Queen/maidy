@@ -64,7 +64,6 @@ mod title;
 mod tool_runtime;
 pub(crate) mod train_flow;
 mod translation_flow;
-mod voice_flow;
 pub(crate) mod weather_flow;
 
 pub(crate) use crate::runtime::tools::{
@@ -92,8 +91,6 @@ pub struct RespondStores {
     pub session_store: SessionStore,
     /// 任务存储；当前实现由 Todo 业务模块提供。
     pub task_store: TaskStore,
-    /// 会话级语音回复偏好。
-    pub voice_store: crate::runtime::tools::voice::VoicePreferenceStore,
     /// conversation 级骰子规则偏好领域门面。
     pub roll_preference_service: crate::runtime::tools::roll::RollPreferenceService,
     /// 统一通知 Outbox 存储
@@ -122,6 +119,8 @@ pub struct RespondExecutors {
     pub train_executor: DynTrainExecutor,
     /// 外部雷达公开数据读取执行器
     pub radar_executor: DynRadarExecutor,
+    /// 语音工具出站发送能力；未注入时语音工具不注册。
+    pub voice_sink: Option<crate::runtime::tools::voice::DynVoiceSendSink>,
 }
 
 /// `RustRespondService` 的策略和输出配置。
@@ -149,7 +148,7 @@ pub struct RespondServiceOptions {
     pub ops_config: OpsConfig,
     /// 当前进程统一使用的聊天命令前缀。
     pub command_prefix: CommandPrefix,
-    /// TTS 能力预检快照；只用于控制偏好是否允许开启。
+    /// TTS 能力预检快照；只用于决定是否向模型注册语音工具。
     pub voice: crate::config::VoiceFeatureConfig,
 }
 
@@ -301,8 +300,6 @@ pub struct RustRespondService {
     pub(crate) session_store: SessionStore,
     /// 任务存储；当前实现由 Todo 业务模块提供。
     pub(crate) task_store: TaskStore,
-    /// 语音偏好领域门面，统一处理配置、权限与持久化。
-    pub(crate) voice_service: crate::runtime::tools::voice::VoicePreferenceService,
     /// 骰子规则偏好领域门面，Respond 只编排查询和设置结果。
     pub(crate) roll_preference_service: crate::runtime::tools::roll::RollPreferenceService,
     /// 统一通知 Outbox 存储
@@ -401,16 +398,13 @@ impl RustRespondService {
             options.tool_result_max_chars,
             options.web_search_timeouts,
             knowledge_index.clone(),
+            &options.voice,
         );
         let ops_service = OpsService::new_with_runtime(
             options.ops_config,
             stores.notification_store.clone(),
             stores.ops_execution_store.clone(),
             stores.ops_task_registry.clone(),
-        );
-        let voice_service = crate::runtime::tools::voice::VoicePreferenceService::new(
-            stores.voice_store,
-            options.voice,
         );
         Self {
             provider,
@@ -421,7 +415,6 @@ impl RustRespondService {
             memory_store: stores.memory_store,
             session_store: stores.session_store,
             task_store: stores.task_store,
-            voice_service,
             roll_preference_service: stores.roll_preference_service,
             initiative_service,
             notification_store: stores.notification_store,

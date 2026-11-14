@@ -24,9 +24,8 @@ use crate::{
 };
 
 use super::{
-    CoreDeliveryHint, CoreError, CoreOutputPolicy, CoreRespondFailure, CoreResponse,
-    CoreResponseEvent, CoreResponseStatus, CoreResponseStatusKind, CoreResponseStream,
-    warn_core_error,
+    CoreError, CoreOutputPolicy, CoreRespondFailure, CoreResponse, CoreResponseEvent,
+    CoreResponseStatus, CoreResponseStatusKind, CoreResponseStream, warn_core_error,
 };
 
 const AGENT_RUNNING_STATUS_DELAY: Duration = Duration::from_millis(1500);
@@ -49,7 +48,6 @@ pub(crate) struct AgentRequestBudget {
 pub(crate) struct StreamDeliveryConfig {
     pub output_policy: CoreOutputPolicy,
     pub provider_stream_enabled: bool,
-    pub delivery_hint: Option<CoreDeliveryHint>,
 }
 
 #[derive(Clone)]
@@ -164,8 +162,7 @@ pub(crate) fn start_core_response_stream(
         }
         let event = match result {
             Ok(response) if response.ok => {
-                let response = CoreResponse::from(response)
-                    .with_delivery_hint_if_eligible(delivery.delivery_hint);
+                let response = CoreResponse::from(response);
                 CoreResponseEvent::Completed(Box::new(response))
             }
             Ok(response) => {

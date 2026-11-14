@@ -152,7 +152,7 @@ RUST_LOG=info,qq_maid_gateway_rs=debug
 
 `QQ_BOT_APP_ID` 与 `QQ_BOT_APP_SECRET` 必须成对配置；两项均缺失表示 QQ 官方 Bot 未绑定。此时不会创建 Token、API client、Gateway 或重连任务，微信服务号或 OneBot 11 仍可独立运行。凭证存在时可用 `QQ_BOT_ENABLED=false` 暂时禁用；旧配置未设置该开关时仍默认启用。配置由启动时读取，`qbot config bot --unbind`、`--disable` 和重新绑定都需重启生效。
 
-QQ 语音回复默认关闭。配置 `TTS_PROVIDER=qwen` 和独立的 `QWEN_TTS_API_KEY`，或 `TTS_PROVIDER=openai` 和独立的 `OPENAI_TTS_API_KEY` 后，用户可用 `/语音` 查询，并用 `/语音 开启|关闭` 修改当前私聊偏好；群聊只有群主或管理员可修改。千问返回 WAV HTTP(S) URL，由 QQ `/files`（`file_type=3`）拉取；OpenAI Speech 使用 `tts-1` 默认返回 mp3 字节，以 Base64 `file_data` 直传（QQ 限制 5 MiB）。两者随后都以 `msg_type=7` 发送。TTS、QQ 上传或发送失败都会沿用原始文字 / Markdown 回复一次；完整字段与默认值见 [`runtime/config/.env.example`](../runtime/config/.env.example)。
+QQ 语音由模型主动调用 `send_voice` 工具发送：配置 `TTS_PROVIDER=qwen` 和独立的 `QWEN_TTS_API_KEY`，或 `TTS_PROVIDER=openai` 和独立的 `OPENAI_TTS_API_KEY` 后，模型可按场景决定是否把一段口语化文本合成独立语音消息；最终文字回复仍按正常流程发送。语音工具默认出现在私聊和群聊的示例白名单中，但仍受场景 Tool Calling 开关和 `agent.toml` 白名单约束；已有部署需要手动把 `send_voice` 加入对应场景。千问返回 WAV HTTP(S) URL，由 QQ `/files`（`file_type=3`）拉取；OpenAI Speech 使用 `tts-1` 默认返回 mp3 字节，以 Base64 `file_data` 直传（QQ 限制 5 MiB）。两者随后都以 `msg_type=7` 发送，并优先复用当前入站消息作为被动回复。TTS、QQ 上传或发送失败时工具返回真实失败，不会由 Core 伪造成功，也不会再把最终文字自动替换成语音。完整字段与默认值见 [`runtime/config/.env.example`](../runtime/config/.env.example)。
 
 Web 控制台的“回复与语音”提供 TTS 试听：复用配置中心已保存的 Provider 与音色生成音频并在浏览器播放，不经过 QQ 上传或发送。保存后即可试听；它只验证 TTS 合成与千问音频 URL 下载，不代表 QQ 语音发送链路已经验证，重启后新配置才会影响实际回复。
 

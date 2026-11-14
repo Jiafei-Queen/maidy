@@ -130,7 +130,6 @@ impl CoreService for NoopCore {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         })))
     }
 
@@ -169,7 +168,6 @@ impl CoreService for RecordingCore {
             command: None,
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         })))
     }
 
@@ -233,7 +231,6 @@ impl CoreService for CoordinatedCore {
             command: request.text.starts_with("/new").then(|| "new".to_owned()),
             diagnostics: None,
             visible_entity_snapshot: None,
-            delivery_hint: None,
         })))
     }
 

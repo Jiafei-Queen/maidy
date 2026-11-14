@@ -11,18 +11,24 @@
 * 控制台新增 Exa / Firecrawl 选项和对应参数表单，独立完整替换动作不会清空其他后端配置。
 * 新增 OpenAI Speech TTS：`TTS_PROVIDER=openai` 使用独立 `OPENAI_TTS_API_KEY`，默认 `tts-1` / `alloy`，返回的 mp3 以 Base64 `file_data` 直传 QQ 语音；千问 URL 投递保持不变，失败仍回退原始文字。
 * 配置中心“回复与语音”新增 TTS 试听：复用配置中心已保存的 Provider、模型、音色与密钥生成音频并在浏览器播放，便于保存后直接验证 TTS 配置、查看上游 HTTP 状态，不经过 QQ 上传或发送。
+* 新增模型可调用的 `send_voice` 工具：模型可把一段口语化文本合成独立 QQ 语音消息，最终文字回复仍按正常流程发送；私聊和群聊示例白名单默认包含该工具，群聊仍受完整 Tool Loop 开关约束。
 
 ### Changed
 
+* 移除 `/语音`、`/语音 开启`、`/语音 关闭` 及会话级语音偏好：语音不再自动替换最终文字，而由模型按场景主动调用 `send_voice`；语音发送失败以工具错误返回，不再静默回退成文字语音二选一。
+* 语音工具不再发送“正在准备语音”状态提示，避免私聊中出现出戏的语音专用进度文案。
+* `send_voice` 复用当前入站消息作为 QQ 被动回复，并在群聊记录出站缓存和引用索引；TTS、上传或发送失败只返回真实错误，不伪造成功。
 * Tavily 参数统一迁移到 `[tools.web_search.tavily]`；旧顶层 `search_depth`/`topic`/`time_range` 仍兼容读取，配置中心保存后写入子表。
 * 请求级 `topic` / `time_range` 在三个独立搜索后端间按各自 API 语义翻译；`current_news` 自动判定和「逐条摘要 + 参考来源」预算渲染由 Tavily、Exa、Firecrawl 共用。Firecrawl 的 `tbs` 只适用于 web，时间过滤请求会强制使用 web 来源。
 
 ### Compatibility
 
 * 无 SQLite migration 或必填配置迁移；默认 `provider_native` 与已有 Tavily/DeepSeek 配置保持不变。
+* `voice_preferences` 表作为历史 migration 保留但不再读写，已有数据库可安全升级和回滚；升级后旧 `/语音` 偏好不再生效，`/语音` 按未知命令处理。
+* 新装默认 Agent 配置包含 `send_voice`；已有 `agent.toml` 需要手动把 `send_voice` 加入私聊/群聊 `enabled_tools`，且群聊完整 Tool Loop 仍默认关闭。
 * Exa `company`/`people` 分类不支持发布日期过滤，`people` 不支持 `exclude_domains`，`lite` 模式不支持 `summary` 和 `max_age_hours`；Firecrawl `developer`/`gov` 分类必须单独使用，`tbs` 只能搭配 `sources = ["web"]`，`scrape_format = "markdown"` 会额外消耗 credits。
 * 自动测试使用本地 HTTP 替身，真实 Exa/Firecrawl 凭据、计费和结果质量仍需在部署环境验证。
-* OpenAI Speech TTS 复用 Qt 语音发送链路，`OPENAI_TTS_API_KEY` 缺失时按原逻辑回退文字；TTS 试听只在部署管理员会话内调用已保存配置，不触发 QQ 上传或发送。
+* OpenAI Speech TTS 复用 QQ 语音发送链路，`OPENAI_TTS_API_KEY` 缺失时语音工具不注册；TTS 试听只在部署管理员会话内调用已保存配置，不触发 QQ 上传或发送。
 
 ## [v0.26.1] - 2026-10-23
 

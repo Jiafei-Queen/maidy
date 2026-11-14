@@ -12,12 +12,9 @@ use anyhow::Context;
 use qq_maid_common::identity_context::MentionIdentity;
 use qq_maid_common::markdown::escape_text;
 use qq_maid_core::service::{
-    CoreDeliveryHint, CoreInboundKind, CoreRespondFailure, CoreRespondOutput, CoreResponse,
-    CoreResponseEvent,
+    CoreInboundKind, CoreRespondFailure, CoreRespondOutput, CoreResponse, CoreResponseEvent,
 };
 use tracing::{debug, info, warn};
-
-use super::voice::{VoiceDeliveryAttempt, try_group_voice_delivery};
 
 mod ingress;
 
@@ -67,7 +64,6 @@ use crate::{
     },
     render::{OutboundMessage, render_respond_response_parts_for_profile},
     respond::{RespondClient, respond_error_to_qq_text},
-    tts::provider_from_config,
 };
 
 #[derive(Debug, Default)]
@@ -643,24 +639,6 @@ async fn send_group_respond_response(
     )
     .to_qq_group_target()
     .expect("QQ group reply target should adapt to QQ API target");
-    // 普通文字回复不构造 TTS Provider，也不克隆凭证或创建新的 HTTP Client handle。
-    let provider = (response.delivery_hint == Some(CoreDeliveryHint::Voice))
-        .then(|| provider_from_config(&config.voice))
-        .flatten();
-    if let VoiceDeliveryAttempt::Delivered(sent_ids) =
-        try_group_voice_delivery(provider.as_deref(), &sender, &target, response).await
-    {
-        record_group_bot_outbound_send(
-            group_outbound_cache,
-            ref_index,
-            message,
-            response,
-            config,
-            &sent_ids,
-            response.text_content().unwrap_or_default(),
-        );
-        return Ok(());
-    }
     let capability = ReplyCapability::qq_official_group(config);
     let mut outbounds = render_respond_response_parts_for_profile(response, &capability.render);
     if outbounds.is_empty() {

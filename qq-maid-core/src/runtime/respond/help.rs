@@ -193,22 +193,18 @@ const HELP_MODULES: &[HelpModule] = &[
     },
     HelpModule {
         key: "settings",
-        aliases: &["设置", "偏好", "voice", "语音"],
+        aliases: &["设置", "偏好"],
         title: "⚙️ 设置",
         summary: "管理当前会话偏好；展示名只用于显示，不代表现实身份认证。",
         commands: &[
             "- `/set 昵称 [名称]`：查看或设置展示名；`/nn [名称]` 是快捷别名；`/unset 昵称`：清除",
             "- `/set dnd|coc`：切换当前会话的默认骰面数与 Entertainment DM 判定方向；`/set 骰子`：查看",
-            "- `/语音 [开启|关闭]`：查询或切换当前 QQ 会话语音回复",
         ],
         notes: &[
             "- 展示名按稳定身份绑定在当前私聊或群聊，群 A 设置不会污染群 B。",
             "- 展示名只用于显示和帮助机器人理解上下文，不影响权限判断，也不等于现实身份认证。",
             "- 昵称长度限 1~32 个字符，不能包含换行；缺少稳定身份时无法设置。",
             "- 骰子规则按当前 conversation 保存：DND 使用 D20/roll-over，CoC 使用 D100/roll-under；不包含完整人物卡与规则系统。",
-            "- 仅 QQ 官方入口支持；群聊只有群主或管理员可以修改，普通成员可以查询。",
-            "- TTS 未启用、密钥缺失或配置预检失败时不会写入开启状态。",
-            "- 语音生成或 QQ 发送失败时回退到原始文字 / Markdown 回复。",
         ],
     },
     HelpModule {
@@ -320,10 +316,6 @@ fn format_help_home(context: HelpContext) -> CommandBody {
         "- ⚙️ 设置：`/set 昵称 脸脸`（快捷别名：`/nn 脸脸`）".to_owned(),
     );
     render.push_pair(
-        "· 🔊 语音回复：/语音".to_owned(),
-        "- 🔊 语音回复：`/语音`".to_owned(),
-    );
-    render.push_pair(
         "· 🩺 状态：私聊发送 /ping".to_owned(),
         "- 🩺 状态：私聊发送 `/ping`".to_owned(),
     );
@@ -342,9 +334,8 @@ fn format_help_home(context: HelpContext) -> CommandBody {
         "- 常用模块：`chat`、`fun`、`todo`、`rss`、`weather`、`search`".to_owned(),
     );
     render.push_pair(
-        "· 更多模块：translation、memory、session、settings、voice、status、ops".to_owned(),
-        "- 更多模块：`translation`、`memory`、`session`、`settings`、`voice`、`status`、`ops`"
-            .to_owned(),
+        "· 更多模块：translation、memory、session、settings、status、ops".to_owned(),
+        "- 更多模块：`translation`、`memory`、`session`、`settings`、`status`、`ops`".to_owned(),
     );
     if context.is_group && !context.group_tool_calling_enabled {
         render.blank();

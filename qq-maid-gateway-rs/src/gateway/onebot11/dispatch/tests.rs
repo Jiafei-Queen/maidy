@@ -153,7 +153,6 @@ fn response(text: Option<&str>) -> Box<CoreResponse> {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     })
 }
 
@@ -180,7 +179,6 @@ fn response_with_mentions(text: &str, user_ids: &[&str]) -> Box<CoreResponse> {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     })
 }
 
@@ -195,7 +193,6 @@ fn suppressed_response() -> Box<CoreResponse> {
             "reason": "unknown_group_slash_command",
         })),
         visible_entity_snapshot: None,
-        delivery_hint: None,
     })
 }
 
@@ -207,7 +204,6 @@ fn unhandled_empty_response() -> Box<CoreResponse> {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     })
 }
 

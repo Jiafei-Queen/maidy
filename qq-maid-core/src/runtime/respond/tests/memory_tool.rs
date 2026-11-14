@@ -157,7 +157,7 @@ async fn explicit_negation_rejects_mistaken_tool_call() {
 }
 
 #[tokio::test]
-async fn default_group_route_exposes_memory_only() {
+async fn default_group_route_exposes_restricted_tools() {
     let inspector = memory_provider(r#"{"content":"在这个群叫你初墨","scope":"profile"}"#);
     let service = test_service_with_provider_and_group_tool_calling(inspector.clone(), true, false);
 
@@ -181,7 +181,7 @@ async fn default_group_route_exposes_memory_only() {
     assert_eq!(exposed, [SAVE_MEMORY_TOOL_NAME]);
     assert_eq!(
         response.diagnostics.unwrap()["agent_mode"],
-        serde_json::json!("memory_only")
+        serde_json::json!("restricted_tools")
     );
 }
 

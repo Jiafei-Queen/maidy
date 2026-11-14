@@ -235,6 +235,15 @@ impl LlmRuntime {
         self
     }
 
+    /// 注入 Gateway 实现的语音工具发送能力；未注入时 Core 不注册语音 Tool。
+    pub fn with_voice_sink(
+        mut self,
+        sink: Option<crate::runtime::tools::voice::DynVoiceSendSink>,
+    ) -> Self {
+        self.core_state = self.core_state.with_voice_sink(sink);
+        self
+    }
+
     /// 返回 Core HTTP 健康检查 URL。
     ///
     /// 当 bind 地址为通配地址（0.0.0.0 / ::）时，自动映射为本地回环地址，

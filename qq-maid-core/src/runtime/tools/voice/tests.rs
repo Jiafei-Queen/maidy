@@ -1,183 +1,205 @@
-use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use qq_maid_common::identity_context::ConversationKind;
+use qq_maid_common::{
+    identity_context::{ConversationKind, ExecutionActorContext, ExecutionConversationContext},
+    markdown::to_speakable_text,
+};
+use qq_maid_llm::tool::{Tool, ToolContext, ToolEffect, ToolTimeoutPolicy};
+use serde_json::json;
 
-use super::*;
-use crate::{config::VoiceFeatureConfig, storage::database::SqliteDatabase};
+use super::{
+    SEND_VOICE_TOOL_NAME, SendVoiceTool, VoiceSendError, VoiceSendIntent, VoiceSendResult,
+    VoiceSendSink,
+};
+use crate::{runtime::push::PushTargetType, runtime::respond::RespondRequest};
 
-fn request(account_id: &str, target_id: &str, group_role: Option<&str>) -> RespondRequest {
-    let is_group = group_role.is_some();
+struct RecordingSink {
+    calls: Mutex<Vec<VoiceSendIntent>>,
+    result: Result<VoiceSendResult, VoiceSendError>,
+}
+
+impl RecordingSink {
+    fn success() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            result: Ok(VoiceSendResult {
+                message_id: Some("message-1".to_owned()),
+            }),
+        }
+    }
+
+    fn failure(error: VoiceSendError) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            result: Err(error),
+        }
+    }
+
+    fn calls(&self) -> Vec<VoiceSendIntent> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl VoiceSendSink for RecordingSink {
+    async fn send_voice(&self, intent: VoiceSendIntent) -> Result<VoiceSendResult, VoiceSendError> {
+        self.calls.lock().unwrap().push(intent);
+        self.result.clone()
+    }
+}
+
+fn private_request() -> RespondRequest {
     RespondRequest {
         platform: "qq_official".to_owned(),
-        account_id: Some(account_id.to_owned()),
-        conversation_kind: if is_group {
-            ConversationKind::Group
-        } else {
-            ConversationKind::Private
-        },
-        conversation_id: Some(target_id.to_owned()),
-        group_id: is_group.then(|| target_id.to_owned()),
-        group_member_role: group_role.map(str::to_owned),
+        account_id: Some("bot-a".to_owned()),
+        conversation_kind: ConversationKind::Private,
+        conversation_id: Some("user-a".to_owned()),
+        message_id: Some("inbound-1".to_owned()),
         ..Default::default()
     }
 }
 
-fn available_config() -> VoiceFeatureConfig {
-    VoiceFeatureConfig::from_environment(&HashMap::from([
-        ("TTS_PROVIDER".to_owned(), "qwen".to_owned()),
-        ("QWEN_TTS_API_KEY".to_owned(), "test-key".to_owned()),
-    ]))
-}
-
-#[test]
-fn private_preferences_persist_and_isolate_account_and_peer() {
-    let database = SqliteDatabase::open_temp("voice-pref", &[VOICE_PREFERENCE_SCHEMA_V1]).unwrap();
-    let service = VoicePreferenceService::new(
-        VoicePreferenceStore::new(database.clone()),
-        available_config(),
-    );
-    let first = request("bot-a", "user-a", None);
-    service.execute(VoiceCommand::Enable, &first).unwrap();
-    assert!(service.enabled_for_request(&first).unwrap());
-    assert!(
-        !service
-            .enabled_for_request(&request("bot-b", "user-a", None))
-            .unwrap()
-    );
-    assert!(
-        !service
-            .enabled_for_request(&request("bot-a", "user-b", None))
-            .unwrap()
-    );
-
-    let reopened =
-        VoicePreferenceService::new(VoicePreferenceStore::new(database), available_config());
-    assert!(reopened.enabled_for_request(&first).unwrap());
-}
-
-#[test]
-fn group_modification_requires_owner_or_admin_but_query_is_open() {
-    let database = SqliteDatabase::open_temp("voice-role", &[VOICE_PREFERENCE_SCHEMA_V1]).unwrap();
-    let service =
-        VoicePreferenceService::new(VoicePreferenceStore::new(database), available_config());
-
-    for role in [Some("member"), Some("unknown"), None] {
-        let mut request = request("bot-a", "group-a", role);
-        if role.is_none() {
-            request.group_id = Some("group-a".to_owned());
-            request.conversation_kind = ConversationKind::Group;
-        }
-        let result = service.execute(VoiceCommand::Enable, &request).unwrap();
-        assert_eq!(result.text, "只有群主或管理员可以修改群聊语音设置");
-        assert!(!service.enabled_for_request(&request).unwrap());
-        assert!(service.execute(VoiceCommand::Query, &request).is_ok());
-    }
-
-    for role in ["owner", "admin"] {
-        let request = request("bot-a", &format!("group-{role}"), Some(role));
-        service.execute(VoiceCommand::Enable, &request).unwrap();
-        assert!(service.enabled_for_request(&request).unwrap());
+fn group_request() -> RespondRequest {
+    RespondRequest {
+        platform: "qq_official".to_owned(),
+        account_id: Some("bot-a".to_owned()),
+        conversation_kind: ConversationKind::Group,
+        conversation_id: Some("group-a".to_owned()),
+        group_id: Some("group-a".to_owned()),
+        message_id: Some("inbound-2".to_owned()),
+        ..Default::default()
     }
 }
 
-#[test]
-fn unavailable_tts_rejects_enable_without_overwriting_existing_state() {
-    let database =
-        SqliteDatabase::open_temp("voice-unavailable", &[VOICE_PREFERENCE_SCHEMA_V1]).unwrap();
-    let store = VoicePreferenceStore::new(database);
-    let request = request("bot-a", "user-a", None);
-    VoicePreferenceService::new(store.clone(), available_config())
-        .execute(VoiceCommand::Enable, &request)
+fn context() -> ToolContext {
+    ToolContext {
+        task_id: "task-1".to_owned(),
+        actor: ExecutionActorContext {
+            user_id: Some("user-a".to_owned()),
+            group_member_role: None,
+        },
+        conversation: ExecutionConversationContext {
+            platform: "qq_official".to_owned(),
+            account_id: Some("bot-a".to_owned()),
+            kind: ConversationKind::Private,
+            target_id: Some("user-a".to_owned()),
+            scope_id: "scope".to_owned(),
+            interaction_scope_id: "scope".to_owned(),
+        },
+        tool_call_id: None,
+        tool_round: None,
+        retry_of: None,
+        execution_deadline: None,
+    }
+}
+
+fn scoped_tool(sink: Arc<RecordingSink>, request: &RespondRequest) -> SendVoiceTool {
+    SendVoiceTool::new(sink, 600)
+        .scoped_for_request(request)
+        .expect("request should provide a voice target")
+}
+
+#[tokio::test]
+async fn private_voice_tool_sends_cleaned_text_to_current_target() {
+    let sink = Arc::new(RecordingSink::success());
+    let tool = scoped_tool(sink.clone(), &private_request());
+
+    let output = tool
+        .execute(
+            context(),
+            json!({"text": "**晚安**\n[链接](https://example.test)"}),
+        )
+        .await
         .unwrap();
 
-    let disabled = VoicePreferenceService::new(store.clone(), VoiceFeatureConfig::default());
-    let result = disabled.execute(VoiceCommand::Enable, &request).unwrap();
-    assert!(result.text.contains("TTS_PROVIDER=qwen"));
-    assert!(disabled.enabled_for_request(&request).unwrap());
-
-    disabled.execute(VoiceCommand::Disable, &request).unwrap();
-    let missing_key = VoicePreferenceService::new(
-        store,
-        VoiceFeatureConfig::from_environment(&HashMap::from([(
-            "TTS_PROVIDER".to_owned(),
-            "qwen".to_owned(),
-        )])),
+    assert_eq!(output.value["ok"], true);
+    assert!(output.value.get("message_id").is_none());
+    let calls = sink.calls();
+    assert_eq!(calls.len(), 1);
+    let intent = &calls[0];
+    assert_eq!(intent.target.target_type, PushTargetType::Private);
+    assert_eq!(intent.target.target_id, "user-a");
+    assert_eq!(intent.target.account_id.as_deref(), Some("bot-a"));
+    assert_eq!(intent.reply_to_message_id.as_deref(), Some("inbound-1"));
+    assert_eq!(
+        intent.text,
+        to_speakable_text("**晚安**\n[链接](https://example.test)")
     );
-    let result = missing_key.execute(VoiceCommand::Enable, &request).unwrap();
-    assert!(result.text.contains("QWEN_TTS_API_KEY"));
-    assert!(!missing_key.enabled_for_request(&request).unwrap());
+    assert!(!intent.text.contains("**"));
 }
 
-#[test]
-fn command_parser_accepts_only_the_declared_shape() {
-    assert_eq!(parse_voice_command("语音"), Some(VoiceCommand::Query));
-    assert_eq!(parse_voice_command("语音 开启"), Some(VoiceCommand::Enable));
-    assert_eq!(
-        parse_voice_command("语音 关闭"),
-        Some(VoiceCommand::Disable)
-    );
-    assert_eq!(
-        parse_voice_command("语音 开启 多余"),
-        Some(VoiceCommand::Invalid)
-    );
-    assert_eq!(parse_voice_command("声音 开启"), None);
-    for alias in ["开启", "打开", "on"] {
-        assert_eq!(
-            parse_voice_command(&format!("语音 {alias}")),
-            Some(VoiceCommand::Enable)
-        );
-    }
-    for alias in ["关闭", "关掉", "off"] {
-        assert_eq!(
-            parse_voice_command(&format!("语音 {alias}")),
-            Some(VoiceCommand::Disable)
-        );
-    }
-}
+#[tokio::test]
+async fn group_voice_target_requires_authoritative_group_id() {
+    let sink = Arc::new(RecordingSink::success());
+    let tool = scoped_tool(sink.clone(), &group_request());
+    let output = tool
+        .execute(context(), json!({"text": "群聊里发一条语音"}))
+        .await
+        .unwrap();
+    assert_eq!(output.value["ok"], true);
+    let calls = sink.calls();
+    assert_eq!(calls[0].target.target_type, PushTargetType::Group);
+    assert_eq!(calls[0].target.target_id, "group-a");
 
-#[test]
-fn incomplete_identity_or_group_context_never_reads_or_writes_preferences() {
-    // 故意不创建语音表：若边界校验失效，下面任一调用都会返回存储错误。
-    let database = SqliteDatabase::open_temp("voice-incomplete", &[]).unwrap();
-    let service =
-        VoicePreferenceService::new(VoicePreferenceStore::new(database), available_config());
-
-    let mut missing_account = request("bot-a", "user-a", None);
-    missing_account.account_id = None;
-    assert!(!service.enabled_for_request(&missing_account).unwrap());
+    let mut mismatched = group_request();
+    mismatched.conversation_id = Some("other-group".to_owned());
     assert!(
-        service
-            .execute(VoiceCommand::Enable, &missing_account)
-            .unwrap()
-            .text
-            .contains("暂不支持")
+        SendVoiceTool::new(Arc::new(RecordingSink::success()), 600)
+            .scoped_for_request(&mismatched)
+            .is_none()
     );
+}
 
-    let mut incomplete_group = request("bot-a", "group-a", Some("owner"));
-    incomplete_group.group_id = None;
-    assert!(!service.enabled_for_request(&incomplete_group).unwrap());
+#[tokio::test]
+async fn invalid_text_is_rejected_before_the_sink_is_called() {
+    let sink = Arc::new(RecordingSink::success());
+    let tool = scoped_tool(sink.clone(), &private_request());
 
-    let mut mismatched_group = request("bot-a", "group-a", Some("owner"));
-    mismatched_group.group_id = Some("group-b".to_owned());
-    assert!(!service.enabled_for_request(&mismatched_group).unwrap());
+    for (text, expected_code) in [("   ", "empty_text"), (&"朗".repeat(601), "text_too_long")] {
+        let output = tool
+            .execute(context(), json!({ "text": text }))
+            .await
+            .unwrap();
+        assert_eq!(output.value["ok"], false);
+        assert_eq!(output.value["error_code"], expected_code);
+    }
+    assert!(sink.calls().is_empty());
+}
 
-    let mut unknown = request("bot-a", "user-a", None);
-    unknown.conversation_kind = ConversationKind::Unknown;
-    assert!(!service.enabled_for_request(&unknown).unwrap());
+#[tokio::test]
+async fn sink_failure_is_reported_without_fake_success() {
+    let sink = Arc::new(RecordingSink::failure(VoiceSendError::Tts {
+        code: "http_status",
+    }));
+    let tool = scoped_tool(sink, &private_request());
+
+    let output = tool
+        .execute(context(), json!({"text": "晚安"}))
+        .await
+        .unwrap();
+
+    assert_eq!(output.value["ok"], false);
+    assert_eq!(output.value["error_code"], "tts_error");
+    assert!(output.value["message"].as_str().unwrap().contains("未发送"));
 }
 
 #[test]
-fn conversation_kind_is_authoritative_for_private_and_group_keys() {
-    let database = SqliteDatabase::open_temp("voice-kind", &[VOICE_PREFERENCE_SCHEMA_V1]).unwrap();
-    let service =
-        VoicePreferenceService::new(VoicePreferenceStore::new(database), available_config());
-    let mut private = request("bot-a", "same-target", None);
-    // 即使携带了非权威 group_id，Private 仍按私聊 key 和私聊权限处理。
-    private.group_id = Some("same-target".to_owned());
-    private.group_member_role = Some("member".to_owned());
-    service.execute(VoiceCommand::Enable, &private).unwrap();
-    assert!(service.enabled_for_request(&private).unwrap());
+fn metadata_is_side_effecting_and_limited_to_one_call() {
+    let tool = SendVoiceTool::new(Arc::new(RecordingSink::success()), 600);
+    let metadata = tool.metadata();
+    assert_eq!(metadata.name, SEND_VOICE_TOOL_NAME);
+    assert_eq!(metadata.parameters["required"], json!(["text"]));
+    assert_eq!(tool.effect(), ToolEffect::SideEffecting);
+    assert_eq!(tool.timeout_policy(), ToolTimeoutPolicy::ToolManaged);
+    assert_eq!(tool.max_calls_per_request(), Some(1));
+}
 
-    let group = request("bot-a", "same-target", Some("owner"));
-    assert!(!service.enabled_for_request(&group).unwrap());
+#[test]
+fn only_qq_official_requests_can_bind_a_voice_target() {
+    let sink = Arc::new(RecordingSink::success());
+    let tool = SendVoiceTool::new(sink, 600);
+    let mut request = private_request();
+    request.platform = "onebot11".to_owned();
+    assert!(tool.scoped_for_request(&request).is_none());
+    assert!(!SendVoiceTool::supports_request(&request));
 }

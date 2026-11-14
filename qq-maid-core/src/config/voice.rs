@@ -1,7 +1,7 @@
-//! 最终回复语音投递的共享功能配置。
+//! 语音工具与 TTS 试听共用的功能配置。
 //!
-//! Core 用预检状态决定 `/语音 开启` 是否允许写入，Gateway 使用同一快照构造具体
-//! TTS Provider。无效 TTS 配置只关闭语音能力，避免破坏既有文本机器人启动。
+//! Core 用预检状态决定是否向模型注册 `send_voice` 工具，Gateway 使用同一快照
+//! 构造具体 TTS Provider。无效 TTS 配置只关闭语音能力，避免破坏既有文本机器人启动。
 
 use std::{collections::HashMap, time::Duration};
 

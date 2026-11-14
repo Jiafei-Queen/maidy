@@ -1,7 +1,7 @@
 //! Gateway 出站 TTS Provider 边界。
 //!
-//! Core 只通过结构化 delivery hint 表达“最终正文需要语音投递”；具体 Provider
-//! 协议与音频产物留在 Gateway，避免 Core 理解千问响应、OpenAI 音频字节或签名地址。
+//! Core 只通过语音工具发送契约表达“把这段文本合成语音”；具体 Provider 协议与
+//! 音频产物留在 Gateway，避免 Core 理解千问响应、OpenAI 音频字节或签名地址。
 
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 

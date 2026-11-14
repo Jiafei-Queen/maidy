@@ -19,5 +19,6 @@ mod todo_receipt;
 mod todo_tool_loop;
 mod train;
 mod translation;
+mod voice_tool;
 mod weather;
 mod weather_format;

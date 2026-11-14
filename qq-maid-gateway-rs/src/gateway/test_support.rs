@@ -95,6 +95,5 @@ pub(crate) fn respond_response_fixture(text: &str) -> CoreResponse {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     }
 }

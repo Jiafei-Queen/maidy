@@ -207,7 +207,6 @@ fn core_response_with_output_sets_structured_output() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     }
     .with_output(AssistantOutput::markdown("fallback", "# title"));
 
@@ -234,7 +233,6 @@ fn text_content_and_markdown_content_read_structured_output() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
 
     assert_eq!(response.text_content(), Some("structured fallback"));
@@ -251,7 +249,6 @@ fn markdown_content_is_none_when_output_only_has_text() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
 
     assert_eq!(response.text_content(), Some("plain"));
@@ -267,7 +264,6 @@ fn output_absence_without_suppressed_marker_does_not_suppress_reply() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
 
     assert_eq!(response.text_content(), None);
@@ -287,54 +283,7 @@ fn explicit_suppressed_marker_suppresses_reply() {
             "reason": "test_suppressed_response",
         })),
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
 
     assert!(response.suppresses_reply());
-}
-
-#[test]
-fn voice_delivery_hint_is_kept_only_for_textual_final_output() {
-    let textual = CoreResponse {
-        output: Some(AssistantOutput::markdown("fallback", "# 标题")),
-        handled: Some(true),
-        session_id: None,
-        command: None,
-        diagnostics: None,
-        visible_entity_snapshot: None,
-        delivery_hint: None,
-    }
-    .with_delivery_hint_if_eligible(Some(CoreDeliveryHint::Voice));
-    assert_eq!(textual.delivery_hint, Some(CoreDeliveryHint::Voice));
-
-    for output in [
-        AssistantOutput {
-            text_fallback: "图片回复".to_owned(),
-            markdown: None,
-            parts: vec![OutputPart::Image {
-                media: OutputMedia::default(),
-            }],
-            mentions: Vec::new(),
-        },
-        AssistantOutput {
-            text_fallback: "文件回复".to_owned(),
-            markdown: None,
-            parts: vec![OutputPart::File {
-                media: OutputMedia::default(),
-            }],
-            mentions: Vec::new(),
-        },
-    ] {
-        let response = CoreResponse {
-            output: Some(output),
-            handled: Some(true),
-            session_id: None,
-            command: None,
-            diagnostics: None,
-            visible_entity_snapshot: None,
-            delivery_hint: None,
-        }
-        .with_delivery_hint_if_eligible(Some(CoreDeliveryHint::Voice));
-        assert_eq!(response.delivery_hint, None);
-    }
 }

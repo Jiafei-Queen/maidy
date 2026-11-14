@@ -176,6 +176,7 @@ async fn private_tool_loop_can_query_train_schedule_with_trusted_rendering() {
             group_enabled_tools: None,
             memory_dream: None,
             knowledge_mode: None,
+            ..TestToolCallingOptions::default()
         },
     );
 
@@ -244,6 +245,7 @@ async fn mixed_train_and_todo_request_is_not_captured_by_todo_date_query() {
             group_enabled_tools: None,
             memory_dream: None,
             knowledge_mode: None,
+            ..TestToolCallingOptions::default()
         },
     );
 
@@ -918,9 +920,9 @@ async fn group_chat_uses_memory_only_tool_loop() {
     );
     let diagnostics = response.diagnostics.unwrap();
     assert_eq!(diagnostics["respond_route"], "agent_runtime");
-    assert_eq!(diagnostics["route_reason"], "group_memory_only");
+    assert_eq!(diagnostics["route_reason"], "group_restricted_tools");
     assert_eq!(diagnostics["route_domains"], serde_json::json!([]));
-    assert_eq!(diagnostics["agent_mode"], "memory_only");
+    assert_eq!(diagnostics["agent_mode"], "restricted_tools");
     assert_eq!(
         diagnostics["agent_exposed_tools"],
         serde_json::json!(["save_memory"])

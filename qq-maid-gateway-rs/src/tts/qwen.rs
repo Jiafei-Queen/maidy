@@ -84,7 +84,7 @@ impl QwenTtsProvider {
         }
 
         // 同一个超时覆盖发送、响应头、完整 JSON body、字段提取和 URL 校验，避免
-        // Provider 先返回响应头再悬挂 body 时长期占住 QQ 最终回复。
+        // Provider 先返回响应头再悬挂 body 时长期占住语音工具调用。
         let request = async {
             let response = self
                 .client

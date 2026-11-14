@@ -149,9 +149,11 @@ enabled_tools = [
   "delete_todos",
   "merge_todos",
   "save_memory",
+  "send_voice",
 ]
 
-# 群聊普通聊天：默认 fast，完整 Tool Loop 默认关闭；save_memory 保留 Memory-only 路径。
+# 群聊普通聊天：默认 fast，完整 Tool Loop 默认关闭；save_memory 与 send_voice
+# 保留受限工具路径，不会连带开放天气、搜索、Todo 等其他工具。
 # 确需开启完整群聊 Tool Loop 时，先确认群聊白名单、权限边界和敏感信息脱敏。
 # 默认群聊白名单不包含 Todo；如需开放 Todo 查询，请显式加入 list_todos / get_todo，
 # 并先确认群聊 Todo owner 语义符合预期。
@@ -161,4 +163,4 @@ profile = "fast"
 main_route = "group_main"
 search_route = "group_search"
 tool_calling_enabled = false
-enabled_tools = ["get_weather", "get_train_schedule", "get_rss_recent_items", "manage_rss_subscriptions", "web_search", "knowledge_search", "save_memory"]
+enabled_tools = ["get_weather", "get_train_schedule", "get_rss_recent_items", "manage_rss_subscriptions", "web_search", "knowledge_search", "save_memory", "send_voice"]

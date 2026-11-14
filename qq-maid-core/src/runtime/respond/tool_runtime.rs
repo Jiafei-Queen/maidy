@@ -19,6 +19,7 @@ use crate::{
             ToolTurnPostprocessContext, fallback_output_after_agent_failure, postprocess_tool_turn,
         },
         replace_scoped_todo_tools_from_visible_snapshot, todo,
+        voice::{SEND_VOICE_TOOL_NAME, SendVoiceTool},
     },
     storage::notification::NotificationOutboxStore,
 };
@@ -39,6 +40,7 @@ pub(crate) struct ToolRuntime {
     save_memory_tool: SaveMemoryTool,
     web_search_tool: WebSearchTool,
     weather_available: bool,
+    voice_tool: Option<SendVoiceTool>,
 }
 
 impl ToolRuntime {
@@ -52,6 +54,7 @@ impl ToolRuntime {
         tool_result_max_chars: usize,
         web_search_timeouts: WebSearchTimeouts,
         knowledge_index: crate::runtime::tools::knowledge::KnowledgeIndex,
+        voice_config: &crate::config::VoiceFeatureConfig,
     ) -> Self {
         let mut registry =
             ToolRegistry::new().with_limits(DEFAULT_TOOL_TIMEOUT, tool_result_max_chars);
@@ -61,6 +64,13 @@ impl ToolRuntime {
             .with_timeouts(web_search_timeouts)
             .with_output_max_chars(tool_result_max_chars);
         let weather_available = executors.weather_executor.is_available();
+        // 语音是独立的副作用 Tool：TTS 不可用或未注入 Gateway 发送能力时不注册，
+        // 避免模型看到无法真实执行的工具。
+        let voice_tool = voice_config
+            .is_available()
+            .then(|| executors.voice_sink.clone())
+            .flatten()
+            .map(|sink| SendVoiceTool::new(sink, voice_config.max_text_chars));
         // Tool 只通过服务端白名单注册；Todo Tool 复用现有 store、session 快照和 pending。
         let mut tools: Vec<qq_maid_llm::tool::DynTool> = vec![
             Arc::new(TrainScheduleTool::new(executors.train_executor.clone())),
@@ -88,6 +98,9 @@ impl ToolRuntime {
                 executors.weather_executor.clone(),
             )));
         }
+        if let Some(voice_tool) = &voice_tool {
+            tools.push(Arc::new(voice_tool.clone()));
+        }
         for tool in tools {
             if let Err(err) = registry.insert(tool) {
                 tracing::warn!(
@@ -105,6 +118,7 @@ impl ToolRuntime {
             save_memory_tool,
             web_search_tool,
             weather_available,
+            voice_tool,
         }
     }
 
@@ -123,15 +137,23 @@ impl ToolRuntime {
             AgentToolMode::ConfiguredWhitelist => {
                 todo::tool_policy::enabled_tool_names_for_request(&policy.enabled_tools, &user_text)
             }
-            AgentToolMode::MemoryOnly => policy
+            AgentToolMode::RestrictedTools => policy
                 .enabled_tools
                 .iter()
                 .map(String::as_str)
-                .filter(|name| *name == crate::runtime::tools::memory::SAVE_MEMORY_TOOL_NAME)
+                .filter(|name| {
+                    matches!(
+                        *name,
+                        crate::runtime::tools::memory::SAVE_MEMORY_TOOL_NAME | SEND_VOICE_TOOL_NAME
+                    )
+                })
                 .collect(),
         };
         if !self.weather_available {
             tool_names.retain(|name| *name != WEATHER_TOOL_NAME);
+        }
+        if !self.voice_available_for_request(req) {
+            tool_names.retain(|name| *name != SEND_VOICE_TOOL_NAME);
         }
         if policy.search_backend == WebSearchBackend::Disabled {
             tool_names.retain(|name| *name != WEB_SEARCH_TOOL_NAME);
@@ -168,6 +190,12 @@ impl ToolRuntime {
 
     pub(crate) fn metadata(&self) -> Vec<ToolMetadata> {
         self.registry.metadata()
+    }
+
+    pub(crate) fn voice_available_for_request(&self, req: &RespondRequest) -> bool {
+        self.voice_tool
+            .as_ref()
+            .is_some_and(|_| SendVoiceTool::supports_request(req))
     }
 
     pub(crate) fn postprocess_tool_turn(
@@ -229,6 +257,14 @@ impl ToolRuntime {
                 self.save_memory_tool
                     .scoped_for_request(req.effective_user_text()),
             ))?;
+        }
+        if enabled_tools.contains(&SEND_VOICE_TOOL_NAME)
+            && let Some(voice_tool) = self
+                .voice_tool
+                .as_ref()
+                .and_then(|tool| tool.scoped_for_request(req))
+        {
+            registry.replace(Arc::new(voice_tool))?;
         }
         Ok(())
     }

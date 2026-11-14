@@ -904,7 +904,6 @@ fn test_state_with_group_tool_calling_and_query_executor(
             memory_store: crate::runtime::tools::memory::MemoryStore::new(database.clone()),
             session_store: SessionStore::new(database.clone()),
             todo_store: crate::runtime::tools::todo::TodoStore::new(database.clone()),
-            voice_store: crate::runtime::tools::voice::VoicePreferenceStore::new(database.clone()),
             roll_preference_service: crate::runtime::tools::roll::RollPreferenceService::new(
                 database.clone(),
             ),
@@ -926,5 +925,6 @@ fn test_state_with_group_tool_calling_and_query_executor(
         knowledge_index,
         prompt_config: PromptConfig::new(prompt_dir),
         initiative_service: crate::runtime::tools::initiative::InitiativeService::default(),
+        voice_sink: None,
     }
 }

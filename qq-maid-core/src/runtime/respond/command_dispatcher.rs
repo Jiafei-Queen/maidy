@@ -47,7 +47,6 @@ enum RegisteredSlashCommand {
     Rss,
     Todo,
     Memory,
-    Voice(crate::runtime::tools::voice::VoiceCommand),
 }
 
 impl RegisteredSlashCommand {
@@ -57,9 +56,6 @@ impl RegisteredSlashCommand {
         }
         if let Some(command) = crate::runtime::tools::initiative::parse_command(text) {
             return Some(Self::Initiative(command));
-        }
-        if let Some(command) = crate::runtime::tools::voice::parse_voice_command(text) {
-            return Some(Self::Voice(command));
         }
         if let Some(command) = session_flow::parse_session_command(text) {
             return Some(Self::Session(command));
@@ -372,12 +368,6 @@ impl<'a> CommandDispatcher<'a> {
                 self.service
                     .handle_session_command(command.clone(), &meta)
                     .await?,
-            )));
-        }
-
-        if let Some(RegisteredSlashCommand::Voice(command)) = registered_slash_command.as_ref() {
-            return Ok(DispatchOutcome::Respond(Box::new(
-                self.service.handle_voice_command(*command, &req)?,
             )));
         }
 
@@ -701,7 +691,6 @@ mod tests {
             Some(RegisteredSlashCommand::Rss) => "rss",
             Some(RegisteredSlashCommand::Todo) => "todo",
             Some(RegisteredSlashCommand::Memory) => "memory",
-            Some(RegisteredSlashCommand::Voice(_)) => "voice",
             None => "none",
         }
     }
@@ -709,7 +698,6 @@ mod tests {
     #[test]
     fn explicit_slash_commands_precede_weather_shortcut() {
         let cases = [
-            ("/语音 明天天气", "voice"),
             ("/help 明天天气", "session"),
             ("/翻译 明天天气", "translation"),
             ("/set 昵称 明天天气", "set"),

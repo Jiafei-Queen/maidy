@@ -256,21 +256,6 @@ pub trait OutboundSender: Send + Sync {
         target: &'a C2cReplyTarget,
         image: &'a ImagePayload,
     ) -> SendFuture<'a>;
-    fn send_voice_url<'a>(
-        &'a self,
-        _target: &'a C2cReplyTarget,
-        _audio_url: &'a str,
-    ) -> SendFuture<'a> {
-        Box::pin(async { Err(ApiError::Unsupported("voice")) })
-    }
-    fn send_voice_file<'a>(
-        &'a self,
-        _target: &'a C2cReplyTarget,
-        _bytes: &'a [u8],
-        _file_name: &'a str,
-    ) -> SendFuture<'a> {
-        Box::pin(async { Err(ApiError::Unsupported("voice")) })
-    }
 }
 
 pub trait GroupOutboundSender: Send + Sync {
@@ -286,21 +271,6 @@ pub trait GroupOutboundSender: Send + Sync {
         _image: &'a ImagePayload,
     ) -> SendFuture<'a> {
         Box::pin(async { Err(ApiError::Unsupported("image")) })
-    }
-    fn send_voice_url<'a>(
-        &'a self,
-        _target: &'a GroupReplyTarget,
-        _audio_url: &'a str,
-    ) -> SendFuture<'a> {
-        Box::pin(async { Err(ApiError::Unsupported("voice")) })
-    }
-    fn send_voice_file<'a>(
-        &'a self,
-        _target: &'a GroupReplyTarget,
-        _bytes: &'a [u8],
-        _file_name: &'a str,
-    ) -> SendFuture<'a> {
-        Box::pin(async { Err(ApiError::Unsupported("voice")) })
     }
 }
 
@@ -698,34 +668,6 @@ impl OutboundSender for QqApiClient {
         Box::pin(async move {
             self.send_c2c_image(&target.user_openid, target.msg_id.as_deref(), image)
                 .await
-        })
-    }
-
-    fn send_voice_url<'a>(
-        &'a self,
-        target: &'a C2cReplyTarget,
-        audio_url: &'a str,
-    ) -> SendFuture<'a> {
-        Box::pin(async move {
-            self.send_c2c_voice_url(&target.user_openid, target.msg_id.as_deref(), audio_url)
-                .await
-        })
-    }
-
-    fn send_voice_file<'a>(
-        &'a self,
-        target: &'a C2cReplyTarget,
-        bytes: &'a [u8],
-        file_name: &'a str,
-    ) -> SendFuture<'a> {
-        Box::pin(async move {
-            self.send_c2c_voice_file(
-                &target.user_openid,
-                target.msg_id.as_deref(),
-                bytes,
-                file_name,
-            )
-            .await
         })
     }
 }

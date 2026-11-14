@@ -294,6 +294,8 @@ fn project_tool_turn(
             outcomes.push(outcome);
         } else if let Some(outcome) = memory::agent_turn::tool_outcome_from_result(result) {
             outcomes.push(outcome);
+        } else if let Some(outcome) = super::voice::tool_outcome_from_result(result) {
+            outcomes.push(outcome);
         } else {
             outcomes.push(ToolExecutionOutcome::generic(result));
         }

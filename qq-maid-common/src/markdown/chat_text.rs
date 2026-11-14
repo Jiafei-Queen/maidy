@@ -11,7 +11,7 @@ pub fn to_chat_text(text: &str) -> String {
 ///
 /// 与普通聊天 fallback 共用同一套 Markdown 行内、列表和表格解析；朗读模式仅在
 /// 围栏代码、链接目标和图片等不宜发声的内容上采用更严格的丢弃规则。
-pub(crate) fn to_speakable_text(text: &str) -> String {
+pub fn to_speakable_text(text: &str) -> String {
     render_markdown_text(text, RenderMode::Speakable)
 }
 

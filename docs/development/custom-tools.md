@@ -26,12 +26,12 @@
 实际运行时不是“写了 Tool 模型就能直接调”，而是下面这条链路：
 
 1. `qq-maid-core/src/runtime/respond/tool_runtime.rs` 启动时构造服务端全量 `ToolRegistry`。
-2. 每次普通纯文本 Agent Chat 调用前，`ToolRuntime::registry_for_chat()` 根据路由模式读取场景白名单：完整 Agent 使用 `policy.enabled_tools` 并应用 Todo 恢复等请求级策略；默认群聊 Memory-only 模式只选取 `save_memory`。
+2. 每次普通纯文本 Agent Chat 调用前，`ToolRuntime::registry_for_chat()` 根据路由模式读取场景白名单：完整 Agent 使用 `policy.enabled_tools` 并应用 Todo 恢复等请求级策略；默认群聊受限模式只选取 `save_memory` 和可用的 `send_voice`。
 3. `ToolRegistry::subset()` 只保留本轮实际允许的工具；未注册、未在场景白名单里或被请求级策略禁用的工具对模型不可见。
-4. Todo 这类需要用户可见编号和引用恢复的工具，会在 `replace_scoped_tools_from_request()` 中替换成带当前请求快照的受限实例。
+4. Todo 这类需要用户可见编号和引用恢复的工具，会在 `replace_scoped_tools_from_request()` 中替换成带当前请求快照的受限实例；语音工具也会替换成绑定当前会话投递目标的实例。
 5. LLM crate 只负责 Tool Loop 协议和执行注册表里的 Tool，不知道 Todo、RSS 或服务器命令的业务规则。
 
-默认文件也按这个链路生效：私聊 Scene 显式设置 `tool_calling_enabled = true` 并列出白名单；群聊 Scene 设置为 `false` 时关闭完整白名单 Tool Loop，但若场景白名单包含 `save_memory`，会进入只暴露该 Tool 的 Memory-only 模式。是否调用由模型按 Tool 描述判断；真实 actor、会话范围、管理员权限、敏感信息、群画像 opt-out 和写入结果仍由服务端校验。
+默认文件也按这个链路生效：私聊 Scene 显式设置 `tool_calling_enabled = true` 并列出白名单；群聊 Scene 设置为 `false` 时关闭完整白名单 Tool Loop，但若场景白名单包含 `save_memory` 或 `send_voice`，会进入只暴露这两个受限 Tool 的模式。是否调用由模型按 Tool 描述判断；真实 actor、会话范围、管理员权限、敏感信息、群画像 opt-out、语音发送结果和写入结果仍由服务端校验。
 
 ## Agent Chat 语义提示和后处理接入
 
@@ -178,7 +178,7 @@ const ALL_ENABLED_TOOL_NAMES: &[&str] = &[
 ];
 ```
 
-`save_memory` 是特殊的 Memory-only 受控工具：完整群聊 Tool Loop 关闭时也可由 Scene 白名单单独暴露，但正向自然语言能力由模型依据 Tool 描述判断，服务端必须继续完成身份、权限、范围证据、敏感信息、opt-out 和真实结果校验。其他写入类、删除类、本地命令类和外部副作用类工具不得复用该例外。
+`save_memory` 与 `send_voice` 是受限模式下允许的两个特殊 Tool：完整群聊 Tool Loop 关闭时也可由 Scene 白名单单独暴露。`save_memory` 的正向自然语言能力由模型依据 Tool 描述判断，服务端必须继续完成身份、权限、范围证据、敏感信息、opt-out 和真实结果校验；`send_voice` 必须通过当前请求绑定的平台目标真实发送，失败以工具错误返回，不能伪造成功。其他写入类、删除类、本地命令类和外部副作用类工具不得复用该例外。
 
 ## 在配置中开放 Tool
 

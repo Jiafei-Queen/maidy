@@ -15,14 +15,15 @@ pub(super) enum RespondRoute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AgentToolMode {
     ConfiguredWhitelist,
-    MemoryOnly,
+    /// 群聊完整 Tool Loop 关闭时仍允许的少量受限工具。
+    RestrictedTools,
 }
 
 impl AgentToolMode {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::ConfiguredWhitelist => "configured_whitelist",
-            Self::MemoryOnly => "memory_only",
+            Self::RestrictedTools => "restricted_tools",
         }
     }
 }
@@ -71,6 +72,8 @@ pub(super) struct AgentRouteContext {
     pub provider_supports_tool_calling: bool,
     pub enabled_tools_available: bool,
     pub memory_tool_available: bool,
+    /// 当前请求是否具备可真实发送的语音工具。
+    pub voice_tool_available: bool,
 }
 
 pub(super) fn route_agent_runtime(
@@ -94,10 +97,11 @@ pub(super) fn route_agent_runtime(
         return standard_decision("agent_unavailable");
     }
     if is_group && !ctx.group_tool_calling_enabled {
-        // 群聊完整 Tool Loop 仍默认关闭；仅保留 save_memory，让 Luna 基于 Tool 描述
-        // 判断是否存在明确长期保存请求，避免同时开放 Todo 或其他写工具。
-        return if ctx.memory_tool_available {
-            agent_decision("group_memory_only", AgentToolMode::MemoryOnly)
+        // 群聊完整 Tool Loop 仍默认关闭；只保留少量明确受限的工具，让 Luna
+        // 根据 Tool 描述判断长期记忆写入和语音发送，避免同时开放 Todo、
+        // 天气或其他写工具。
+        return if ctx.memory_tool_available || ctx.voice_tool_available {
+            agent_decision("group_restricted_tools", AgentToolMode::RestrictedTools)
         } else {
             standard_decision("group_agent_disabled")
         };
@@ -151,6 +155,7 @@ mod tests {
             provider_supports_tool_calling: true,
             enabled_tools_available: true,
             memory_tool_available: true,
+            voice_tool_available: false,
         }
     }
 
@@ -200,7 +205,7 @@ mod tests {
         group.group_id = Some("g1".to_owned());
         assert_eq!(
             route_agent_runtime(&group, context()).tool_mode(),
-            Some(AgentToolMode::MemoryOnly)
+            Some(AgentToolMode::RestrictedTools)
         );
         assert_eq!(
             route_agent_runtime(
@@ -267,6 +272,18 @@ mod tests {
             )
             .route,
             RespondRoute::StandardChat
+        );
+        assert_eq!(
+            route_agent_runtime(
+                &group,
+                AgentRouteContext {
+                    memory_tool_available: false,
+                    voice_tool_available: true,
+                    ..context()
+                },
+            )
+            .tool_mode(),
+            Some(AgentToolMode::RestrictedTools)
         );
     }
 }

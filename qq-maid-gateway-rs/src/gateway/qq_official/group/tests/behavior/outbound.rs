@@ -16,7 +16,6 @@ fn group_send_records_message_id_for_cache_and_refidx_for_ref_index() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
     let sent_ids = SendMessageIds {
         message_id: Some("qq_msg_1".to_owned()),
@@ -86,7 +85,6 @@ fn group_send_records_rendered_fallback_when_output_text_field_is_empty() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
 
     record_group_bot_outbound_send(
@@ -134,7 +132,6 @@ fn group_send_does_not_cross_use_message_id_and_refidx_when_one_is_missing() {
         command: None,
         diagnostics: None,
         visible_entity_snapshot: None,
-        delivery_hint: None,
     };
 
     let message_only_cache = Arc::new(Mutex::new(BotOutboundCache::default()));

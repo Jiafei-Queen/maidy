@@ -14,6 +14,8 @@ pub(crate) struct TestToolCallingOptions {
     pub(crate) group_enabled_tools: Option<Vec<String>>,
     pub(crate) memory_dream: Option<crate::runtime::tools::memory::MemoryDreamConfig>,
     pub(crate) knowledge_mode: Option<crate::config::KnowledgeRetrievalMode>,
+    pub(crate) voice_enabled: bool,
+    pub(crate) voice_sink: Option<crate::runtime::tools::voice::DynVoiceSendSink>,
 }
 
 pub(crate) fn test_service() -> RustRespondService {
@@ -123,6 +125,7 @@ pub(crate) fn test_service_with_provider_and_group_tool_calling_tools(
             group_enabled_tools,
             memory_dream: None,
             knowledge_mode: None,
+            ..TestToolCallingOptions::default()
         },
     )
     .0
@@ -269,6 +272,57 @@ fn test_service_with_provider_base_title_query_weather_and_models(
     )
 }
 
+pub(crate) fn test_service_with_provider_and_voice_tool(
+    provider: MockProvider,
+    group_enabled_tools: Option<Vec<String>>,
+) -> (RustRespondService, std::sync::Arc<TestVoiceSink>) {
+    let sink = std::sync::Arc::new(TestVoiceSink::default());
+    let (service, _) = test_service_with_provider_base_title_query_weather_train_models_and_options(
+        provider,
+        None,
+        Arc::new(MockWebSearchExecutor),
+        Arc::new(MockWeatherExecutor::new()),
+        Arc::new(MockTrainExecutor::new()),
+        TestModelOptions::default(),
+        TestToolCallingOptions {
+            enabled: true,
+            group_enabled: false,
+            group_enabled_tools,
+            voice_enabled: true,
+            voice_sink: Some(sink.clone()),
+            ..TestToolCallingOptions::default()
+        },
+    );
+    (service, sink)
+}
+
+#[derive(Default)]
+pub(crate) struct TestVoiceSink {
+    calls: std::sync::Mutex<Vec<crate::runtime::tools::voice::VoiceSendIntent>>,
+}
+
+impl TestVoiceSink {
+    pub(crate) fn calls(&self) -> Vec<crate::runtime::tools::voice::VoiceSendIntent> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::runtime::tools::voice::VoiceSendSink for TestVoiceSink {
+    async fn send_voice(
+        &self,
+        intent: crate::runtime::tools::voice::VoiceSendIntent,
+    ) -> Result<
+        crate::runtime::tools::voice::VoiceSendResult,
+        crate::runtime::tools::voice::VoiceSendError,
+    > {
+        self.calls.lock().unwrap().push(intent);
+        Ok(crate::runtime::tools::voice::VoiceSendResult {
+            message_id: Some("test-voice-message".to_owned()),
+        })
+    }
+}
+
 pub(crate) fn test_service_with_provider_base_title_query_weather_train_models_and_options(
     provider: MockProvider,
     title_model: Option<String>,
@@ -298,12 +352,12 @@ pub(crate) fn test_service_with_provider_base_title_query_weather_train_models_a
             weather_executor,
             train_executor,
             radar_executor: Arc::new(MockRadarExecutor::new()),
+            voice_sink: tool_calling.voice_sink.clone(),
         },
         RespondStores {
             memory_store: MemoryStore::new(database.clone()),
             session_store: SessionStore::new(database.clone()),
             task_store: TodoStore::new(database.clone()),
-            voice_store: crate::runtime::tools::voice::VoicePreferenceStore::new(database.clone()),
             roll_preference_service: crate::runtime::tools::roll::RollPreferenceService::new(
                 database.clone(),
             ),
@@ -377,10 +431,21 @@ pub(crate) fn test_service_with_provider_base_title_query_weather_train_models_a
             },
             ops_config: crate::runtime::tools::ops::OpsConfig::default(),
             command_prefix: Default::default(),
-            voice: crate::config::VoiceFeatureConfig::default(),
+            voice: if tool_calling.voice_enabled {
+                available_voice_config()
+            } else {
+                crate::config::VoiceFeatureConfig::default()
+            },
         },
     );
     (service, base)
+}
+
+pub(crate) fn available_voice_config() -> crate::config::VoiceFeatureConfig {
+    crate::config::VoiceFeatureConfig::from_environment(&std::collections::HashMap::from([
+        ("TTS_PROVIDER".to_owned(), "qwen".to_owned()),
+        ("QWEN_TTS_API_KEY".to_owned(), "test-key".to_owned()),
+    ]))
 }
 
 pub(crate) fn test_agent_config(

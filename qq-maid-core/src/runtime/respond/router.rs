@@ -114,7 +114,7 @@ impl<'a> RespondRouter<'a> {
         let status_hint = match agent_decision.tool_mode() {
             // Memory-only 模式先由 Luna 判断是否真实调用，避免天气、Todo 等状态提示
             // 与本轮唯一可见工具不一致；真实 Tool 进度仍由 Agent 事件产生。
-            Some(agent_route::AgentToolMode::MemoryOnly) | None => None,
+            Some(agent_route::AgentToolMode::RestrictedTools) | None => None,
             Some(agent_route::AgentToolMode::ConfiguredWhitelist) => {
                 classify_status_hint(trimmed, &interaction_state)
             }
@@ -227,6 +227,11 @@ impl<'a> RespondRouter<'a> {
                     .enabled_tools
                     .iter()
                     .any(|name| name == crate::runtime::tools::memory::SAVE_MEMORY_TOOL_NAME),
+                voice_tool_available: policy
+                    .enabled_tools
+                    .iter()
+                    .any(|name| name == crate::runtime::tools::voice::SEND_VOICE_TOOL_NAME)
+                    && self.service.tool_runtime.voice_available_for_request(req),
             },
         )
     }
@@ -264,7 +269,6 @@ impl RustRespondService {
 }
 
 fn is_event_wrapped_command(text: &str) -> bool {
-    crate::runtime::tools::voice::parse_voice_command(text).is_some()
-        || session_flow::parse_session_command(text)
-            .is_some_and(|command| command.action.as_str() == "help")
+    session_flow::parse_session_command(text)
+        .is_some_and(|command| command.action.as_str() == "help")
 }

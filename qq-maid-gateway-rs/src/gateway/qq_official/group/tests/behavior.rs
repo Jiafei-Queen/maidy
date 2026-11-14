@@ -682,7 +682,6 @@ async fn slash_candidates_reach_core_and_explicit_suppression_sends_nothing() {
                 "reason": "test_gateway_suppressed_response",
             })),
             visible_entity_snapshot: None,
-            delivery_hint: None,
         },
     );
     let api = api_client();

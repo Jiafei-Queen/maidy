@@ -80,6 +80,11 @@ pub(crate) enum ToolEffect {
 pub(crate) enum OutcomePresentation {
     Trusted,
     Internal,
+    /// 工具已在自身执行中产生独立的用户可见产物（例如语音消息）。
+    ///
+    /// 这类结果没有确定性文字回执，模型正文仍可作为本轮主要说明；但它依然是
+    /// 副作用结果，诊断和失败验真不能省略。
+    OutOfBand,
     Unhandled,
 }
 
@@ -119,6 +124,7 @@ impl OutcomePresentation {
         match self {
             Self::Trusted => "trusted",
             Self::Internal => "internal",
+            Self::OutOfBand => "out_of_band",
             Self::Unhandled => "unhandled",
         }
     }
@@ -353,11 +359,10 @@ impl AgentTurnOutcome {
         if self.has_incomplete_result() || self.has_unhandled_outcome() {
             return false;
         }
-        if self
-            .outcomes
-            .iter()
-            .any(|outcome| outcome.effect.is_side_effect())
-        {
+        if self.outcomes.iter().any(|outcome| {
+            outcome.effect.is_side_effect()
+                && outcome.presentation != OutcomePresentation::OutOfBand
+        }) {
             return false;
         }
         self.outcomes.iter().all(|outcome| {
@@ -369,6 +374,8 @@ impl AgentTurnOutcome {
                     .iter()
                     .any(|block| matches!(block, ResponseBlock::Error(_))))
                 && (outcome.status == ToolOutcomeStatus::Succeeded
+                    || (outcome.presentation == OutcomePresentation::OutOfBand
+                        && outcome.status == ToolOutcomeStatus::Failed)
                     || (outcome.status == ToolOutcomeStatus::Skipped
                         && outcome.presentation == OutcomePresentation::Internal)
                     || (outcome.status == ToolOutcomeStatus::Failed

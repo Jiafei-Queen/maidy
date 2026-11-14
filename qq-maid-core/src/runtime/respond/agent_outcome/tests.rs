@@ -159,6 +159,71 @@ fn readonly_success_preserves_model_reply() {
 }
 
 #[test]
+fn out_of_band_side_effect_success_keeps_model_reply() {
+    let turn = AgentTurnOutcome::from_outcomes(vec![ToolExecutionOutcome {
+        tool_name: "send_voice".to_owned(),
+        domain: "voice".to_owned(),
+        status: ToolOutcomeStatus::Succeeded,
+        effect: ToolEffect::ExternalSideEffect,
+        presentation: OutcomePresentation::OutOfBand,
+        blocks: Vec::new(),
+        error_code: None,
+        command: Some("voice".to_owned()),
+    }]);
+
+    assert_eq!(turn.status, AgentTurnStatus::Succeeded);
+    assert!(!turn.has_unhandled_outcome());
+    assert!(!turn.can_render_deterministic_reply());
+    assert!(turn.can_use_model_reply_as_primary());
+}
+
+#[test]
+fn out_of_band_failure_keeps_model_reply_and_reports_error() {
+    let turn = AgentTurnOutcome::from_outcomes(vec![ToolExecutionOutcome {
+        tool_name: "send_voice".to_owned(),
+        domain: "voice".to_owned(),
+        status: ToolOutcomeStatus::Failed,
+        effect: ToolEffect::ExternalSideEffect,
+        presentation: OutcomePresentation::OutOfBand,
+        blocks: Vec::new(),
+        error_code: Some("tts_error".to_owned()),
+        command: Some("voice".to_owned()),
+    }]);
+
+    assert_eq!(turn.status, AgentTurnStatus::Failed);
+    assert_eq!(turn.primary_error_code().as_deref(), Some("tts_error"));
+    assert!(turn.can_use_model_reply_as_primary());
+}
+
+#[test]
+fn out_of_band_does_not_hide_other_side_effect_receipts() {
+    let turn = AgentTurnOutcome::from_outcomes(vec![
+        ToolExecutionOutcome {
+            tool_name: "send_voice".to_owned(),
+            domain: "voice".to_owned(),
+            status: ToolOutcomeStatus::Succeeded,
+            effect: ToolEffect::ExternalSideEffect,
+            presentation: OutcomePresentation::OutOfBand,
+            blocks: Vec::new(),
+            error_code: None,
+            command: Some("voice".to_owned()),
+        },
+        outcome(
+            "create_todo",
+            "todo",
+            ToolOutcomeStatus::Succeeded,
+            ToolEffect::Created,
+            vec![ResponseBlock::MutationReceipt(CommandBody::plain(
+                "✅ 已新增待办",
+            ))],
+        ),
+    ]);
+
+    assert!(!turn.can_use_model_reply_as_primary());
+    assert!(turn.render_body().text.contains("✅ 已新增待办"));
+}
+
+#[test]
 fn internal_success_requires_model_but_can_keep_valid_model_reply() {
     let turn = AgentTurnOutcome::from_outcomes(vec![outcome(
         "knowledge_search",

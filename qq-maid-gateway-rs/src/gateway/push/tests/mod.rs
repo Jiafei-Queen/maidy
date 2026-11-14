@@ -254,3 +254,49 @@ fn quoted_onebot_context(
 
 mod onebot;
 mod qq;
+
+#[tokio::test]
+async fn voice_sink_rejects_non_qq_platform_and_missing_provider() {
+    use qq_maid_core::runtime::tools::voice::{VoiceSendError, VoiceSendIntent, VoiceSendSink};
+
+    let sink = GatewayPushSink::unbound();
+    let intent = |platform: &str| VoiceSendIntent {
+        target: PushTarget::new(
+            platform,
+            Some("bot-1".to_owned()),
+            PushTargetType::Private,
+            "user-1",
+        ),
+        reply_to_message_id: Some("message-1".to_owned()),
+        text: "晚安".to_owned(),
+    };
+
+    assert!(matches!(
+        sink.send_voice(intent("onebot11")).await,
+        Err(VoiceSendError::UnsupportedPlatform)
+    ));
+    assert!(matches!(
+        sink.send_voice(intent("qq_official")).await,
+        Err(VoiceSendError::Unavailable)
+    ));
+}
+
+#[test]
+fn voice_api_errors_map_to_stable_tool_categories() {
+    assert_eq!(
+        voice_error_from_api(ApiError::Unsupported("voice")),
+        VoiceSendError::UnsupportedPlatform
+    );
+    assert_eq!(
+        voice_error_from_api(ApiError::VoiceUpload(Box::new(ApiError::InvalidMedia(
+            "mock"
+        )))),
+        VoiceSendError::Upload
+    );
+    assert_eq!(
+        voice_error_from_api(ApiError::VoiceSend(Box::new(ApiError::InvalidMedia(
+            "mock"
+        )))),
+        VoiceSendError::Send
+    );
+}

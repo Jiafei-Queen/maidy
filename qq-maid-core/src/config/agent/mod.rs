@@ -100,6 +100,7 @@ const ALL_ENABLED_TOOL_NAMES: &[&str] = &[
     "delete_todos",
     "merge_todos",
     "save_memory",
+    "send_voice",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -792,6 +793,7 @@ impl AgentRuntimeConfig {
             "web_search",
             "knowledge_search",
             "save_memory",
+            "send_voice",
         ]
         .into_iter()
         .map(str::to_owned)

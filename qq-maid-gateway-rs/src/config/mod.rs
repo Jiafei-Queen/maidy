@@ -65,7 +65,7 @@ pub enum GroupMessageMode {
 pub struct AppConfig {
     /// Gateway 本地命令与 Core 共用的聊天命令前缀。
     pub command_prefix: CommandPrefix,
-    /// 最终回复 TTS 配置；Provider 实现仍留在 Gateway。
+    /// 语音工具与 TTS 试听配置；Provider 实现仍留在 Gateway。
     pub voice: VoiceFeatureConfig,
     /// QQ 官方 Bot 是否启用。凭证成对存在时默认启用，保持旧配置行为。
     pub qq_official_enabled: bool,

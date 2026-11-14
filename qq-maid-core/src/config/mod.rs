@@ -166,7 +166,7 @@ pub struct AppConfig {
     pub ops_config: crate::runtime::tools::ops::OpsConfig,
     /// 所有聊天入口共用的单字符命令前缀；只在进程启动时读取。
     pub command_prefix: CommandPrefix,
-    /// QQ 最终回复语音投递能力；无效配置只关闭语音，不阻断现有文本机器人启动。
+    /// 语音工具与 TTS 试听配置；无效配置只关闭语音，不阻断现有文本机器人启动。
     pub voice: VoiceFeatureConfig,
     /// OpenAI API 密钥
     pub openai_api_key: Option<String>,
