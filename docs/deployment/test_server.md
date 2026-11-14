@@ -5,7 +5,7 @@
 部署完成后，流程是：
 
 ```text
-代码合并到 master
+代码合并到 main
     ↓
 GitHub Actions 构建 amd64/arm64 镜像
     ↓
@@ -244,9 +244,9 @@ sudo chmod 600 \
 
 ## 七、先手动部署一次
 
-### 1. 等待 master 镜像生成
+### 1. 等待 main 镜像生成
 
-PR #562 合并后，下一次 `master` Container workflow 会发布：
+PR #562 合并后，下一次 `main` Container workflow 会发布：
 
 ```text
 ghcr.io/kuliantnt/qq-maid-bot:sha-<40位commit>
@@ -265,7 +265,7 @@ manifest digest
 ghcr.io/kuliantnt/qq-maid-bot@sha256:abc123...
 ```
 
-不要用 `master` 标签作为部署事实；应使用完整 digest。
+不要用 `main` 标签作为部署事实；应使用完整 digest。
 
 ### 2. 上传部署文件
 
@@ -437,7 +437,7 @@ Settings
 TEST_DEPLOY_ENABLED=true
 ```
 
-该 Variable 只控制 `master` 是否自动部署测试服，不控制正式 Release 是否必须经过测试服。
+该 Variable 只控制 `main` 是否自动部署测试服，不控制正式 Release 是否必须经过测试服。
 
 正式项目推荐再添加：
 
@@ -447,7 +447,7 @@ REQUIRE_TEST_DEPLOY_FOR_RELEASE=true
 
 该 Variable 只控制正式发布门禁。只有精确设置为 `true` 时，tag commit 才必须有成功的
 `test` Environment 部署；测试部署失败或尚未执行都会拒绝晋级正式容器标签。未设置或不是
-`true` 时默认为关闭，即使没有阿里云测试服，也可以在 master Container workflow、GHCR
+`true` 时默认为关闭，即使没有阿里云测试服，也可以在 main Container workflow、GHCR
 commit 镜像和双架构 revision 校验通过后正常发布。
 
 两个开关彼此独立。需要自动部署但暂不阻止 Release 时，只开启
@@ -465,7 +465,7 @@ TEST_DEPLOY_DIR=/opt/qq-maid-bot-test
 
 ### 4. 触发自动部署
 
-下一次代码合并到 `master` 后，Container workflow 会：
+下一次代码合并到 `main` 后，Container workflow 会：
 
 ```text
 构建两个架构镜像
@@ -478,7 +478,7 @@ TEST_DEPLOY_DIR=/opt/qq-maid-bot-test
 → 失败时回滚
 ```
 
-`workflow_dispatch` 当前主要用于构建验证，不要把它当成测试服部署入口。正常测试部署由 `master` push 触发。
+`workflow_dispatch` 当前主要用于构建验证，不要把它当成测试服部署入口。正常测试部署由 `main` push 触发。
 
 ---
 

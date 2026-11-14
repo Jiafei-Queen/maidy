@@ -152,23 +152,23 @@ docker compose --project-directory . --env-file compose.env \
 | 触发 | 容器行为 |
 | --- | --- |
 | PR | 校验 Compose 和部署脚本，在 amd64/arm64 原生 runner 构建并加载镜像；amd64 执行完整容器运行契约，arm64 执行基础启动与健康检查；不推送、不部署 |
-| `master` | 仅向 GHCR 发布 `sha-<完整commit>` 多架构镜像，输出 digest 并更新可变 `master`；只有仓库变量 `TEST_DEPLOY_ENABLED=true` 时才按 digest 部署测试服 |
-| `vX.Y.Z` | 确认 tag 位于 `master`、对应 master Container workflow 成功、GHCR `sha-<commit>` 存在且双架构 revision label 一致；严格门禁开启时还要求该 commit 已成功部署到 test。不重新构建，把同一 manifest 的 `vX.Y.Z`、`X.Y`、`X`、`latest` 同步到 GHCR 与 Docker Hub，并校验两个 Registry 的实际 digest |
+| `main` | 仅向 GHCR 发布 `sha-<完整commit>` 多架构镜像，输出 digest 并更新可变 `main`；只有仓库变量 `TEST_DEPLOY_ENABLED=true` 时才按 digest 部署测试服 |
+| `vX.Y.Z` | 确认 tag 位于 `main`、对应 main Container workflow 成功、GHCR `sha-<commit>` 存在且双架构 revision label 一致；严格门禁开启时还要求该 commit 已成功部署到 test。不重新构建，把同一 manifest 的 `vX.Y.Z`、`X.Y`、`X`、`latest` 同步到 GHCR 与 Docker Hub，并校验两个 Registry 的实际 digest |
 
 GHCR 镜像为 `ghcr.io/kuliantnt/qq-maid-bot`；Docker Hub 正式镜像为
-`docker.io/kuliantnt/qq-maid-bot`。Docker Hub 不接收 `sha-*` 或 `master`。`master` 和
+`docker.io/kuliantnt/qq-maid-bot`。Docker Hub 不接收 `sha-*` 或 `main`。`main` 和
 `latest` 都是可变标签，不能作为回滚依据。测试服和正式环境均应把完整
 `仓库@sha256:digest` 记录为部署事实。tag 对应的 commit 镜像不存在时 Release workflow
-会等待最多 10 分钟，让并发触发的 master Container workflow 完成；超时后明确失败，
+会等待最多 10 分钟，让并发触发的 main Container workflow 完成；超时后明确失败，
 不会在 tag 阶段补建另一份镜像。任一 Registry 登录、复制、打标签或 digest
 校验失败，正式发布 job 都会失败，不能视为双渠道发布成功。现有 GitHub Release 原生包仍由
 同一个 tag 工作流生成；创建 tag 不会自动更新正式服务器。
 
-阿里云测试服是可选能力。仓库没有测试服时，保持发布门禁默认关闭，正常的 master Container
+阿里云测试服是可选能力。仓库没有测试服时，保持发布门禁默认关闭，正常的 main Container
 workflow 和上述镜像校验通过后即可发布。正式项目推荐启用严格门禁，让测试部署失败阻止
 Release；个人部署可以保持关闭。
 
-commit 镜像在 `master` 阶段已经构建，tag 阶段无法在保持同一 digest 的同时修改 OCI label。
+commit 镜像在 `main` 阶段已经构建，tag 阶段无法在保持同一 digest 的同时修改 OCI label。
 `org.opencontainers.image.revision` 始终是 40 位 Git commit；
 `org.opencontainers.image.version` 保留构建时的 `sha-*` 标识，不代表后来追加的正式 tag。
 正式 `vX.Y.Z` 应从部署命令记录的 release 或所选镜像 tag/digest 对照中读取。
@@ -187,8 +187,8 @@ Docker Hub 的专用访问令牌：
 - `DOCKERHUB_USERNAME`
 - `DOCKERHUB_TOKEN`
 
-令牌只用于 Release workflow 同步正式标签，不参与 PR/master 构建，也不会把 GHCR 的
-`sha-*` 或 `master` 标签同步到 Docker Hub。下文的 `TEST_DEPLOY_*` Secrets 仅在选择启用
+令牌只用于 Release workflow 同步正式标签，不参与 PR/main 构建，也不会把 GHCR 的
+`sha-*` 或 `main` 标签同步到 Docker Hub。下文的 `TEST_DEPLOY_*` Secrets 仅在选择启用
 阿里云测试服时需要，不是所有正式 Release 的前置配置。
 
 ## 阿里云测试服初始化
@@ -225,7 +225,7 @@ GitHub Environment 创建 `test`，配置 Secrets：
 
 | Variable | 作用 |
 | --- | --- |
-| `TEST_DEPLOY_ENABLED` | 只有精确设置为 `true` 时，master Container workflow 才自动进入 `test` Environment；仅控制自动部署 |
+| `TEST_DEPLOY_ENABLED` | 只有精确设置为 `true` 时，main Container workflow 才自动进入 `test` Environment；仅控制自动部署 |
 | `REQUIRE_TEST_DEPLOY_FOR_RELEASE` | 只有精确设置为 `true` 时，Release 才强制要求 tag commit 存在成功的 test Environment 部署；仅控制正式发布门禁 |
 
 服务器和上述 Secrets 尚未初始化时，两者都保持关闭，GHCR commit 镜像与正式 Release 仍可
@@ -238,7 +238,7 @@ GitHub Environment 创建 `test`，配置 Secrets：
 
 ## 自动部署、健康检查与回滚
 
-`master` 镜像的两个架构发布成功且 `TEST_DEPLOY_ENABLED=true` 后，工作流：
+`main` 镜像的两个架构发布成功且 `TEST_DEPLOY_ENABLED=true` 后，工作流：
 
 1. 合成并记录不可变 commit manifest digest。
 2. 通过专用 SSH key 上传 `docker/compose.yaml` 与 `docker-deploy.sh`（远端保存为 `compose.yaml`）。
@@ -267,7 +267,7 @@ cat deployments/current.env
 docker compose --env-file compose.env --env-file .image.env logs --tail 200 bot
 ```
 
-正式环境不跟随 `master` 或 tag 自动更新。准备独立实例后，显式选择测试通过的版本 digest，
+正式环境不跟随 `main` 或 tag 自动更新。准备独立实例后，显式选择测试通过的版本 digest，
 再使用同一部署脚本：
 
 ```bash

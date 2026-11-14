@@ -45,7 +45,7 @@
 安装脚本会根据 CPU 架构下载最新 Release，无需安装 Rust：
 
 ```bash
-curl -fsSL https://github.com/kuliantnt/qq-maid-bot/raw/refs/heads/master/scripts/qbot.sh -o /tmp/qbot.sh
+curl -fsSL https://github.com/kuliantnt/qq-maid-bot/raw/refs/heads/main/scripts/qbot.sh -o /tmp/qbot.sh
 bash /tmp/qbot.sh deploy
 
 qbot install                 # 交互询问是否启用 Web 控制台
@@ -86,7 +86,7 @@ qbot install
 ```powershell
 $p = "$env:TEMP\qbot.ps1"
 Invoke-WebRequest `
-  https://github.com/kuliantnt/qq-maid-bot/raw/refs/heads/master/scripts/qbot.ps1 `
+  https://github.com/kuliantnt/qq-maid-bot/raw/refs/heads/main/scripts/qbot.ps1 `
   -OutFile $p `
   -UseBasicParsing
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p install

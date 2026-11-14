@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         感谢你花时间反馈问题！提交前请确认：
-        - 已阅读 [README](https://github.com/kuliantnt/qq-maid-bot/blob/master/README.md) 和相关模块文档。
+        - 已阅读 [README](https://github.com/kuliantnt/qq-maid-bot/blob/main/README.md) 和相关模块文档。
         - 问题不是由模型接口限流、QQ 平台策略或网络代理引起的。
         - 日志中不包含 Token、AppSecret、API Key 等敏感信息，**请先脱敏**。
 
