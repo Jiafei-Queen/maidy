@@ -222,10 +222,18 @@ fn firecrawl_request_options(
         req.topic.as_deref(),
         req.time_range.as_deref(),
     )?;
-    // 新闻请求优先使用 news 来源；其他请求保留配置来源，避免区分类别时误改用户配置。
-    let sources = match topic {
-        Some(WebSearchTopic::News) => vec![FirecrawlSource::News],
-        _ => config.firecrawl.sources.clone(),
+    let tbs = time_range
+        .map(|range| firecrawl_tbs(range).to_owned())
+        .or_else(|| config.firecrawl.tbs.clone());
+    // Firecrawl 的 tbs 只作用于 web source；一旦启用时间过滤就收敛到 web，
+    // 避免 news 结果绕过时间窗口。
+    let sources = if tbs.is_some() {
+        vec![FirecrawlSource::Web]
+    } else {
+        match topic {
+            Some(WebSearchTopic::News) => vec![FirecrawlSource::News],
+            _ => config.firecrawl.sources.clone(),
+        }
     };
     Ok(FirecrawlRequestOptions {
         query: query_with_resolved_date(query, semantic_text, time_context),
@@ -234,9 +242,7 @@ fn firecrawl_request_options(
             .unwrap_or(config.max_results)
             .clamp(1, MAX_RESULTS_LIMIT),
         sources,
-        tbs: time_range
-            .map(|range| firecrawl_tbs(range).to_owned())
-            .or_else(|| config.firecrawl.tbs.clone()),
+        tbs,
     })
 }
 
@@ -320,49 +326,84 @@ struct FirecrawlNewsResult {
 }
 
 fn firecrawl_sources(data: FirecrawlSearchData, limit: usize) -> Vec<WebSearchSource> {
+    if limit == 0 {
+        return Vec::new();
+    }
     let mut seen = HashSet::new();
-    let mut sources = Vec::new();
+    let mut web = Vec::new();
     for result in data.web {
-        push_firecrawl_source(
-            &mut sources,
-            &mut seen,
+        if let Some(source) = firecrawl_source(
             result.title,
             result.url,
             result.description,
             result.markdown,
-        );
-    }
-    for result in data.news {
-        push_firecrawl_source(
-            &mut sources,
             &mut seen,
+        ) {
+            web.push(source);
+        }
+    }
+    let mut news = Vec::new();
+    for result in data.news {
+        if let Some(source) = firecrawl_source(
             result.title,
             result.url,
             result.snippet,
             result.markdown,
-        );
+            &mut seen,
+        ) {
+            news.push(source);
+        }
     }
-    sources.truncate(limit);
+    interleave_sources(web, news, limit)
+}
+
+/// Firecrawl 的 limit 按来源分别生效；交错保留 web/news，避免前一个来源
+/// 占满总上限后把另一个来源全部截掉。
+fn interleave_sources(
+    web: Vec<WebSearchSource>,
+    news: Vec<WebSearchSource>,
+    limit: usize,
+) -> Vec<WebSearchSource> {
+    let mut sources = Vec::with_capacity(limit);
+    let mut web = web.into_iter();
+    let mut news = news.into_iter();
+    loop {
+        let mut pushed = false;
+        if let Some(source) = web.next() {
+            sources.push(source);
+            pushed = true;
+            if sources.len() >= limit {
+                break;
+            }
+        }
+        if let Some(source) = news.next() {
+            sources.push(source);
+            pushed = true;
+            if sources.len() >= limit {
+                break;
+            }
+        }
+        if !pushed {
+            break;
+        }
+    }
     sources
 }
 
-fn push_firecrawl_source(
-    sources: &mut Vec<WebSearchSource>,
-    seen: &mut HashSet<String>,
+fn firecrawl_source(
     title: String,
     url: String,
     description: String,
     markdown: Option<String>,
-) {
-    let Ok(parsed_url) = Url::parse(url.trim()) else {
-        return;
-    };
+    seen: &mut HashSet<String>,
+) -> Option<WebSearchSource> {
+    let parsed_url = Url::parse(url.trim()).ok()?;
     if !matches!(parsed_url.scheme(), "http" | "https") {
-        return;
+        return None;
     }
     let normalized_url = parsed_url.to_string();
     if !seen.insert(normalized_url.clone()) {
-        return;
+        return None;
     }
     let title = title.trim();
     let snippet = if !description.trim().is_empty() {
@@ -375,7 +416,7 @@ fn push_firecrawl_source(
             .unwrap_or_default()
             .to_owned()
     };
-    sources.push(WebSearchSource {
+    Some(WebSearchSource {
         title: if title.is_empty() {
             parsed_url
                 .host_str()
@@ -386,7 +427,7 @@ fn push_firecrawl_source(
         },
         url: normalized_url,
         snippet: truncate_chars(&snippet, FIRECRAWL_SNIPPET_MAX_CHARS),
-    });
+    })
 }
 
 fn truncate_chars(value: &str, limit: usize) -> String {
@@ -543,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_maps_firecrawl_results_and_request_options() {
-        let (executor, state) = test_executor(
+        let (mut executor, state) = test_executor(
             200,
             json!({
                 "success": true,
@@ -566,6 +607,11 @@ mod tests {
             }),
         )
         .await;
+        executor.config.firecrawl.sources = vec![FirecrawlSource::Web, FirecrawlSource::News];
+        executor.config.firecrawl.country = Some("JP".to_owned());
+        executor.config.firecrawl.location = Some("Tokyo".to_owned());
+        executor.config.firecrawl.safe = true;
+        executor.config.firecrawl.highlights = false;
 
         let outcome = executor.query(request()).await.unwrap();
 
@@ -577,8 +623,13 @@ mod tests {
         let state = state.lock().await;
         assert_eq!(state.authorization.as_deref(), Some("Bearer test-key"));
         assert_eq!(state.requests[0]["limit"], 3);
-        assert_eq!(state.requests[0]["sources"], json!(["news"]));
+        // 请求级时间过滤只能走 web source，避免 news 绕过 tbs。
+        assert_eq!(state.requests[0]["sources"], json!(["web"]));
         assert_eq!(state.requests[0]["tbs"], "qdr:w");
+        assert_eq!(state.requests[0]["country"], "JP");
+        assert_eq!(state.requests[0]["location"], "Tokyo");
+        assert_eq!(state.requests[0]["safe"], true);
+        assert_eq!(state.requests[0]["highlights"], false);
         assert!(state.requests[0].get("scrapeOptions").is_none());
     }
 
@@ -614,6 +665,8 @@ mod tests {
 
         assert_eq!(outcome.sources[0].snippet, "# 正文");
         let state = state.lock().await;
+        assert_eq!(state.requests[0]["sources"], json!(["web"]));
+        assert!(state.requests[0].get("tbs").is_none());
         assert_eq!(state.requests[0]["categories"], json!(["pdf"]));
         assert_eq!(
             state.requests[0]["scrapeOptions"]["formats"],
@@ -668,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn current_news_query_uses_news_source_and_day_filter() {
+    fn current_news_query_uses_web_source_for_time_filter() {
         let offset = FixedOffset::east_opt(8 * 60 * 60).unwrap();
         let context = RequestTimeContext::from_datetime(
             offset.with_ymd_and_hms(2026, 7, 25, 9, 30, 0).unwrap(),
@@ -684,12 +737,76 @@ mod tests {
             model_override: None,
         };
 
+        let mut config = WebSearchConfig::default();
+        config.firecrawl.sources = vec![FirecrawlSource::News];
+        let options = firecrawl_request_options(&request, &config, &context).unwrap();
+
+        assert!(options.query.contains("2026-07-25"));
+        // Firecrawl 的 tbs 只支持 web source；新闻时间过滤必须收敛到 web。
+        assert_eq!(options.sources, vec![FirecrawlSource::Web]);
+        assert_eq!(options.tbs.as_deref(), Some("qdr:d"));
+    }
+
+    #[test]
+    fn news_topic_without_time_filter_uses_news_source() {
+        let offset = FixedOffset::east_opt(8 * 60 * 60).unwrap();
+        let context = RequestTimeContext::from_datetime(
+            offset.with_ymd_and_hms(2026, 7, 25, 9, 30, 0).unwrap(),
+        );
+        let request = WebSearchRequest {
+            query: "Rust 新闻".to_owned(),
+            raw_question: None,
+            max_results: None,
+            context_size: None,
+            topic: Some("news".to_owned()),
+            time_range: None,
+            backend_override: None,
+            model_override: None,
+        };
+
         let options =
             firecrawl_request_options(&request, &WebSearchConfig::default(), &context).unwrap();
 
-        assert!(options.query.contains("2026-07-25"));
         assert_eq!(options.sources, vec![FirecrawlSource::News]);
-        assert_eq!(options.tbs.as_deref(), Some("qdr:d"));
+        assert!(options.tbs.is_none());
+    }
+
+    #[test]
+    fn multi_source_results_are_interleaved_before_limit() {
+        let web = vec![
+            WebSearchSource {
+                title: "w1".to_owned(),
+                url: "https://example.com/w1".to_owned(),
+                snippet: String::new(),
+            },
+            WebSearchSource {
+                title: "w2".to_owned(),
+                url: "https://example.com/w2".to_owned(),
+                snippet: String::new(),
+            },
+        ];
+        let news = vec![
+            WebSearchSource {
+                title: "n1".to_owned(),
+                url: "https://example.com/n1".to_owned(),
+                snippet: String::new(),
+            },
+            WebSearchSource {
+                title: "n2".to_owned(),
+                url: "https://example.com/n2".to_owned(),
+                snippet: String::new(),
+            },
+        ];
+
+        let sources = interleave_sources(web, news, 3);
+
+        assert_eq!(
+            sources
+                .iter()
+                .map(|source| source.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["w1", "n1", "w2"]
+        );
     }
 
     #[test]

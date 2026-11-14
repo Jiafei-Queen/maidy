@@ -422,7 +422,7 @@ function WebSearchSection({ draft, onDraftChange, editable, credentials, running
                   onChange={(event) => patchExa({ textMaxCharacters: event.target.value === "" ? null : Number(event.target.value) })} />
               )}
             </Field>
-            <Field label="缓存时效（小时）" id="agent-exa-max-age" hint="-1 仅用缓存，0 实时抓取，1–720">
+            <Field label="缓存时效（小时）" id="agent-exa-max-age" hint="-1 仅用缓存，0 实时抓取，1–720；lite 模式不可用">
               {(props) => (
                 <Input {...props} type="number" min={-1} max={720} disabled={!editable}
                   value={webSearch.exa.maxAgeHours === null ? "" : String(webSearch.exa.maxAgeHours)}
@@ -502,7 +502,7 @@ function WebSearchSection({ draft, onDraftChange, editable, credentials, running
             ))}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="时间过滤" id="agent-firecrawl-tbs" hint="例如 qdr:w、sbd:1 或 cdr:1,cd_min:...">
+            <Field label="时间过滤" id="agent-firecrawl-tbs" hint="例如 qdr:w、sbd:1 或 cdr:1,cd_min:...；仅 web 来源，启用时来源需只选 web">
               {(props) => (
                 <Input {...props} disabled={!editable} value={webSearch.firecrawl.tbs}
                   onChange={(event) => patchFirecrawl({ tbs: event.target.value })} />

@@ -222,6 +222,11 @@ impl ExaSearchType {
     pub fn supports_summary(self) -> bool {
         !matches!(self, Self::Lite)
     }
+
+    /// `lite` 直接从缓存返回内容，不支持需要实时抓取的 freshness 参数。
+    pub fn supports_freshness(self) -> bool {
+        !matches!(self, Self::Lite)
+    }
 }
 
 /// Exa 内容分类。
@@ -264,6 +269,11 @@ impl ExaCategory {
     /// Exa 的 company/people 分类不接受发布日期过滤。
     pub fn supports_published_date(self) -> bool {
         !matches!(self, Self::Company | Self::People)
+    }
+
+    /// Exa 的 people 分类不接受 excludeDomains。
+    pub fn supports_exclude_domains(self) -> bool {
+        !matches!(self, Self::People)
     }
 }
 

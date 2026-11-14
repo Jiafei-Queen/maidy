@@ -68,9 +68,9 @@ topic = "general"
 # category = ""                # 留空不限定；可选 company | publication | news | personal site | financial report | people
 # contents = "highlights"       # highlights | summary | text
 # text_max_characters = 4000    # 仅 contents = "text"
-# max_age_hours = -1            # -1 仅缓存 / 0 实时 / 1–720
+# max_age_hours = -1            # -1 仅缓存 / 0 实时 / 1–720；lite 不支持
 # include_domains = []
-# exclude_domains = []
+# exclude_domains = []          # people 分类不支持排除域名
 # user_location = ""            # 可选两位国家码
 # moderation = false
 # time_range = "week"           # 可选默认时间范围
@@ -79,7 +79,7 @@ topic = "general"
 # [tools.web_search.firecrawl]
 # sources = ["web"]             # web | news
 # categories = []               # research | pdf | developer | gov
-# tbs = ""                      # qdr:h/d/w/m/y、sbd:1 或 cdr:...
+# tbs = ""                      # qdr:h/d/w/m/y、sbd:1 或 cdr:...；仅 web，启用时 sources 必须为 ["web"]
 # country = "US"
 # location = ""
 # scrape_format = "none"        # none | markdown；markdown 会额外消耗 credits

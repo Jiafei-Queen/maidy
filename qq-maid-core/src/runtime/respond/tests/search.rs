@@ -131,6 +131,24 @@ fn exa_and_firecrawl_errors_use_provider_guidance() {
         );
         assert!(!reply.contains("Tavily"), "leaked Tavily hint: {reply}");
     }
+
+    // `/查` 失败会保留路由 Provider，而 Agent/多目标调研可能只透传 stage；
+    // provider 分支也必须能识别新增后端。
+    for (provider, code, expected) in [
+        ("exa", "authentication_failed", "Exa API Key"),
+        ("exa", "quota_exhausted", "Exa 查询额度"),
+        ("firecrawl", "authentication_failed", "Firecrawl API Key"),
+        ("firecrawl", "quota_exhausted", "Firecrawl 查询额度"),
+    ] {
+        let error =
+            LlmError::new(code, "upstream detail", "upstream").with_upstream_context(provider, "");
+        let reply = crate::runtime::tools::search::format_web_search_error_reply(&error);
+        assert!(
+            reply.contains(expected),
+            "unexpected reply for {provider}/{code}: {reply}"
+        );
+        assert!(!reply.contains("Tavily"), "leaked Tavily hint: {reply}");
+    }
 }
 
 #[async_trait]

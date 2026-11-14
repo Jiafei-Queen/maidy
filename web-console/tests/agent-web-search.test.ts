@@ -5,7 +5,6 @@ import {
   exaWebSearchConfigChange,
   firecrawlWebSearchConfigChange,
   readAgentWebSearchConfig,
-  tavilyCredentialNotice,
   webSearchBackendLabel,
   webSearchConfigChange,
   webSearchCredentialNotice,
@@ -184,7 +183,7 @@ describe("联网搜索保存契约", () => {
     const change = firecrawlWebSearchConfigChange({
       ...baseConfig,
       firecrawl: {
-        sources: ["web", "news"],
+        sources: ["web"],
         categories: ["pdf"],
         tbs: "qdr:w",
         country: "jp",
@@ -199,7 +198,7 @@ describe("联网搜索保存契约", () => {
     expect(change).toEqual({
       action: "set_web_search_firecrawl",
       options: {
-        sources: ["web", "news"],
+        sources: ["web"],
         categories: ["pdf"],
         tbs: "qdr:w",
         country: "JP",
@@ -210,6 +209,21 @@ describe("联网搜索保存契约", () => {
         highlights: false,
       },
     });
+  });
+
+  it("Firecrawl 支持多来源，但启用时间过滤时只能使用 web 来源", () => {
+    const multiSource = firecrawlWebSearchConfigChange({
+      ...baseConfig,
+      firecrawl: { ...DEFAULT_FIRECRAWL_CONFIG, sources: ["web", "news"], tbs: "" },
+    });
+    expect(multiSource.options).toMatchObject({ sources: ["web", "news"], tbs: null });
+
+    for (const sources of [["web", "news"], ["news"]] as const) {
+      expect(() => firecrawlWebSearchConfigChange({
+        ...baseConfig,
+        firecrawl: { ...DEFAULT_FIRECRAWL_CONFIG, sources: [...sources], tbs: "qdr:w" },
+      })).toThrow(/web 来源/);
+    }
   });
 
   it("提交前拒绝冲突的 Exa / Firecrawl 选项", () => {
@@ -223,8 +237,28 @@ describe("联网搜索保存契约", () => {
     })).toThrow(/lite/);
     expect(() => exaWebSearchConfigChange({
       ...baseConfig,
+      exa: { ...DEFAULT_EXA_CONFIG, searchType: "lite", maxAgeHours: 24 },
+    })).toThrow(/缓存时效/);
+    expect(() => exaWebSearchConfigChange({
+      ...baseConfig,
+      exa: { ...DEFAULT_EXA_CONFIG, category: "people", excludeDomains: "b.com" },
+    })).toThrow(/people/);
+    expect(() => exaWebSearchConfigChange({
+      ...baseConfig,
       exa: { ...DEFAULT_EXA_CONFIG, category: "company", timeRange: "week" },
     })).toThrow(/company/);
+    expect(() => exaWebSearchConfigChange({
+      ...baseConfig,
+      exa: { ...DEFAULT_EXA_CONFIG, textMaxCharacters: 0 },
+    })).toThrow(/正文最大字符数/);
+    expect(() => exaWebSearchConfigChange({
+      ...baseConfig,
+      exa: { ...DEFAULT_EXA_CONFIG, maxAgeHours: 721 },
+    })).toThrow(/缓存时效/);
+    expect(() => exaWebSearchConfigChange({
+      ...baseConfig,
+      exa: { ...DEFAULT_EXA_CONFIG, userLocation: "CHN" },
+    })).toThrow(/两位国家码/);
     expect(() => firecrawlWebSearchConfigChange({
       ...baseConfig,
       firecrawl: { ...DEFAULT_FIRECRAWL_CONFIG, sources: [] },
@@ -241,6 +275,10 @@ describe("联网搜索保存契约", () => {
       ...baseConfig,
       firecrawl: { ...DEFAULT_FIRECRAWL_CONFIG, country: "中国" },
     })).toThrow(/两位国家码/);
+    expect(() => firecrawlWebSearchConfigChange({
+      ...baseConfig,
+      firecrawl: { ...DEFAULT_FIRECRAWL_CONFIG, location: "x".repeat(201) },
+    })).toThrow(/地区过长/);
   });
 
   it("切换后端时未修改或留空的搜索路线不会生成删除操作", () => {
@@ -259,9 +297,14 @@ describe("联网搜索保存契约", () => {
   });
 
   it("提交前校验结果数和超时顺序", () => {
+    expect(() => webSearchConfigChange({ ...baseConfig, maxResults: 0 })).toThrow(/1 到 10/);
+    expect(() => webSearchConfigChange({ ...baseConfig, maxResults: 1.5 })).toThrow(/1 到 10/);
     expect(() => webSearchConfigChange({ ...baseConfig, maxResults: 11 })).toThrow(/1 到 10/);
     expect(() => webSearchConfigChange({ ...baseConfig, connectTimeoutSeconds: 20 })).toThrow(/连接超时/);
+    expect(() => webSearchConfigChange({ ...baseConfig, firstResponseTimeoutSeconds: 50, totalTimeoutSeconds: 40 }))
+      .toThrow(/首响应超时不能大于总超时/);
     expect(() => webSearchConfigChange({ ...baseConfig, totalTimeoutSeconds: 10 })).toThrow(/总超时/);
+    expect(() => webSearchConfigChange({ ...baseConfig, connectTimeoutSeconds: 1.5 })).toThrow(/整数秒数/);
   });
 });
 
@@ -272,13 +315,6 @@ describe("联网搜索凭据提示", () => {
     expect(webSearchCredentialNotice("firecrawl", { firecrawl: false })).toMatch(/FIRECRAWL_API_KEY/);
     expect(webSearchCredentialNotice("exa", { exa: true })).toBe("");
     expect(webSearchCredentialNotice("provider_native", {})).toBe("");
-  });
-
-  it("Tavily 旧提示保持兼容", () => {
-    expect(tavilyCredentialNotice("tavily", false)).toMatch(/Tavily API Key 尚未配置/);
-    expect(tavilyCredentialNotice("tavily", true)).toBe("");
-    expect(tavilyCredentialNotice("provider_native", false)).toBe("");
-    expect(tavilyCredentialNotice("disabled", false)).toBe("");
   });
 
   it("后端显示名覆盖新增搜索后端", () => {

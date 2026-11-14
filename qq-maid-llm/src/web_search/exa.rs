@@ -118,7 +118,6 @@ impl WebSearchExecutor for ExaWebSearchExecutor {
                 })
                 .map(|time_range| exa_start_published_date(time_range, &time_context)),
             user_location: self.config.exa.user_location.clone(),
-            max_age_hours: self.config.exa.max_age_hours,
             moderation: self.config.exa.moderation,
         };
         let response = self.send(&payload).await?;
@@ -196,6 +195,18 @@ fn exa_request_options(
         Some(WebSearchTopic::General) => None,
         None => config.exa.category,
     };
+    let time_range = time_range.or(config.exa.time_range);
+    // company/people 不支持发布日期过滤；不发送不支持的参数，但保留诊断线索，
+    // 避免用户误以为请求级时间范围已经生效。
+    if let Some(category) = category
+        && !category.supports_published_date()
+        && time_range.is_some()
+    {
+        tracing::debug!(
+            category = category.as_str(),
+            "Exa 分类不支持发布日期过滤，已忽略时间范围"
+        );
+    }
     Ok(ExaRequestOptions {
         query: query_with_resolved_date(query, semantic_text, time_context),
         max_results: req
@@ -203,16 +214,18 @@ fn exa_request_options(
             .unwrap_or(config.max_results)
             .clamp(1, MAX_RESULTS_LIMIT),
         category,
-        time_range: time_range.or(config.exa.time_range),
+        time_range,
     })
 }
 
 fn exa_contents(config: &WebSearchConfig, query: &str) -> ExaContentsRequest {
+    let max_age_hours = config.exa.max_age_hours;
     match config.exa.contents {
         ExaContentsMode::Highlights => ExaContentsRequest {
             text: None,
             highlights: true,
             summary: None,
+            max_age_hours,
         },
         ExaContentsMode::Summary => ExaContentsRequest {
             text: None,
@@ -220,6 +233,7 @@ fn exa_contents(config: &WebSearchConfig, query: &str) -> ExaContentsRequest {
             summary: Some(ExaSummaryOptions {
                 query: query.to_owned(),
             }),
+            max_age_hours,
         },
         ExaContentsMode::Text => ExaContentsRequest {
             text: Some(match config.exa.text_max_characters {
@@ -230,6 +244,7 @@ fn exa_contents(config: &WebSearchConfig, query: &str) -> ExaContentsRequest {
             }),
             highlights: false,
             summary: None,
+            max_age_hours,
         },
     }
 }
@@ -267,13 +282,12 @@ struct ExaSearchRequest<'a> {
     start_published_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     user_location: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_age_hours: Option<i32>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     moderation: bool,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ExaContentsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<ExaTextSetting>,
@@ -281,6 +295,8 @@ struct ExaContentsRequest {
     highlights: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<ExaSummaryOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_age_hours: Option<i32>,
 }
 
 /// Exa 允许 `text: true` 或带提取选项的对象；未配置字符上限时使用简单布尔形式。
@@ -429,6 +445,7 @@ async fn exa_status_error(status: StatusCode, response: reqwest::Response) -> Ll
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::web_search::ExaSearchType;
     use axum::{
         Json, Router,
         extract::State,
@@ -509,7 +526,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_maps_exa_results_and_request_options() {
-        let (executor, state) = test_executor(
+        let (mut executor, state) = test_executor(
             200,
             json!({
                 "results": [{
@@ -520,6 +537,13 @@ mod tests {
             }),
         )
         .await;
+        executor.config.exa.search_type = ExaSearchType::Deep;
+        executor.config.exa.contents = ExaContentsMode::Text;
+        executor.config.exa.text_max_characters = Some(4_000);
+        executor.config.exa.max_age_hours = Some(24);
+        executor.config.exa.include_domains = vec!["example.com".to_owned()];
+        executor.config.exa.user_location = Some("CN".to_owned());
+        executor.config.exa.moderation = true;
 
         let outcome = executor.query(request()).await.unwrap();
 
@@ -529,9 +553,14 @@ mod tests {
         let state = state.lock().await;
         assert_eq!(state.api_key.as_deref(), Some("test-key"));
         assert_eq!(state.requests[0]["numResults"], 3);
-        assert_eq!(state.requests[0]["type"], "auto");
+        assert_eq!(state.requests[0]["type"], "deep");
         assert_eq!(state.requests[0]["category"], "news");
-        assert_eq!(state.requests[0]["contents"]["highlights"], true);
+        assert_eq!(state.requests[0]["contents"]["text"]["maxCharacters"], 4000);
+        assert_eq!(state.requests[0]["contents"]["maxAgeHours"], 24);
+        assert_eq!(state.requests[0]["includeDomains"], json!(["example.com"]));
+        assert_eq!(state.requests[0]["userLocation"], "CN");
+        assert_eq!(state.requests[0]["moderation"], true);
+        assert!(state.requests[0].get("maxAgeHours").is_none());
         assert!(
             state.requests[0]["startPublishedDate"]
                 .as_str()
@@ -554,13 +583,14 @@ mod tests {
         .await;
         let mut executor = executor;
         executor.config.exa.category = Some(ExaCategory::Company);
-        executor.config.exa.time_range = Some(WebSearchTimeRange::Week);
         executor.config.exa.contents = ExaContentsMode::Summary;
+        executor.config.exa.exclude_domains = vec!["blocked.example".to_owned()];
+        executor.config.exa.max_age_hours = Some(24);
 
         let outcome = executor
             .query(WebSearchRequest {
                 topic: None,
-                time_range: None,
+                time_range: Some("week".to_owned()),
                 ..request()
             })
             .await
@@ -570,6 +600,11 @@ mod tests {
         assert_eq!(outcome.sources[0].snippet, "公司摘要");
         let state = state.lock().await;
         assert_eq!(state.requests[0]["category"], "company");
+        assert_eq!(
+            state.requests[0]["excludeDomains"],
+            json!(["blocked.example"])
+        );
+        assert_eq!(state.requests[0]["contents"]["maxAgeHours"], 24);
         assert!(state.requests[0].get("startPublishedDate").is_none());
         assert!(state.requests[0]["contents"]["summary"].is_object());
     }
@@ -631,6 +666,12 @@ mod tests {
         assert_eq!(
             serde_json::to_value(exa_contents(&config, "q")).unwrap(),
             json!({"text": {"maxCharacters": 2000}})
+        );
+
+        config.exa.max_age_hours = Some(24);
+        assert_eq!(
+            serde_json::to_value(exa_contents(&config, "q")).unwrap(),
+            json!({"text": {"maxCharacters": 2000}, "maxAgeHours": 24})
         );
     }
 

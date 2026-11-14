@@ -269,6 +269,12 @@ export function exaWebSearchConfigChange(config: AgentWebSearchConfig): Record<s
   if (exa.searchType === "lite" && exa.contents === "summary") {
     throw new Error("Exa lite 搜索模式不支持 summary 内容提取");
   }
+  if (exa.searchType === "lite" && exa.maxAgeHours !== null) {
+    throw new Error("Exa lite 搜索模式不支持缓存时效");
+  }
+  if (exa.category === "people" && excludeDomains.length > 0) {
+    throw new Error("Exa people 分类不支持排除域名");
+  }
   if ((exa.category === "company" || exa.category === "people") && exa.timeRange !== null) {
     throw new Error("Exa company / people 分类不支持时间范围过滤");
   }
@@ -314,6 +320,9 @@ export function firecrawlWebSearchConfigChange(config: AgentWebSearchConfig): Re
   if (tbs !== "" && !["qdr:", "cdr:", "sbd:"].some((prefix) => tbs.startsWith(prefix))) {
     throw new Error("Firecrawl 时间过滤必须以 qdr:、cdr: 或 sbd: 开头");
   }
+  if (tbs !== "" && (firecrawl.sources.length !== 1 || firecrawl.sources[0] !== "web")) {
+    throw new Error("Firecrawl 时间过滤仅支持 web 来源");
+  }
   const country = firecrawl.country.trim();
   if (country !== "" && !/^[A-Za-z]{2}$/.test(country)) {
     throw new Error("Firecrawl 国家必须是两位国家码");
@@ -352,13 +361,6 @@ export function webSearchCredentialNotice(
   const credential = WEB_SEARCH_CREDENTIALS.find((item) => item.backend === backend);
   if (!credential || configured[backend] === true) return "";
   return `已选择 ${credential.label}，但 ${credential.env} 尚未配置。请先在“联网搜索凭据”中保存 Key，重启后搜索才可用。`;
-}
-
-/** 兼容旧调用方：Tavily 凭据提示单独保留。 */
-export function tavilyCredentialNotice(backend: AgentWebSearchBackend, configured: boolean): string {
-  return backend === "tavily" && !configured
-    ? "已选择 Tavily，但 Tavily API Key 尚未配置。请先在“联网与工具”中保存 Key，重启后搜索才可用。"
-    : "";
 }
 
 export function webSearchRouteChanges(

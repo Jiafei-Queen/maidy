@@ -266,6 +266,7 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
                 "search_type": "deep",
                 "category": "publication",
                 "contents": "summary",
+                "text_max_characters": 4000,
                 "max_age_hours": 24,
                 "include_domains": ["arxiv.org"],
                 "user_location": "cn",
@@ -275,10 +276,11 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
         }, {
             "action": "set_web_search_firecrawl",
             "options": {
-                "sources": ["web", "news"],
+                "sources": ["web"],
                 "categories": ["pdf"],
                 "tbs": "qdr:w",
                 "country": "jp",
+                "location": "Tokyo",
                 "scrape_format": "markdown",
                 "only_main_content": false,
                 "safe": true,
@@ -311,11 +313,19 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
     assert_eq!(saved_web_search["tavily"]["search_depth"], "advanced");
     assert_eq!(saved_web_search["exa"]["search_type"], "deep");
     assert_eq!(saved_web_search["exa"]["user_location"], "cn");
+    assert_eq!(saved_web_search["exa"]["max_age_hours"], 24);
+    assert_eq!(saved_web_search["exa"]["text_max_characters"], 4000);
+    assert_eq!(saved_web_search["exa"]["moderation"], true);
     assert_eq!(
-        saved_web_search["firecrawl"]["sources"],
-        json!(["web", "news"])
+        saved_web_search["exa"]["include_domains"],
+        json!(["arxiv.org"])
     );
+    assert_eq!(saved_web_search["firecrawl"]["sources"], json!(["web"]));
+    assert_eq!(saved_web_search["firecrawl"]["tbs"], "qdr:w");
     assert_eq!(saved_web_search["firecrawl"]["country"], "jp");
+    assert_eq!(saved_web_search["firecrawl"]["location"], "Tokyo");
+    assert_eq!(saved_web_search["firecrawl"]["safe"], true);
+    assert_eq!(saved_web_search["firecrawl"]["highlights"], false);
     assert!(
         !agent_saved_json
             .to_string()

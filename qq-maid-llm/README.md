@@ -51,10 +51,10 @@ HTTP 鉴权、余额、限流和超时失败按真实错误返回；缺少 DeepS
 
 参数位于 `[tools.web_search.exa]` 和 `[tools.web_search.firecrawl]`：
 
-- Exa：`search_type`（auto/lite/deep-lite/deep）、`category`、`contents`（highlights/summary/text）、`text_max_characters`、`max_age_hours`、`include_domains`/`exclude_domains`（互斥）、`user_location`、`moderation`、`time_range`。
-- Firecrawl：`sources`（web/news）、`categories`（research/pdf/developer/gov）、`tbs`、`country`、`location`、`scrape_format`（none/markdown）、`only_main_content`、`safe`、`highlights`。`markdown` 会为每条结果额外消耗 credits，默认关闭。
+- Exa：`search_type`（auto/lite/deep-lite/deep）、`category`、`contents`（highlights/summary/text）、`text_max_characters`、`max_age_hours`、`include_domains`/`exclude_domains`（互斥）、`user_location`、`moderation`、`time_range`。`max_age_hours` 会写入 `contents.maxAgeHours`；`lite` 模式不支持 `contents=summary` 和缓存时效；`people` 分类不支持 `exclude_domains`。
+- Firecrawl：`sources`（web/news）、`categories`（research/pdf/developer/gov）、`tbs`、`country`、`location`、`scrape_format`（none/markdown）、`only_main_content`、`safe`、`highlights`。`markdown` 会为每条结果额外消耗 credits，默认关闭。`tbs` 只作用于 `web` 来源，因此配置 `tbs` 时 `sources` 必须是 `["web"]`；请求级时间过滤也会强制使用 `web` 来源。
 
-请求级 `topic=news` / `time_range` 会按后端翻译：Exa 使用 `category` 和 `startPublishedDate`，Firecrawl 使用 `sources` 和 `tbs`；`finance` 仅映射到 Exa 的 `financial report`。Exa 的 `company`/`people` 分类不支持发布日期过滤，`lite` 模式不支持 `contents=summary`，配置校验会拒绝这些组合。响应为空时仍按“执行成功、无结果”返回，不伪装成可重试故障。摘要正文复用独立搜索后端共享的「逐条摘要 + 参考来源」预算渲染。
+请求级 `topic=news` / `time_range` 会按后端翻译：Exa 使用 `category` 和 `startPublishedDate`，Firecrawl 使用 `sources` 和 `tbs`；`finance` 仅映射到 Exa 的 `financial report`。Exa 的 `company`/`people` 分类不支持发布日期过滤，`lite` 模式不支持 `contents=summary` 和 `max_age_hours`，配置校验会拒绝这些组合；`people` 分类还会拒绝 `exclude_domains`。Firecrawl 的 `tbs` 不支持 news，请求时间过滤时会自动使用 web。响应为空时仍按“执行成功、无结果”返回，不伪装成可重试故障。摘要正文复用独立搜索后端共享的「逐条摘要 + 参考来源」预算渲染。
 
 Tavily 参数现统一位于 `[tools.web_search.tavily]`；旧版顶层 `search_depth`/`topic`/`time_range` 仍兼容读取，配置中心保存后会迁移到子表。
 

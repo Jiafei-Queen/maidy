@@ -271,6 +271,11 @@ fn exa_from_file(file: &ExaConfigFile) -> Result<ExaSearchOptions, LlmError> {
             "tools.web_search.exa.max_age_hours must be between -1 and 720",
         ));
     }
+    if file.max_age_hours.is_some() && !search_type.supports_freshness() {
+        return Err(LlmError::config(
+            "tools.web_search.exa.max_age_hours is not supported when search_type is lite",
+        ));
+    }
     let include_domains = normalize_domains(
         &file.include_domains,
         "tools.web_search.exa.include_domains",
@@ -282,6 +287,13 @@ fn exa_from_file(file: &ExaConfigFile) -> Result<ExaSearchOptions, LlmError> {
     if !include_domains.is_empty() && !exclude_domains.is_empty() {
         return Err(LlmError::config(
             "tools.web_search.exa.include_domains and exclude_domains are mutually exclusive",
+        ));
+    }
+    if category.is_some_and(|category| !category.supports_exclude_domains())
+        && !exclude_domains.is_empty()
+    {
+        return Err(LlmError::config(
+            "tools.web_search.exa.exclude_domains is not supported with the people category",
         ));
     }
     let user_location = file
@@ -372,6 +384,12 @@ fn firecrawl_from_file(file: &FirecrawlConfigFile) -> Result<FirecrawlSearchOpti
             Ok(value.to_owned())
         })
         .transpose()?;
+    // Firecrawl 的 tbs 只作用于 web source；与 news 混用会让部分结果绕过时间过滤。
+    if tbs.is_some() && sources.iter().any(|source| *source != FirecrawlSource::Web) {
+        return Err(LlmError::config(
+            "tools.web_search.firecrawl.tbs only supports sources = [\"web\"]",
+        ));
+    }
     let country = file
         .country
         .as_deref()

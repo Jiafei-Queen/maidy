@@ -86,7 +86,7 @@ impl RoutedWebSearchExecutor {
                 {
                     return Err(LlmError::new(
                         "bad_request",
-                        "DeepSeek 旧 Chat 模型不支持 provider_native 搜索；请将 tools.web_search.routes.<name>.model 改为 deepseek:deepseek-v4-flash，或使用 Tavily",
+                        "DeepSeek 旧 Chat 模型不支持 provider_native 搜索；请将 tools.web_search.routes.<name>.model 改为 deepseek:deepseek-v4-flash，或改用 Tavily、Exa、Firecrawl",
                         "request",
                     ));
                 }
@@ -258,6 +258,19 @@ mod tests {
         };
         assert_eq!(err.code, "bad_request");
         assert!(err.message.contains("not configured for provider_native"));
+
+        for (backend, provider_name) in [
+            (WebSearchBackend::Exa, "exa"),
+            (WebSearchBackend::Firecrawl, "firecrawl"),
+        ] {
+            let (provider, _) = executor
+                .route_request(WebSearchRequest {
+                    backend_override: Some(backend),
+                    ..base_req.clone()
+                })
+                .unwrap();
+            assert_eq!(provider.provider_name(), provider_name);
+        }
 
         let (provider, routed_req) = executor
             .route_request(WebSearchRequest {
