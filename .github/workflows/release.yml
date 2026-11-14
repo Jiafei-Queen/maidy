@@ -18,7 +18,7 @@ jobs:
   # ==========================================================================
   # preflight：在矩阵构建前完成所有 tag 合法性检查
   #   - workflow_dispatch：直接放行构建，但不发布
-  #   - tag push：校验 master 祖先 + 两个版本 tag 之间存在非纯文档变更
+  #   - tag push：校验 main 祖先 + 两个版本 tag 之间存在非纯文档变更
   # ==========================================================================
   preflight:
     name: Preflight check
@@ -64,18 +64,18 @@ jobs:
           echo "Tag ${TAG_NAME} resolves to commit ${tag_commit}"
           echo "tag_commit=${tag_commit}" >> "$GITHUB_OUTPUT"
 
-          # 2. 校验 tag commit 属于 master 祖先
-          #    使用完整 refspec 强制更新 origin/master，避免 --depth=1 等浅拉取
+          # 2. 校验 tag commit 属于 main 祖先
+          #    使用完整 refspec 强制更新 origin/main，避免 --depth=1 等浅拉取
           #    截断历史，导致 git merge-base --is-ancestor 误判合法祖先 tag
-          git fetch --no-tags origin '+refs/heads/master:refs/remotes/origin/master'
-          if ! git merge-base --is-ancestor "${tag_commit}" origin/master; then
-            echo "::error::Tag ${TAG_NAME} 不在 master 分支上，拒绝构建和发布"
-            echo "::error::请确认 tag 打在 master 上：git checkout master && git tag ${TAG_NAME}"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "${tag_commit}" origin/main; then
+            echo "::error::Tag ${TAG_NAME} 不在 main 分支上，拒绝构建和发布"
+            echo "::error::请确认 tag 打在 main 上：git checkout main && git tag ${TAG_NAME}"
             exit 1
           fi
-          echo "Tag ${TAG_NAME} is on master ✓"
+          echo "Tag ${TAG_NAME} is on main ✓"
 
-          # 3. 找到当前 tag 之前、且已经位于当前 master 历史中的上一版 tag。
+          # 3. 找到当前 tag 之前、且已经位于当前 main 历史中的上一版 tag。
           #    发布提交通常只修改 CHANGELOG.md；不能只比较它与第一父提交，
           #    否则会把上一版以来已经合并的代码误判为纯文档发布。
           previous_tag=$(git tag --merged "${tag_commit}" --list 'v*' --sort=-version:refname \
@@ -127,7 +127,7 @@ jobs:
           echo "allow_build=${allow_build}" >> "$GITHUB_OUTPUT"
           echo "allow_publish=${allow_publish}" >> "$GITHUB_OUTPUT"
 
-  # Docker 正式标签只晋级 master Container workflow 已发布的 commit 镜像；
+  # Docker 正式标签只晋级 main Container workflow 已发布的 commit 镜像；
   # 测试环境验证是否为硬门禁由独立仓库变量控制。
   # 此 job 不执行 docker build；同一 manifest 同步到 GHCR 与 Docker Hub。
   promote-container:

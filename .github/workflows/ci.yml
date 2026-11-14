@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - main
     paths-ignore:
       # 纯文档变更不需要跑整套 Rust CI（参考 AGENTS.md 常用验证）
       # 注意：pull_request 不加 paths-ignore，否则纯文档 PR 缺少 CI 状态，无法合并
