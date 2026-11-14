@@ -54,7 +54,7 @@ qq-maid-common / reqwest / serde / tokio
 
 ## 开始工作前
 
-- 不要直接修改默认分支 `master`；代码或文档修改应在功能分支完成，提交后创建 PR，不要自行合并。
+- 不要直接修改默认分支 `main`；代码或文档修改应在功能分支完成并提交。默认不提交 PR，除非用户明确要求；任何情况下都不要自行合并。
 - 先检查工作区已有改动，不能回滚无关用户修改。
 - 修改前按任务范围读取资料：普通代码修改读取相关源码、测试和邻近文档；涉及启动、配置、部署、依赖或环境变量时，再读取 `Makefile`、`runtime/config/.env.example` 和运行 / 部署文档；纯文档修改读取目标文档及其引用来源。
 - 以当前代码和调用链为准，不根据旧文档、文件名或历史印象推测实现。
@@ -120,7 +120,7 @@ qq-maid-common / reqwest / serde / tokio
 
 ## 测试与检查
 
-CI 当前在 PR / push 到 `master` 时执行：Rust、前端、Shell 和 Windows 脚本检查分别按变更范围运行。只有 Rust、Cargo、`rust-toolchain`、`runtime/`、`Makefile` 或 CI 工作流等相关文件变更时才运行 Rust 步骤；仅有 Web Console 变更时只运行前端检查，混合变更按各自范围运行，Shell/Windows 脚本由独立检查负责。push 到 `master` 会忽略纯文档路径。Rust 步骤包括：
+CI 当前在 PR / push 到 `main` 时执行：Rust、前端、Shell 和 Windows 脚本检查分别按变更范围运行。只有 Rust、Cargo、`rust-toolchain`、`runtime/`、`Makefile` 或 CI 工作流等相关文件变更时才运行 Rust 步骤；仅有 Web Console 变更时只运行前端检查，混合变更按各自范围运行，Shell/Windows 脚本由独立检查负责。push 到 `main` 会忽略纯文档路径。Rust 步骤包括：
 
 ```bash
 cargo fmt --all -- --check
