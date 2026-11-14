@@ -539,3 +539,88 @@ fn agent_symlink_read_only_and_unsafe_permissions_are_not_writable() {
         .unwrap_err();
     assert_eq!(error.code(), "config_io_error");
 }
+
+#[test]
+fn stt_settings_and_routes_round_trip_through_agent_toml() {
+    let (file, _running, _database, path) = test_agent_file();
+    let initial = file.snapshot().unwrap();
+
+    let saved = file
+        .update(
+            &initial.revision,
+            &[
+                AgentConfigChange::SetStt {
+                    enabled: true,
+                    platform_asr: crate::config::agent::SttPlatformAsrMode::Off,
+                    language: "zh".to_owned(),
+                    timeout_seconds: 45,
+                    platform_asr_attempts: 1,
+                    max_audio_bytes: 5 * 1024 * 1024,
+                    max_text_chars: 1200,
+                },
+                AgentConfigChange::SetSttRoute {
+                    name: "default".to_owned(),
+                    candidates: vec!["openai:whisper-1".to_owned()],
+                },
+                AgentConfigChange::SetSttRoute {
+                    name: "private".to_owned(),
+                    candidates: vec!["bigmodel:glm-asr-2512".to_owned()],
+                },
+                AgentConfigChange::SetSttRoute {
+                    name: "group".to_owned(),
+                    candidates: Vec::new(),
+                },
+            ],
+        )
+        .unwrap();
+    assert!(saved.pending_restart);
+
+    let environment = HashMap::from([(
+        crate::config::agent::AGENT_CONFIG_FILE_ENV.to_owned(),
+        path.to_string_lossy().into_owned(),
+    )]);
+    let reloaded = AgentRuntimeConfig::load_from_environment(&environment).unwrap();
+    let stt = reloaded.stt();
+    assert!(stt.enabled);
+    assert_eq!(
+        stt.platform_asr,
+        crate::config::agent::SttPlatformAsrMode::Off
+    );
+    assert_eq!(stt.language.as_deref(), Some("zh"));
+    assert_eq!(stt.timeout_seconds, 45);
+    assert_eq!(stt.platform_asr_attempts, 1);
+    assert_eq!(stt.max_audio_bytes, 5 * 1024 * 1024);
+    assert_eq!(stt.max_text_chars, 1200);
+    assert_eq!(
+        stt.routes
+            .for_scene(ChatScene::Private)
+            .iter()
+            .map(|model| model.to_request_model())
+            .collect::<Vec<_>>(),
+        ["bigmodel:glm-asr-2512"]
+    );
+    assert_eq!(
+        stt.routes
+            .for_scene(ChatScene::Group)
+            .iter()
+            .map(|model| model.to_request_model())
+            .collect::<Vec<_>>(),
+        ["openai:whisper-1"]
+    );
+}
+
+#[test]
+fn unknown_stt_route_name_is_rejected() {
+    let (file, _running, _database, _path) = test_agent_file();
+    let initial = file.snapshot().unwrap();
+    let error = file
+        .update(
+            &initial.revision,
+            &[AgentConfigChange::SetSttRoute {
+                name: "channel".to_owned(),
+                candidates: Vec::new(),
+            }],
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown stt route"));
+}

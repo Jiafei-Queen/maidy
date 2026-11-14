@@ -27,6 +27,7 @@ pub(crate) fn qq_official_test_config() -> AppConfig {
     AppConfig {
         command_prefix: Default::default(),
         voice: qq_maid_core::config::VoiceFeatureConfig::default(),
+        stt: qq_maid_core::config::SttRuntimeConfig::disabled(),
         qq_official_enabled: true,
         app_id: Some("app".to_owned()),
         app_secret: Some("secret".to_owned()),

@@ -86,9 +86,20 @@ impl OneBotConnectionContext {
         action: impl Into<String>,
         params: Value,
     ) -> Result<ActionResponse, OneBotCallError> {
+        self.call_with_timeout(action, params, self.request_timeout)
+            .await
+    }
+
+    /// 语音转码等慢 action 需要独立于常规 API 调用的预算；仍由调用方显式传入上限。
+    pub async fn call_with_timeout(
+        &self,
+        action: impl Into<String>,
+        params: Value,
+        request_timeout: Duration,
+    ) -> Result<ActionResponse, OneBotCallError> {
         // request_timeout 是调用方看到的完整 API 调用预算，必须同时覆盖发送队列等待
         // 与响应等待，避免 outbound 拥塞时永远卡在进入 response timeout 之前。
-        let deadline = Instant::now() + self.request_timeout;
+        let deadline = Instant::now() + request_timeout;
         let echo = format!(
             "qq-maid-onebot-{}",
             self.next_echo.fetch_add(1, Ordering::Relaxed)
@@ -162,6 +173,19 @@ impl OneBotConnectionContext {
                 .and(state.expected_self_id.as_ref())
                 .cloned()
         })
+    }
+
+    /// 当前活动连接 generation；能力探测缓存必须随连接重建失效。
+    pub(super) fn generation(&self) -> Option<u64> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.active.as_ref().map(|active| active.generation))
+    }
+
+    /// 常规 action 的配置预算；语音转码可在此基础上取更长的下限。
+    pub(super) fn request_timeout(&self) -> Duration {
+        self.request_timeout
     }
 
     pub(super) fn register(

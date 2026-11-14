@@ -36,7 +36,9 @@ use crate::{
     },
     render::{OutboundMessage, render_respond_response_parts_for_profile},
     respond::{RespondClient, build_respond_content, respond_error_to_qq_text},
+    stt::SttService,
 };
+use qq_maid_core::config::ChatScene;
 use qq_maid_core::service::{
     CoreFailureKind, CoreInboundKind, CoreOutputPolicy, CoreRespondFailure, CoreRespondOutput,
     CoreResponse, CoreResponseEvent, CoreResponseStatus,
@@ -238,6 +240,7 @@ pub(crate) async fn handle_c2c_message(
     _dedupe: &MessageDedupe,
     ref_index: &SharedRefIndex,
     runtime: &GatewayRuntimeStatus,
+    stt: Option<&SttService>,
 ) -> anyhow::Result<()> {
     log_c2c_message_received(&message, config.verbose_log);
     runtime.record_c2c_message_received(&message);
@@ -345,6 +348,15 @@ pub(crate) async fn handle_c2c_message(
         &media_context,
         &message.message_id,
         message.reply.as_mut(),
+    )
+    .await;
+    super::stt_inbound::apply_voice_transcript(
+        stt,
+        config.stt.enabled,
+        config.stt.platform_asr,
+        ChatScene::Private,
+        &mut message.input_parts,
+        &message.attachments,
     )
     .await;
 

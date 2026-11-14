@@ -9,6 +9,7 @@ pub mod protocol;
 mod scope_dispatcher;
 mod sender;
 mod server;
+mod voice;
 
 pub use connection::{OneBotCallError, OneBotConnectionContext};
 pub use sender::{OneBotSendError, OneBotSendResult, OneBotSender};

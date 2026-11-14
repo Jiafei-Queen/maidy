@@ -17,6 +17,7 @@ use crate::config::{
     ChatScene,
     agent::{
         AgentProfileConfig, AgentSceneConfig, KnowledgeEmbeddingConfig, KnowledgeRetrievalMode,
+        SttPlatformAsrMode,
     },
     center::{
         AgentConfigChange, AgentProviderUpdate, AgentWebSearchExaUpdate,
@@ -271,6 +272,19 @@ enum AgentChangeRequest {
     RemoveModelRoute {
         name: String,
     },
+    SetStt {
+        enabled: bool,
+        platform_asr: SttPlatformAsrMode,
+        language: String,
+        timeout_seconds: u64,
+        platform_asr_attempts: u8,
+        max_audio_bytes: u64,
+        max_text_chars: usize,
+    },
+    SetSttRoute {
+        name: String,
+        candidates: Vec<String>,
+    },
     SetSearchRoute {
         name: String,
         model: String,
@@ -430,6 +444,26 @@ fn agent_change(change: AgentChangeRequest) -> Result<AgentConfigChange, BoxedRe
         }
         AgentChangeRequest::RemoveModelRoute { name } => {
             AgentConfigChange::RemoveModelRoute { name }
+        }
+        AgentChangeRequest::SetStt {
+            enabled,
+            platform_asr,
+            language,
+            timeout_seconds,
+            platform_asr_attempts,
+            max_audio_bytes,
+            max_text_chars,
+        } => AgentConfigChange::SetStt {
+            enabled,
+            platform_asr,
+            language,
+            timeout_seconds,
+            platform_asr_attempts,
+            max_audio_bytes,
+            max_text_chars,
+        },
+        AgentChangeRequest::SetSttRoute { name, candidates } => {
+            AgentConfigChange::SetSttRoute { name, candidates }
         }
         AgentChangeRequest::SetSearchRoute { name, model } => {
             AgentConfigChange::SetSearchRoute { name, model }

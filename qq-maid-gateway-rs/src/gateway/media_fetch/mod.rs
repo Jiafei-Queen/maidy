@@ -55,8 +55,8 @@ pub(crate) async fn fetch_qq_official_image_attachments(
         attachments
             .iter()
             .filter(|attachment| looks_like_image_attachment(attachment))
-            .cloned()
             .map(|attachment| {
+                let attachment = attachment.clone();
                 let client = client.clone();
                 let context = context.clone();
                 async move {

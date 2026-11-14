@@ -4,6 +4,8 @@ use qq_maid_llm::web_search::{
     FirecrawlSource, WebSearchDepth, WebSearchTopic,
 };
 
+mod stt;
+
 struct TestDirectory(std::path::PathBuf);
 
 impl TestDirectory {

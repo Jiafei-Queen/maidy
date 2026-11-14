@@ -73,6 +73,9 @@ describe("Agent 草稿构造", () => {
     expect(draft.searchRoutes.group_search).toBe("");
     expect(draft.scenes.private).toEqual({ toolCallingEnabled: true, enabledTools: ["todo_write", "legacy_tool"] });
     expect(draft.scenes.group.toolCallingEnabled).toBe(false);
+    expect(draft.stt.enabled).toBe(false);
+    expect(draft.stt.platformAsr).toBe("auto");
+    expect(draft.stt.routes).toEqual({ default: [], private: [], group: [] });
   });
 
   it("缺失字段回落默认值", () => {
@@ -97,6 +100,10 @@ describe("Agent 保存契约", () => {
       "set_model_route",
       "set_model_route",
       "set_model_route",
+      "set_stt",
+      "set_stt_route",
+      "set_stt_route",
+      "set_stt_route",
       "set_scene",
       "set_scene",
     ]);
@@ -155,6 +162,57 @@ describe("Agent 保存契约", () => {
     const draft = createAgentDraft(agent);
     draft.webSearch.maxResults = 0;
     expect(() => buildAgentChanges(draft, agent)).toThrow(/1 到 10/);
+  });
+
+  it("转录模型路由按 default/private/group 提交完整替换", () => {
+    const agent = agentSnapshot({
+      savedValue: {
+        ...SAVED_VALUE,
+        stt: {
+          enabled: true,
+          platform_asr: "off",
+          language: "zh",
+          timeout_seconds: 45,
+          platform_asr_attempts: 1,
+          max_audio_bytes: 5242880,
+          max_text_chars: 1200,
+          routes: {
+            default: ["openai:whisper-1"],
+            private: ["bigmodel:glm-asr-2512"],
+            group: [],
+          },
+        },
+      },
+    });
+    const draft = createAgentDraft(agent);
+    expect(draft.stt).toMatchObject({
+      enabled: true,
+      platformAsr: "off",
+      language: "zh",
+      timeoutSeconds: 45,
+      routes: {
+        default: ["openai:whisper-1"],
+        private: ["bigmodel:glm-asr-2512"],
+        group: [],
+      },
+    });
+    const changes = buildAgentChanges(draft, agent)
+      .filter((change) => ["set_stt", "set_stt_route"].includes((change as { action: string }).action));
+    expect(changes).toEqual([
+      {
+        action: "set_stt",
+        enabled: true,
+        platform_asr: "off",
+        language: "zh",
+        timeout_seconds: 45,
+        platform_asr_attempts: 1,
+        max_audio_bytes: 5242880,
+        max_text_chars: 1200,
+      },
+      { action: "set_stt_route", name: "default", candidates: ["openai:whisper-1"] },
+      { action: "set_stt_route", name: "private", candidates: ["bigmodel:glm-asr-2512"] },
+      { action: "set_stt_route", name: "group", candidates: [] },
+    ]);
   });
 
   it("单场景保存保留该场景其余字段", () => {

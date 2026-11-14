@@ -25,6 +25,7 @@ use crate::{
     respond::{RespondClient, RespondError, respond_error_to_qq_text},
 };
 
+use super::voice::OneBotVoiceTranscriber;
 use super::{OneBotSendError, OneBotSendResult, OneBotSender};
 
 const STREAM_FAILED_TEXT: &str = "处理失败，请稍后再试。";
@@ -201,6 +202,7 @@ pub(super) struct OneBotInboundDispatcher {
     ref_index: SharedRefIndex,
     commands: Option<GatewayCommandService>,
     command_prefix: CommandPrefix,
+    voice: OneBotVoiceTranscriber,
 }
 
 impl OneBotInboundDispatcher {
@@ -211,6 +213,7 @@ impl OneBotInboundDispatcher {
         ref_index: SharedRefIndex,
         commands: GatewayCommandService,
         command_prefix: CommandPrefix,
+        voice: OneBotVoiceTranscriber,
     ) -> Self {
         Self {
             core: Arc::new(respond),
@@ -219,6 +222,7 @@ impl OneBotInboundDispatcher {
             ref_index,
             commands: Some(commands),
             command_prefix,
+            voice,
         }
     }
 
@@ -251,6 +255,8 @@ impl OneBotInboundDispatcher {
             // 或引用其他成员不会扩大群聊响应面。
             return Ok(OneBotDispatchOutcome::IgnoredNonBotReply);
         }
+        // 语音只在已确认会处理的范围内转写；命令解析仍只看用户实际键入的正文。
+        self.voice.apply(&mut inbound).await;
         if let Some(commands) = self.commands.as_ref() {
             let (conversation, group_id) = match &inbound.conversation {
                 ConversationTarget::Private { .. } => (GatewayCommandConversation::Private, None),

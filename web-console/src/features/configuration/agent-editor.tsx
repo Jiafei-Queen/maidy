@@ -10,6 +10,8 @@ import {
   AGENT_ROUTE_LABELS,
   CONVERSATION_ROUTE_NAMES,
   SCENE_NAMES,
+  STT_ROUTE_LABELS,
+  STT_ROUTE_NAMES,
   buildAgentChanges,
   buildSceneChange,
   createAgentDraft,
@@ -17,6 +19,7 @@ import {
   string,
   type AgentDraft,
   type AgentSceneName,
+  type SttRouteName,
 } from "./agent-draft.js";
 import {
   WEB_SEARCH_CREDENTIALS,
@@ -46,12 +49,18 @@ const WEB_SEARCH_BACKEND_OPTIONS: ReadonlyArray<readonly [AgentWebSearchBackend,
 
 const SELECT_CLASS = "rounded-console border border-line bg-input px-3 py-2 text-sm text-ink outline-none";
 
+/** 数字输入只接受正整数；清空或非法输入保持当前草稿值，避免提交 null/NaN。 */
+function positiveInt(value: string, fallback: number): number {
+  const parsed = Math.trunc(Number(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /**
- * Agent 策略结构化编辑器：知识检索、联网搜索、模型路线与场景白名单。
+ * Agent 策略结构化编辑器：知识检索、联网搜索、文本/转录模型路线与场景白名单。
  *
  * 保存契约：完整保存提交 set_knowledge / set_web_search / set_web_search_exa /
- * set_web_search_firecrawl / set_model_route / set_search_route / set_scene 操作序列；
- * 场景白名单另支持按场景单独保存。草稿跨业务域 Tab 共享，revision 变化（保存成功或
+ * set_web_search_firecrawl / set_model_route / set_stt / set_stt_route /
+ * set_search_route / set_scene 操作序列；场景白名单另支持按场景单独保存。草稿跨业务域 Tab 共享，revision 变化（保存成功或
  * 外部修改）后以服务端返回为准重建。
  */
 export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapshot; group: ConfigurationBusinessGroup }) {
@@ -102,6 +111,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
   const showWebSearch = group === "online-tools";
   const showScenes = group === "online-tools";
   const showRoutes = group === "model-routing";
+  const showStt = group === "stt-routing";
 
   // 联网搜索参数的页面侧校验在组装操作时执行；抛错时阻塞提交并保留草稿。
   const saveAll = (): void => {
@@ -170,8 +180,8 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
       ) : null}
 
       {showRoutes ? (
-        <section aria-label="模型候选路线" className="flex flex-col gap-5">
-          <h3 className="m-0 text-base font-bold">模型候选路线</h3>
+        <section aria-label="文本模型候选路线" className="flex flex-col gap-5">
+          <h3 className="m-0 text-base font-bold">文本模型候选路线</h3>
           {CONVERSATION_ROUTE_NAMES.map((routeName) => (
             <ModelRouteEditor
               key={routeName}
@@ -202,6 +212,129 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
         </section>
       ) : null}
 
+      {showStt ? (
+        <section aria-label="转录模型路由" className="flex flex-col gap-5">
+          <h3 className="m-0 text-base font-bold">转录模型路由</h3>
+          <p className="m-0 text-xs leading-relaxed text-muted">
+            平台自带转写（QQ asr_refer_text / NapCat fetch_ptt_text）按策略优先；失败后按下面的候选链调用
+            OpenAI 兼容的 /audio/transcriptions。STT 提供商复用现有 Provider 连接与凭据，候选格式为
+            provider:model，场景链为空时回退默认链路。
+          </p>
+          <label className="flex items-center gap-2 text-sm text-ink">
+            <input
+              type="checkbox"
+              disabled={!editable}
+              checked={draft.stt.enabled}
+              onChange={(event) => setDraft({ ...draft, stt: { ...draft.stt, enabled: event.target.checked } })}
+              className="size-3.5 accent-[var(--console-accent)]"
+            />
+            启用语音转写
+          </label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="平台转写策略" id="agent-stt-platform-asr" hint="auto：先试平台转写；off：直接走转录模型">
+              {(props) => (
+                <select
+                  {...props}
+                  disabled={!editable}
+                  value={draft.stt.platformAsr}
+                  onChange={(event) =>
+                    setDraft({ ...draft, stt: { ...draft.stt, platformAsr: event.target.value === "off" ? "off" : "auto" } })}
+                  className={SELECT_CLASS}
+                >
+                  <option value="auto">auto（平台优先）</option>
+                  <option value="off">off（跳过平台转写）</option>
+                </select>
+              )}
+            </Field>
+            <Field label="语言（可选）" id="agent-stt-language" hint="留空不发送 language；Whisper 建议填写 zh">
+              {(props) => (
+                <Input
+                  {...props}
+                  disabled={!editable}
+                  value={draft.stt.language}
+                  onChange={(event) => setDraft({ ...draft, stt: { ...draft.stt, language: event.target.value } })}
+                  className="max-w-60"
+                />
+              )}
+            </Field>
+            <Field label="单候选超时（秒）" id="agent-stt-timeout" hint="1～120">
+              {(props) => (
+                <Input
+                  {...props}
+                  type="number"
+                  min={1}
+                  max={120}
+                  disabled={!editable}
+                  value={String(draft.stt.timeoutSeconds)}
+                  onChange={(event) =>
+                    setDraft({ ...draft, stt: { ...draft.stt, timeoutSeconds: positiveInt(event.target.value, draft.stt.timeoutSeconds) } })}
+                  className="max-w-32"
+                />
+              )}
+            </Field>
+            <Field label="平台转写尝试次数" id="agent-stt-attempts" hint="仅 NapCat fetch_ptt_text；1～3">
+              {(props) => (
+                <Input
+                  {...props}
+                  type="number"
+                  min={1}
+                  max={3}
+                  disabled={!editable}
+                  value={String(draft.stt.platformAsrAttempts)}
+                  onChange={(event) =>
+                    setDraft({ ...draft, stt: { ...draft.stt, platformAsrAttempts: positiveInt(event.target.value, draft.stt.platformAsrAttempts) } })}
+                  className="max-w-32"
+                />
+              )}
+            </Field>
+            <Field label="音频大小上限（字节）" id="agent-stt-max-audio" hint="64 KiB～12 MiB">
+              {(props) => (
+                <Input
+                  {...props}
+                  type="number"
+                  min={65536}
+                  max={12582912}
+                  disabled={!editable}
+                  value={String(draft.stt.maxAudioBytes)}
+                  onChange={(event) =>
+                    setDraft({ ...draft, stt: { ...draft.stt, maxAudioBytes: positiveInt(event.target.value, draft.stt.maxAudioBytes) } })}
+                  className="max-w-44"
+                />
+              )}
+            </Field>
+            <Field label="转写文本上限（字符）" id="agent-stt-max-text" hint="1～8000">
+              {(props) => (
+                <Input
+                  {...props}
+                  type="number"
+                  min={1}
+                  max={8000}
+                  disabled={!editable}
+                  value={String(draft.stt.maxTextChars)}
+                  onChange={(event) =>
+                    setDraft({ ...draft, stt: { ...draft.stt, maxTextChars: positiveInt(event.target.value, draft.stt.maxTextChars) } })}
+                  className="max-w-32"
+                />
+              )}
+            </Field>
+          </div>
+          {STT_ROUTE_NAMES.map((routeName: SttRouteName) => (
+            <ModelRouteEditor
+              key={routeName}
+              label={STT_ROUTE_LABELS[routeName]}
+              entityLabel="转录模型"
+              candidates={draft.stt.routes[routeName]}
+              disabled={!editable}
+              onChange={(candidates) =>
+                setDraft({
+                  ...draft,
+                  stt: { ...draft.stt, routes: { ...draft.stt.routes, [routeName]: candidates } },
+                })}
+            />
+          ))}
+        </section>
+      ) : null}
+
       {showScenes ? <AgentScenes draft={draft} agent={snapshot} editable={editable} onDraftChange={setDraft} onSaveScene={saveScene} busy={saveMutation.isPending} /> : null}
 
       {editable ? (
@@ -210,7 +343,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
             {saveMutation.isPending ? "保存中…" : "保存 Agent 策略"}
           </Button>
           <span className="text-xs text-muted">
-            保存覆盖知识检索、联网搜索、模型路线与场景配置；已保存 revision：{agent.revision}
+            保存覆盖知识检索、联网搜索、文本/转录模型路线与场景配置；已保存 revision：{agent.revision}
           </span>
         </div>
       ) : null}

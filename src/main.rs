@@ -134,6 +134,10 @@ async fn run() -> anyhow::Result<()> {
     }
     let core_config = core_config.expect("runtime readiness checked Core configuration");
     let gateway_config = gateway_config.expect("runtime readiness checked Gateway configuration");
+    // STT 只在 Gateway 消费音频；把 Core 的 `[stt]` 快照注入 Gateway 配置，
+    // 管理恢复态没有 Gateway，不创建任何 STT 客户端。
+    let stt_runtime = core_config.stt_runtime();
+    let gateway_config = gateway_config.with_stt(stt_runtime);
     if let Some(app_id) = gateway_config.app_id.as_deref() {
         let rebaseline_report = rebaseline_qq_official_identity(&core_config.app_db_file, app_id)?;
         if rebaseline_report.changed() {

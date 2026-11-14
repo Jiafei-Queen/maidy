@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Mutex};
+use std::{collections::VecDeque, sync::Mutex, time::Duration};
 
 use qq_maid_common::{
     identity_context::IdentitySource,
@@ -283,6 +283,13 @@ fn dispatcher_with_prefix(
             ref_index: crate::gateway::ref_index::ref_index(),
             commands: None,
             command_prefix,
+            voice: super::super::voice::OneBotVoiceTranscriber::new(
+                crate::gateway::onebot11::OneBotConnectionContext::new(Duration::from_secs(1)),
+                None,
+                false,
+                qq_maid_core::config::SttPlatformAsrMode::Off,
+                1,
+            ),
         },
         core,
     )

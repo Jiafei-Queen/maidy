@@ -33,7 +33,7 @@ import { TTS_PROVIDER_KEY, ttsNumberRange, ttsProviderOptions } from "./tts-conf
 import { VoicePreviewCard } from "./voice-preview-card.js";
 
 /** Agent 编辑器覆盖的业务域：这些 Tab 由 snapshot.agent 驱动，不依赖 runtime 字段存在。 */
-const AGENT_GROUPS: ReadonlySet<ConfigurationBusinessGroup> = new Set(["model-routing", "online-tools", "memory-knowledge"]);
+const AGENT_GROUPS: ReadonlySet<ConfigurationBusinessGroup> = new Set(["model-routing", "stt-routing", "online-tools", "memory-knowledge"]);
 
 /** 配置中心：runtime 公开字段、secret 凭据与 Agent 策略状态。
  * 契约见 docs/INTERACTION_CONTRACTS.md：只提交真实变更、secret 留空不修改、
@@ -143,7 +143,7 @@ export function ConfigurationPage() {
     (field) => businessGroupOf(field.key) === activeGroup
       && !(activeGroup === "models-providers" && field.key.startsWith("provider.")),
   );
-  const activeAgent = activeGroup === "models-providers" || activeGroup === "online-tools" || activeGroup === "memory-knowledge" || activeGroup === "model-routing";
+  const activeAgent = activeGroup === "models-providers" || activeGroup === "online-tools" || activeGroup === "memory-knowledge" || activeGroup === "model-routing" || activeGroup === "stt-routing";
 
   const savePublic = () => {
     if (!snapshot) return;

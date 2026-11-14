@@ -603,7 +603,7 @@ impl Attachment {
         }
     }
 
-    fn is_audio(&self) -> bool {
+    pub(crate) fn is_audio(&self) -> bool {
         attachment_kind(self.content_type.as_deref(), self.filename.as_deref())
             == AttachmentKind::Audio
     }

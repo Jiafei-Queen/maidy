@@ -10,6 +10,7 @@ pub mod media;
 pub mod message_chunk;
 pub mod render;
 pub mod respond;
+pub mod stt;
 pub mod tts;
 
 // 兼容旧的扁平路径，避免目录重组时一次性改动所有内部引用。

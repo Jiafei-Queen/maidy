@@ -16,9 +16,13 @@ use super::model::{Actor, ConversationTarget, GroupMemberRoleKind, InboundMessag
 
 mod sanitize;
 
+/// `record` 段在 Gateway 内的稳定标记；只用于区分语音与普通音频文件。
+pub(crate) const RECORD_MEDIA_ID: &str = "onebot_record";
+
 use sanitize::{
-    clean_data_id, clean_data_string, clean_data_u64, explicit_media_status, infer_image_mime,
-    safe_filename, safe_mime_type, safe_opaque_reference, safe_remote_url,
+    clean_data_id, clean_data_string, clean_data_u64, explicit_media_status, infer_audio_mime,
+    infer_image_mime, safe_filename, safe_mime_type, safe_opaque_reference, safe_record_token,
+    safe_remote_url,
 };
 
 /// OneBot 事件的 adapter 结果。被忽略的事件保留稳定分类，便于调用方做限量结构化观测，
@@ -220,6 +224,7 @@ fn parse_segments(
                 input_parts.push(media_part(segment, OneBotMediaKind::Image, media_max_bytes))
             }
             "file" => input_parts.push(media_part(segment, OneBotMediaKind::File, media_max_bytes)),
+            "record" => input_parts.push(record_part(segment, media_max_bytes)),
             _ => {
                 // 未知 segment 只保留脱敏媒体占位，不复制原始 payload。这样整条消息仍可
                 // 处理，模型也不会被告知已读取未知附件内容。
@@ -290,6 +295,46 @@ fn quoted_from_segment(
         sender,
         fallback_reason: Some("pending_ref_index_lookup".to_owned()),
         ..Default::default()
+    })
+}
+
+/// `record` 段是语音，不是普通文件：保留 NapCat `file` 令牌供 `get_record` 转码，
+/// 但绝不保存客户端本机路径；MIME 未知时按 raw SILK 提示，实际格式以 STT 嗅探为准。
+fn record_part(segment: &MessageSegment, media_max_bytes: u64) -> MessageInputPart {
+    let raw_file = clean_data_string(&segment.data, &["file"]);
+    let url = clean_data_string(&segment.data, &["url"])
+        .as_deref()
+        .and_then(safe_remote_url);
+    let filename = clean_data_string(&segment.data, &["name", "file_name", "filename"])
+        .as_deref()
+        .and_then(safe_filename);
+    let size_bytes = clean_data_u64(&segment.data, &["size", "file_size"]);
+    let mime_type = clean_data_string(&segment.data, &["mime", "mime_type", "content_type"])
+        .as_deref()
+        .and_then(safe_mime_type)
+        .or_else(|| infer_audio_mime(filename.as_deref()))
+        .or_else(|| Some("audio/silk".to_owned()));
+    let file_id = raw_file.as_deref().and_then(safe_record_token);
+    let status = if size_bytes.is_some_and(|size| size > media_max_bytes) {
+        MediaStatus::SizeExceeded
+    } else if let Some(status) = explicit_media_status(&segment.data) {
+        status
+    } else if url.is_some() || file_id.is_some() {
+        MediaStatus::Available
+    } else {
+        MediaStatus::MissingReadableUrl
+    };
+    MessageInputPart::file(MessageMedia {
+        mime_type,
+        filename,
+        size_bytes,
+        url,
+        local_path: None,
+        media_id: Some(RECORD_MEDIA_ID.to_owned()),
+        file_id,
+        attachment_id: None,
+        platform: Some(Platform::OneBot11.as_str().to_owned()),
+        status,
     })
 }
 

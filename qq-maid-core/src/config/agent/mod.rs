@@ -14,9 +14,16 @@ use qq_maid_llm::{
 use crate::error::LlmError;
 
 mod provider_config;
+mod stt;
 mod web_search_config;
 
 use provider_config::{default_auth_header, default_auth_scheme, provider_from_file};
+use stt::SttConfigFile;
+pub use stt::{
+    MAX_STT_MAX_AUDIO_BYTES, MAX_STT_MAX_TEXT_CHARS, MAX_STT_PLATFORM_ASR_ATTEMPTS,
+    MAX_STT_TIMEOUT_SECONDS, MIN_STT_MAX_AUDIO_BYTES, SttPlatformAsrMode, SttRouteChains,
+    SttSettings,
+};
 use web_search_config::web_search_from_file;
 pub(in crate::config) use web_search_config::{
     ExaConfigFile, FirecrawlConfigFile, ToolsConfigFile,
@@ -131,6 +138,7 @@ pub struct AgentRuntimeConfig {
     knowledge_mode: KnowledgeRetrievalMode,
     knowledge_embedding: KnowledgeEmbeddingConfig,
     web_search: WebSearchConfig,
+    stt: SttSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,6 +266,9 @@ pub(in crate::config) struct AgentConfigDocument {
     pub(in crate::config) knowledge: KnowledgeConfigFile,
     #[serde(default)]
     pub(in crate::config) tools: ToolsConfigFile,
+    /// 旧文件没有该节时按“STT 关闭、平台转写 auto”兼容。
+    #[serde(default)]
+    pub(in crate::config) stt: SttConfigFile,
     #[serde(default)]
     pub(in crate::config) providers: HashMap<String, ProviderFile>,
     #[serde(default)]
@@ -442,6 +453,7 @@ impl AgentRuntimeConfig {
             let provider = provider_from_file(&name, provider)?;
             providers.insert(name, provider);
         }
+        let stt = SttSettings::from_file(file.stt, &providers)?;
         let mut routes = HashMap::new();
         for (name, route) in file.model_routes {
             if route.candidates.is_empty() {
@@ -486,6 +498,7 @@ impl AgentRuntimeConfig {
             knowledge_mode: file.knowledge.mode,
             knowledge_embedding: file.knowledge.embedding,
             web_search,
+            stt,
             scenes: AgentScenes {
                 private: scene_from_file(file.scenes.private),
                 group: scene_from_file(file.scenes.group),
@@ -641,6 +654,18 @@ impl AgentRuntimeConfig {
             },
             "private": private.diagnostic_summary(),
             "group": group.diagnostic_summary(),
+            "stt": {
+                "enabled": self.stt.enabled,
+                "platform_asr": self.stt.platform_asr.as_str(),
+                "language": &self.stt.language,
+                "timeout_seconds": self.stt.timeout_seconds,
+                "platform_asr_attempts": self.stt.platform_asr_attempts,
+                "routes": {
+                    "default": self.stt.routes.default.iter().map(ModelId::to_request_model).collect::<Vec<_>>(),
+                    "private": self.stt.routes.private.iter().map(ModelId::to_request_model).collect::<Vec<_>>(),
+                    "group": self.stt.routes.group.iter().map(ModelId::to_request_model).collect::<Vec<_>>(),
+                },
+            },
         }))
     }
 
@@ -667,6 +692,10 @@ impl AgentRuntimeConfig {
 
     pub fn web_search(&self) -> &WebSearchConfig {
         &self.web_search
+    }
+
+    pub fn stt(&self) -> &SttSettings {
+        &self.stt
     }
 
     fn validate(&self) -> Result<(), LlmError> {
@@ -808,6 +837,7 @@ impl AgentRuntimeConfig {
             knowledge_mode: KnowledgeRetrievalMode::Preflight,
             knowledge_embedding: KnowledgeEmbeddingConfig::default(),
             web_search: WebSearchConfig::default(),
+            stt: SttSettings::default(),
             scenes: AgentScenes {
                 private: AgentScenePolicy {
                     enabled: true,

@@ -226,6 +226,7 @@ impl MessageDispatcher {
         group_cooldowns: Arc<std::sync::Mutex<GroupCooldowns>>,
         bot_identity: SharedBotIdentity,
         runtime: GatewayRuntimeStatus,
+        stt: Option<Arc<crate::stt::SttService>>,
         shutdown_token: CancellationToken,
     ) -> Self {
         let command_capacity = config
@@ -256,6 +257,7 @@ impl MessageDispatcher {
             group_outbound_cache,
             group_cooldowns,
             runtime.clone(),
+            stt,
         );
         let actor = DispatcherActor::new(
             config,
