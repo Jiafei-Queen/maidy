@@ -19,8 +19,8 @@ use crate::config::{
         AgentProfileConfig, AgentSceneConfig, KnowledgeEmbeddingConfig, KnowledgeRetrievalMode,
     },
     center::{
-        AgentConfigChange, AgentProviderUpdate, ConfigCenterError, ManagedConfigChange,
-        SecretConfigChange,
+        AgentConfigChange, AgentProviderUpdate, AgentWebSearchExaUpdate,
+        AgentWebSearchFirecrawlUpdate, ConfigCenterError, ManagedConfigChange, SecretConfigChange,
     },
 };
 
@@ -283,6 +283,12 @@ enum AgentChangeRequest {
         first_response_timeout_seconds: u64,
         total_timeout_seconds: u64,
     },
+    SetWebSearchExa {
+        options: AgentWebSearchExaUpdate,
+    },
+    SetWebSearchFirecrawl {
+        options: AgentWebSearchFirecrawlUpdate,
+    },
     RemoveSearchRoute {
         name: String,
     },
@@ -445,6 +451,12 @@ fn agent_change(change: AgentChangeRequest) -> Result<AgentConfigChange, BoxedRe
             first_response_timeout_seconds,
             total_timeout_seconds,
         },
+        AgentChangeRequest::SetWebSearchExa { options } => {
+            AgentConfigChange::SetWebSearchExa { options }
+        }
+        AgentChangeRequest::SetWebSearchFirecrawl { options } => {
+            AgentConfigChange::SetWebSearchFirecrawl { options }
+        }
         AgentChangeRequest::RemoveSearchRoute { name } => {
             AgentConfigChange::RemoveSearchRoute { name }
         }

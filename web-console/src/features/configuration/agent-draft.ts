@@ -1,5 +1,7 @@
 import type { AgentConfigSnapshot } from "../../types.js";
 import {
+  exaWebSearchConfigChange,
+  firecrawlWebSearchConfigChange,
   readAgentWebSearchConfig,
   webSearchConfigChange,
   webSearchRouteChanges,
@@ -9,9 +11,9 @@ import {
 /**
  * Agent 策略草稿：页面编辑状态与 agent.toml 保存契约的双向投影。
  *
- * 从旧版 agent-fields.ts 的 saveAgent 契约平移：一次保存提交
- * set_knowledge + set_web_search + set_model_route×3 + set_search_route×n + set_scene×2，
- * 搜索路线只在真实修改时生成操作，空输入保留 agent.toml 当前内容。
+ * 一次保存提交 set_knowledge + set_web_search + set_web_search_exa +
+ * set_web_search_firecrawl + set_model_route×3 + set_search_route×n +
+ * set_scene×2，搜索路线只在真实修改时生成操作，空输入保留 agent.toml 当前内容。
  */
 
 export const CONVERSATION_ROUTE_NAMES = ["private_main", "group_main", "aux"] as const;
@@ -114,6 +116,8 @@ export function buildAgentChanges(draft: AgentDraft, agent: AgentConfigSnapshot)
       },
     },
     webSearchConfigChange(draft.webSearch),
+    exaWebSearchConfigChange(draft.webSearch),
+    firecrawlWebSearchConfigChange(draft.webSearch),
   ];
   for (const name of CONVERSATION_ROUTE_NAMES) {
     changes.push({ action: "set_model_route", name, candidates: draft.routeCandidates[name] ?? [] });

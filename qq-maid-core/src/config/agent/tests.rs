@@ -1,5 +1,8 @@
 use super::*;
-use qq_maid_llm::web_search::{WebSearchDepth, WebSearchTopic};
+use qq_maid_llm::web_search::{
+    ExaCategory, ExaContentsMode, ExaSearchType, FirecrawlCategory, FirecrawlScrapeFormat,
+    FirecrawlSource, WebSearchDepth, WebSearchTopic,
+};
 
 struct TestDirectory(std::path::PathBuf);
 
@@ -460,12 +463,211 @@ profile = "balanced"
     assert_eq!(private.search_backend, WebSearchBackend::Tavily);
     assert!(private.search_model.is_empty());
     assert_eq!(config.web_search().max_results, 8);
-    assert_eq!(config.web_search().search_depth, WebSearchDepth::Advanced);
-    assert_eq!(config.web_search().topic, WebSearchTopic::News);
     assert_eq!(
-        config.web_search().time_range,
+        config.web_search().tavily.search_depth,
+        WebSearchDepth::Advanced
+    );
+    assert_eq!(config.web_search().tavily.topic, WebSearchTopic::News);
+    assert_eq!(
+        config.web_search().tavily.time_range,
         Some(WebSearchTimeRange::Week)
     );
+}
+
+#[test]
+fn toml_config_reads_tavily_subtable_and_provider_specific_search_options() {
+    let text = r#"
+version = 1
+
+[tools.web_search]
+backend = "exa"
+max_results = 6
+
+[tools.web_search.tavily]
+search_depth = "advanced"
+topic = "news"
+time_range = "day"
+
+[tools.web_search.exa]
+search_type = "deep"
+category = "publication"
+contents = "summary"
+text_max_characters = 4000
+max_age_hours = 24
+include_domains = ["arxiv.org"]
+exclude_domains = []
+user_location = "cn"
+moderation = true
+time_range = "month"
+
+# Firecrawl 的 tbs 只作用于 web source，配置校验要求此时不能混入 news。
+[tools.web_search.firecrawl]
+sources = ["web"]
+categories = ["research", "pdf"]
+tbs = "qdr:w"
+country = "jp"
+location = "Tokyo"
+scrape_format = "markdown"
+only_main_content = false
+safe = true
+highlights = false
+
+[model_routes.main]
+candidates = ["openai:gpt-main"]
+
+[profiles.balanced]
+main_route = "main"
+
+[scenes.private]
+profile = "balanced"
+
+[scenes.group]
+profile = "balanced"
+"#;
+
+    let config = AgentRuntimeConfig::from_toml(
+        text,
+        AgentConfigSource::File("config/agent.toml".to_owned()),
+    )
+    .unwrap();
+    let web_search = config.web_search();
+
+    assert_eq!(web_search.default_backend, WebSearchBackend::Exa);
+    assert_eq!(web_search.tavily.search_depth, WebSearchDepth::Advanced);
+    assert_eq!(web_search.tavily.topic, WebSearchTopic::News);
+    assert_eq!(web_search.tavily.time_range, Some(WebSearchTimeRange::Day));
+    assert_eq!(web_search.exa.search_type, ExaSearchType::Deep);
+    assert_eq!(web_search.exa.category, Some(ExaCategory::Publication));
+    assert_eq!(web_search.exa.contents, ExaContentsMode::Summary);
+    assert_eq!(web_search.exa.text_max_characters, Some(4_000));
+    assert_eq!(web_search.exa.max_age_hours, Some(24));
+    assert_eq!(web_search.exa.user_location.as_deref(), Some("CN"));
+    assert_eq!(web_search.exa.include_domains, vec!["arxiv.org".to_owned()]);
+    assert!(web_search.exa.exclude_domains.is_empty());
+    assert!(web_search.exa.moderation);
+    assert_eq!(web_search.exa.time_range, Some(WebSearchTimeRange::Month));
+    assert_eq!(web_search.firecrawl.sources, vec![FirecrawlSource::Web]);
+    assert_eq!(
+        web_search.firecrawl.categories,
+        vec![FirecrawlCategory::Research, FirecrawlCategory::Pdf]
+    );
+    assert_eq!(web_search.firecrawl.tbs.as_deref(), Some("qdr:w"));
+    assert_eq!(web_search.firecrawl.country.as_deref(), Some("JP"));
+    assert_eq!(web_search.firecrawl.location.as_deref(), Some("Tokyo"));
+    assert_eq!(
+        web_search.firecrawl.scrape_format,
+        FirecrawlScrapeFormat::Markdown
+    );
+    assert!(!web_search.firecrawl.only_main_content);
+    assert!(web_search.firecrawl.safe);
+    assert!(!web_search.firecrawl.highlights);
+}
+
+#[test]
+fn toml_config_reads_firecrawl_multiple_sources_without_time_filter() {
+    let text = r#"
+version = 1
+
+[tools.web_search]
+backend = "firecrawl"
+
+[tools.web_search.firecrawl]
+sources = ["web", "news"]
+
+[model_routes.main]
+candidates = ["openai:gpt-main"]
+
+[profiles.balanced]
+main_route = "main"
+
+[scenes.private]
+profile = "balanced"
+
+[scenes.group]
+profile = "balanced"
+"#;
+
+    let config = AgentRuntimeConfig::from_toml(
+        text,
+        AgentConfigSource::File("config/agent.toml".to_owned()),
+    )
+    .unwrap();
+    let firecrawl = &config.web_search().firecrawl;
+
+    assert_eq!(
+        firecrawl.sources,
+        vec![FirecrawlSource::Web, FirecrawlSource::News]
+    );
+    assert!(firecrawl.tbs.is_none());
+}
+
+#[test]
+fn toml_config_rejects_invalid_provider_specific_search_options() {
+    let template = include_str!("../../../../runtime/config/agent.example.toml");
+    let cases = [
+        (
+            "[tools.web_search.exa]\nsearch_type = \"turbo\"\n",
+            "search_type",
+        ),
+        (
+            "[tools.web_search.exa]\nsearch_type = \"lite\"\ncontents = \"summary\"\n",
+            "contents",
+        ),
+        (
+            "[tools.web_search.exa]\nsearch_type = \"lite\"\nmax_age_hours = 24\n",
+            "max_age_hours",
+        ),
+        (
+            "[tools.web_search.exa]\ncategory = \"people\"\nexclude_domains = [\"b.com\"]\n",
+            "exclude_domains",
+        ),
+        (
+            "[tools.web_search.exa]\ntext_max_characters = 0\n",
+            "text_max_characters",
+        ),
+        (
+            "[tools.web_search.exa]\nmax_age_hours = 721\n",
+            "max_age_hours",
+        ),
+        (
+            "[tools.web_search.exa]\nuser_location = \"CHN\"\n",
+            "user_location",
+        ),
+        (
+            "[tools.web_search.exa]\ninclude_domains = [\"a.com\"]\nexclude_domains = [\"b.com\"]\n",
+            "mutually exclusive",
+        ),
+        ("[tools.web_search.firecrawl]\nsources = []\n", "sources"),
+        (
+            "[tools.web_search.firecrawl]\ncategories = [\"developer\", \"pdf\"]\n",
+            "developer or gov",
+        ),
+        ("[tools.web_search.firecrawl]\ntbs = \"week\"\n", "tbs"),
+        (
+            "[tools.web_search.firecrawl]\nsources = [\"news\"]\ntbs = \"qdr:w\"\n",
+            "tbs",
+        ),
+        (
+            "[tools.web_search.firecrawl]\nsources = [\"web\", \"news\"]\ntbs = \"qdr:w\"\n",
+            "tbs",
+        ),
+        (
+            "[tools.web_search.firecrawl]\ncountry = \"中国\"\n",
+            "country",
+        ),
+    ];
+    for (injected, field) in cases {
+        let text = template.replace(
+            "[tools.web_search.routes.private_search]",
+            &format!("{injected}\n[tools.web_search.routes.private_search]"),
+        );
+        let error = AgentRuntimeConfig::from_toml(
+            &text,
+            AgentConfigSource::File("config/agent.toml".to_owned()),
+        )
+        .unwrap_err();
+        assert!(error.message.contains(field), "{field}: {}", error.message);
+    }
 }
 
 #[test]

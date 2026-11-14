@@ -1,4 +1,6 @@
-use super::search_support::{render_source_links, validate_timeouts};
+use super::search_support::{
+    query_with_resolved_date, render_source_links, requested_filters, validate_timeouts,
+};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -99,7 +101,7 @@ impl WebSearchExecutor for TavilyWebSearchExecutor {
         let options = tavily_request_options(&req, &self.config, &request_time_context())?;
         let payload = TavilySearchRequest {
             query: &options.query,
-            search_depth: self.config.search_depth.as_str(),
+            search_depth: self.config.tavily.search_depth.as_str(),
             max_results: options.max_results,
             topic: options.topic.as_str(),
             time_range: options.time_range.map(WebSearchTimeRange::as_str),
@@ -169,22 +171,19 @@ fn tavily_request_options(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(query);
-    let current_news = is_current_news_request(query, semantic_text);
-    let topic = match req.topic.as_deref() {
-        Some(value) => request_topic(Some(value), config.topic)?,
-        None if current_news => WebSearchTopic::News,
-        None => config.topic,
-    };
-    let time_range = match req.time_range.as_deref() {
-        Some(value) => request_time_range(Some(value), config.time_range)?,
-        None if current_news => Some(WebSearchTimeRange::Day),
-        None => config.time_range,
-    };
+    let (topic, time_range) = requested_filters(
+        query,
+        semantic_text,
+        req.topic.as_deref(),
+        req.time_range.as_deref(),
+    )?;
+    let topic = topic.unwrap_or(config.tavily.topic);
+    let time_range = time_range.or(config.tavily.time_range);
 
     Ok(TavilyRequestOptions {
         // Provider 原生后端需要长提示词来约束模型；Tavily 只接收检索词，
         // 因此仅补入服务端已解析的日期，避免把聊天上下文误传给第三方搜索。
-        query: tavily_query_with_resolved_date(query, semantic_text, time_context),
+        query: query_with_resolved_date(query, semantic_text, time_context),
         max_results: req
             .max_results
             .unwrap_or(config.max_results)
@@ -192,48 +191,6 @@ fn tavily_request_options(
         topic,
         time_range,
     })
-}
-
-fn tavily_query_with_resolved_date(
-    query: &str,
-    semantic_text: &str,
-    time_context: &RequestTimeContext,
-) -> String {
-    let resolved = time_context.resolve_relative_time_text(semantic_text);
-    let resolved = if resolved.is_empty() {
-        time_context.resolve_relative_time_text(query)
-    } else {
-        resolved
-    };
-    let date_hint = resolved
-        .first()
-        .map(|item| item.value.as_str())
-        .or_else(|| {
-            (is_current_time_request(query) || is_current_time_request(semantic_text))
-                .then_some(time_context.current_date())
-        });
-    date_hint
-        .map(|date| format!("{query} {date}"))
-        .unwrap_or_else(|| query.to_owned())
-}
-
-fn is_current_news_request(query: &str, semantic_text: &str) -> bool {
-    (has_news_intent(query) || has_news_intent(semantic_text))
-        && (is_current_time_request(query) || is_current_time_request(semantic_text))
-}
-
-fn has_news_intent(value: &str) -> bool {
-    let value = value.to_ascii_lowercase();
-    ["新闻", "资讯", "报道", "news"]
-        .iter()
-        .any(|term| value.contains(term))
-}
-
-fn is_current_time_request(value: &str) -> bool {
-    let value = value.to_ascii_lowercase();
-    ["今天", "今日", "最新", "today", "latest"]
-        .iter()
-        .any(|term| value.contains(term))
 }
 
 #[derive(Serialize)]
@@ -265,42 +222,6 @@ struct TavilySearchResult {
     url: String,
     #[serde(default)]
     content: String,
-}
-
-fn request_topic(
-    value: Option<&str>,
-    configured: WebSearchTopic,
-) -> Result<WebSearchTopic, LlmError> {
-    value
-        .map(|value| {
-            WebSearchTopic::parse_config(value, "topic").map_err(|_| {
-                LlmError::new(
-                    "bad_request",
-                    "topic must be general, news, or finance",
-                    "request",
-                )
-            })
-        })
-        .unwrap_or(Ok(configured))
-}
-
-fn request_time_range(
-    value: Option<&str>,
-    configured: Option<WebSearchTimeRange>,
-) -> Result<Option<WebSearchTimeRange>, LlmError> {
-    value
-        .map(|value| {
-            WebSearchTimeRange::parse_config(value, "time_range")
-                .map(Some)
-                .map_err(|_| {
-                    LlmError::new(
-                        "bad_request",
-                        "time_range must be day, week, month, or year",
-                        "request",
-                    )
-                })
-        })
-        .unwrap_or(Ok(configured))
 }
 
 fn tavily_sources(results: Vec<TavilySearchResult>, limit: usize) -> Vec<WebSearchSource> {

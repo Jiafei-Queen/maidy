@@ -133,6 +133,18 @@ pub fn managed_config_fields() -> Vec<Field> {
             "core.search",
             Apply::Restart,
         ),
+        Field::secret(
+            "tools.web_search.exa.api_key",
+            "EXA_API_KEY",
+            "core.search",
+            Apply::Restart,
+        ),
+        Field::secret(
+            "tools.web_search.firecrawl.api_key",
+            "FIRECRAWL_API_KEY",
+            "core.search",
+            Apply::Restart,
+        ),
         Field::public(
             "features.rss.enabled",
             "RSS_ENABLED",

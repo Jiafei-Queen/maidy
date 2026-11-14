@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+### Added
+
+* 新增 Exa 与 Firecrawl 独立 Search API 后端：`tools.web_search.backend = "exa" | "firecrawl"`，供 `/查` 与 Agent 搜索使用；密钥通过配置中心 `tools.web_search.exa.api_key` / `tools.web_search.firecrawl.api_key` 或兼容环境变量 `EXA_API_KEY` / `FIRECRAWL_API_KEY` 注入。
+* Exa 支持搜索模式、分类、内容提取、正文最大字符数、缓存时效、域名过滤、用户地区、内容审核和默认时间范围；Firecrawl 支持来源、分类、时间过滤（仅 web 来源）、国家/地区、正文抓取、仅正文、安全搜索和高亮摘要。
+* 控制台新增 Exa / Firecrawl 选项和对应参数表单，独立完整替换动作不会清空其他后端配置。
+
+### Changed
+
+* Tavily 参数统一迁移到 `[tools.web_search.tavily]`；旧顶层 `search_depth`/`topic`/`time_range` 仍兼容读取，配置中心保存后写入子表。
+* 请求级 `topic` / `time_range` 在三个独立搜索后端间按各自 API 语义翻译；`current_news` 自动判定和「逐条摘要 + 参考来源」预算渲染由 Tavily、Exa、Firecrawl 共用。Firecrawl 的 `tbs` 只适用于 web，时间过滤请求会强制使用 web 来源。
+
+### Compatibility
+
+* 无 SQLite migration 或必填配置迁移；默认 `provider_native` 与已有 Tavily/DeepSeek 配置保持不变。
+* Exa `company`/`people` 分类不支持发布日期过滤，`people` 不支持 `exclude_domains`，`lite` 模式不支持 `summary` 和 `max_age_hours`；Firecrawl `developer`/`gov` 分类必须单独使用，`tbs` 只能搭配 `sources = ["web"]`，`scrape_format = "markdown"` 会额外消耗 credits。
+* 自动测试使用本地 HTTP 替身，真实 Exa/Firecrawl 凭据、计费和结果质量仍需在部署环境验证。
+
 ## [v0.26.1] - 2026-10-23
 
 ### Added

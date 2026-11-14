@@ -34,6 +34,14 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
             "TAVILY_API_KEY".to_owned(),
             "tavily-must-never-reach-response".to_owned(),
         ),
+        (
+            "EXA_API_KEY".to_owned(),
+            "exa-must-never-reach-response".to_owned(),
+        ),
+        (
+            "FIRECRAWL_API_KEY".to_owned(),
+            "firecrawl-must-never-reach-response".to_owned(),
+        ),
     ]);
     let agent_path = directory.join("config/agent.toml");
     std::fs::create_dir_all(agent_path.parent().unwrap()).unwrap();
@@ -219,6 +227,20 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
         .unwrap();
     assert_eq!(tavily_secret["configured"], true);
     assert!(tavily_secret["effective_value"].is_null());
+    for key in [
+        "tools.web_search.exa.api_key",
+        "tools.web_search.firecrawl.api_key",
+    ] {
+        let secret = json["configuration"]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["key"] == key)
+            .unwrap();
+        assert_eq!(secret["configured"], true, "{key}");
+        assert!(secret["effective_value"].is_null(), "{key}");
+        assert!(secret["revision"].is_string(), "{key}");
+    }
     assert_eq!(json["configuration"]["agent"]["source"], "agent_toml");
     assert_eq!(json["configuration"]["agent"]["pending_restart"], false);
     assert_eq!(json["registered_tools"][0]["name"], "web_search");
@@ -230,7 +252,7 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
         "expected_revision": agent_revision,
         "changes": [{
             "action": "set_web_search",
-            "backend": "disabled",
+            "backend": "exa",
             "max_results": 8,
             "search_depth": "advanced",
             "topic": "news",
@@ -238,6 +260,32 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
             "connect_timeout_seconds": 5,
             "first_response_timeout_seconds": 15,
             "total_timeout_seconds": 45
+        }, {
+            "action": "set_web_search_exa",
+            "options": {
+                "search_type": "deep",
+                "category": "publication",
+                "contents": "summary",
+                "text_max_characters": 4000,
+                "max_age_hours": 24,
+                "include_domains": ["arxiv.org"],
+                "user_location": "cn",
+                "moderation": true,
+                "time_range": "month"
+            }
+        }, {
+            "action": "set_web_search_firecrawl",
+            "options": {
+                "sources": ["web"],
+                "categories": ["pdf"],
+                "tbs": "qdr:w",
+                "country": "jp",
+                "location": "Tokyo",
+                "scrape_format": "markdown",
+                "only_main_content": false,
+                "safe": true,
+                "highlights": false
+            }
         }]
     });
     let (agent_saved, agent_saved_json) = request_response_with_cookie(
@@ -253,18 +301,42 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
     assert_eq!(agent_saved_json["persisted"], true);
     assert_eq!(
         agent_saved_json["configuration"]["agent"]["saved_value"]["tools"]["web_search"]["backend"],
-        "disabled"
+        "exa"
     );
     assert!(
         agent_saved_json["configuration"]["agent"]["saved_value"]["tools"]["web_search"]["routes"]
             ["private_search"]
             .is_object()
     );
+    let saved_web_search =
+        &agent_saved_json["configuration"]["agent"]["saved_value"]["tools"]["web_search"];
+    assert_eq!(saved_web_search["tavily"]["search_depth"], "advanced");
+    assert_eq!(saved_web_search["exa"]["search_type"], "deep");
+    assert_eq!(saved_web_search["exa"]["user_location"], "cn");
+    assert_eq!(saved_web_search["exa"]["max_age_hours"], 24);
+    assert_eq!(saved_web_search["exa"]["text_max_characters"], 4000);
+    assert_eq!(saved_web_search["exa"]["moderation"], true);
+    assert_eq!(
+        saved_web_search["exa"]["include_domains"],
+        json!(["arxiv.org"])
+    );
+    assert_eq!(saved_web_search["firecrawl"]["sources"], json!(["web"]));
+    assert_eq!(saved_web_search["firecrawl"]["tbs"], "qdr:w");
+    assert_eq!(saved_web_search["firecrawl"]["country"], "jp");
+    assert_eq!(saved_web_search["firecrawl"]["location"], "Tokyo");
+    assert_eq!(saved_web_search["firecrawl"]["safe"], true);
+    assert_eq!(saved_web_search["firecrawl"]["highlights"], false);
     assert!(
         !agent_saved_json
             .to_string()
             .contains("tavily-must-never-reach-response")
     );
+    for secret in [
+        "exa-must-never-reach-response",
+        "firecrawl-must-never-reach-response",
+    ] {
+        assert!(!agent_saved_json.to_string().contains(secret));
+    }
 
     let revision = json["configuration"]["revision"].as_str().unwrap();
     let mutation = json!({

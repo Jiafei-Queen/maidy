@@ -28,6 +28,7 @@ use crate::{config::AgentRuntimeConfig, storage::database::SqliteDatabase};
 
 pub use agent_file::{
     AgentConfigChange, AgentConfigFile, AgentConfigSnapshot, AgentProviderUpdate,
+    AgentWebSearchExaUpdate, AgentWebSearchFirecrawlUpdate,
 };
 pub use field::{
     ManagedConfigApplyMode, ManagedConfigField, ManagedConfigSensitivity, ManagedConfigValueType,

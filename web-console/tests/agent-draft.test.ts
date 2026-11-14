@@ -92,6 +92,8 @@ describe("Agent 保存契约", () => {
     expect(actions).toEqual([
       "set_knowledge",
       "set_web_search",
+      "set_web_search_exa",
+      "set_web_search_firecrawl",
       "set_model_route",
       "set_model_route",
       "set_model_route",
@@ -104,7 +106,15 @@ describe("Agent 保存契约", () => {
       embedding: { enabled: true, cache_dir: "cache/custom-embedding" },
     });
     expect(changes[1]).toMatchObject({ action: "set_web_search", backend: "tavily", max_results: 8 });
-    expect(changes[2]).toEqual({ action: "set_model_route", name: "private_main", candidates: ["openai:gpt-5", "deepseek:deepseek-chat"] });
+    expect(changes[2]).toEqual({
+      action: "set_web_search_exa",
+      options: expect.objectContaining({ search_type: "auto" }),
+    });
+    expect(changes[3]).toEqual({
+      action: "set_web_search_firecrawl",
+      options: expect.objectContaining({ sources: ["web"] }),
+    });
+    expect(changes[4]).toEqual({ action: "set_model_route", name: "private_main", candidates: ["openai:gpt-5", "deepseek:deepseek-chat"] });
     // 未修改且已保存的搜索路线不生成操作；空 model 的留空输入同样保留原内容。
     expect(changes.filter((change) => (change as { action: string }).action === "set_search_route")).toEqual([]);
     const scenes = changes.filter((change) => (change as { action: string }).action === "set_scene") as Array<{

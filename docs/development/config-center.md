@@ -43,7 +43,7 @@ runtime 或 secret 保存前会构造候选最终环境视图：未修改的当�
 | --- | --- | --- |
 | 命令 | `command.prefix`（WebUI 提供 `/`、`#`、`*` 下拉选项，重启生效） | 无 |
 | Provider | 各内置 Provider 的 Base URL、API mode，以及 `agent.toml` 中的 OpenCode Provider 元数据 | OpenAI、DeepSeek、BigModel、Gemini、MiMo、OpenCode API Key |
-| Core / 交付 | RSS、Memory、Todo 与 Todo 提醒时间、QQ 最终回复 TTS 参数 | `weather.qweather.api_key`、`tools.web_search.tavily.api_key`、Qwen TTS API Key |
+| Core / 交付 | RSS、Memory、Todo 与 Todo 提醒时间、QQ 最终回复 TTS 参数 | `weather.qweather.api_key`、`tools.web_search.tavily.api_key`、`tools.web_search.exa.api_key`、`tools.web_search.firecrawl.api_key`、Qwen TTS API Key |
 | 控制台 | `console.enabled`、`console.allowed_origins` | 无 |
 | QQ 官方 | `platform.qq_official.enabled` | AppID、AppSecret |
 | OneBot 11 | enabled、bind host/port、WebSocket path | Access Token |
@@ -57,9 +57,9 @@ runtime 或 secret 保存前会构造候选最终环境视图：未修改的当�
 
 配置快照的 `agent` 节点返回独立的 `revision`、`source=agent_toml`、`saved_value`、`running_value`、`pending_restart`、`read_only` 与 `editable`。保存只更新文件值；当前进程继续使用启动时捕获的 `running_value`，两者不同时 `pending_restart=true`，重启重新加载后恢复一致。
 
-领域写接口只接受 Provider set/remove、route、联网搜索后端与参数、search route、profile 和 private/group scene 的结构化变更，不接受文件路径。每次保存都会先解析当前完整文档，应用局部变更，再调用 `AgentRuntimeConfig` 的同一 schema 与引用校验；非法 Provider 元数据、后端、Tavily 参数、route/profile/scene/Tool 引用不会进入正式文件。符号链接、非普通文件、只读文件或组/其他用户可写的不安全权限均拒绝写入。
+领域写接口只接受 Provider set/remove、route、联网搜索后端与参数、search route、profile 和 private/group scene 的结构化变更，不接受文件路径。每次保存都会先解析当前完整文档，应用局部变更，再调用 `AgentRuntimeConfig` 的同一 schema 与引用校验；非法 Provider 元数据、后端、Tavily/Exa/Firecrawl 参数、route/profile/scene/Tool 引用不会进入正式文件。符号链接、非普通文件、只读文件或组/其他用户可写的不安全权限均拒绝写入。
 
-联网搜索的后端、默认参数和 OpenAI、Gemini、自定义 `openai_responses` 搜索 route 统一位于 `[tools.web_search]` 与 `[tools.web_search.routes.*]`。裸搜索模型兼容为内置 OpenAI，显式前缀保留完整 Provider 身份；`openai_compatible` 不支持原生搜索。运行时、配置中心和 WebUI 不再读取旧的顶层搜索 route；`qbot update`、`qbot upgrade` 或 `qbot patch` 会在启动新版本前通过 Release 内置脚本备份并一次性迁移旧配置，使已有部署无需手工修改。WebUI 保存后端与 Tavily 参数时不会删除已有 route。Tavily API Key 不写入 `agent.toml`，只通过配置中心的 `tools.web_search.tavily.api_key` 或兼容环境变量 `TAVILY_API_KEY` 注入。
+联网搜索的后端、默认参数和 OpenAI、Gemini、自定义 `openai_responses` 搜索 route 统一位于 `[tools.web_search]` 与 `[tools.web_search.routes.*]`。Tavily、Exa 和 Firecrawl 的专属请求参数分别位于 `[tools.web_search.tavily]`、`[tools.web_search.exa]` 和 `[tools.web_search.firecrawl]`；旧版顶层 `search_depth`/`topic`/`time_range` 仍兼容读取，配置中心保存后会迁移到 `[tools.web_search.tavily]`。裸搜索模型兼容为内置 OpenAI，显式前缀保留完整 Provider 身份；`openai_compatible` 不支持原生搜索。运行时、配置中心和 WebUI 不再读取旧的顶层搜索 route；`qbot update`、`qbot upgrade` 或 `qbot patch` 会在启动新版本前通过 Release 内置脚本备份并一次性迁移旧配置，使已有部署无需手工修改。WebUI 保存后端与各后端参数时不会删除已有 route。三个独立搜索 Key 都不写入 `agent.toml`，只通过配置中心的 `tools.web_search.<provider>.api_key` 或兼容环境变量 `TAVILY_API_KEY` / `EXA_API_KEY` / `FIRECRAWL_API_KEY` 注入。
 
 ## 管理接口边界
 
