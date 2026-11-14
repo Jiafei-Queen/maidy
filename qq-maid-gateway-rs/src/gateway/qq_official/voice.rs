@@ -109,6 +109,7 @@ async fn synthesize_if_requested(
             warn!(
                 voice_fallback_stage = "tts",
                 tts_error = error.code(),
+                tts_http_status = ?error.http_status(),
                 "语音合成失败，将发送原始文本"
             );
             None

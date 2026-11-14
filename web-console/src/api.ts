@@ -355,6 +355,26 @@ export async function validateConfiguration(): Promise<{ valid: boolean; message
   return { valid: validation.valid === true, message: string(validation.message, "配置校验已完成") };
 }
 
+/** 用配置中心已保存的 TTS 配置生成试听音频；成功响应是音频字节而不是 JSON。 */
+export async function generateVoicePreview(text: string): Promise<{ blob: Blob; filename: string }> {
+  const requestGeneration = authGeneration;
+  const response = await fetch(CONFIGURATION_ROUTES.voicePreview, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "audio/*",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify({ text }),
+  });
+  if (!response.ok) throw await responseError(response, requestGeneration);
+  return {
+    blob: await response.blob(),
+    filename: filenameFromContentDisposition(response.headers.get("Content-Disposition")) ?? "voice-preview.mp3",
+  };
+}
+
 export async function fetchConsoleStatus(): Promise<ConsoleStatus> {
   const value = await fetchJson(STATUS_ROUTE, { headers: { Accept: "application/json" } });
   const root = record(value);

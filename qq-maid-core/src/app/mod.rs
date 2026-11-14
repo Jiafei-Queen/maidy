@@ -71,6 +71,15 @@ impl ManagementRuntime {
         Ok(Self { addr, http_state })
     }
 
+    /// 试听只依赖 TTS Provider 配置，不要求其他业务配置已就绪。
+    pub fn with_voice_preview(
+        mut self,
+        service: crate::voice_preview::DynVoicePreviewService,
+    ) -> Self {
+        self.http_state = self.http_state.with_voice_preview(service);
+        self
+    }
+
     pub async fn serve_with_shutdown<F>(self, shutdown: F) -> anyhow::Result<()>
     where
         F: Future<Output = ()> + Send + 'static,
@@ -215,6 +224,15 @@ impl LlmRuntime {
 
     pub fn core_handle(&self) -> crate::service::CoreHandle {
         crate::service::CoreHandle::new(self.core_state.clone())
+    }
+
+    /// 注入 Gateway 实现的 TTS 试听服务；管理面只消费 Core 定义的契约。
+    pub fn with_voice_preview(
+        mut self,
+        service: crate::voice_preview::DynVoicePreviewService,
+    ) -> Self {
+        self.http_state = self.http_state.with_voice_preview(service);
+        self
     }
 
     /// 返回 Core HTTP 健康检查 URL。

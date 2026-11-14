@@ -30,6 +30,7 @@ import { AgentEditor } from "./agent-editor.js";
 import { ThemePreferencesSection } from "./theme-preferences.js";
 import { BackgroundPreferencesSection } from "./background-preferences.js";
 import { TTS_PROVIDER_KEY, ttsNumberRange, ttsProviderOptions } from "./tts-config.js";
+import { VoicePreviewCard } from "./voice-preview-card.js";
 
 /** Agent 编辑器覆盖的业务域：这些 Tab 由 snapshot.agent 驱动，不依赖 runtime 字段存在。 */
 const AGENT_GROUPS: ReadonlySet<ConfigurationBusinessGroup> = new Set(["model-routing", "online-tools", "memory-knowledge"]);
@@ -266,6 +267,11 @@ export function ConfigurationPage() {
                         busy={runtimeSave.isPending}
                       />
                     ))}
+                    {section.label === "语音回复" ? (
+                      <VoicePreviewCard
+                        fields={snapshot.fields.filter((field) => field.key.startsWith("delivery.tts."))}
+                      />
+                    ) : null}
                   </div>
                 </section>
               ))}

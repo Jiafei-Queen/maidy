@@ -334,6 +334,7 @@ async fn console_routes_work_when_enabled_without_wildcard_cors() -> Result<(), 
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
     assert!(csp.contains("default-src 'self'"));
+    assert!(csp.contains("media-src 'self' blob:"));
     assert!(csp.contains("style-src 'self'"));
     assert!(csp.contains("script-src 'self'"));
     assert!(!csp.contains("unsafe-inline"));
@@ -678,3 +679,4 @@ async fn legacy_http_routes_are_not_registered() -> Result<(), Infallible> {
 }
 
 mod configuration;
+mod voice_preview;

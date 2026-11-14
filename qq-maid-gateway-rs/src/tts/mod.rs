@@ -9,9 +9,11 @@ use qq_maid_core::config::{TtsProviderMode, VoiceFeatureConfig, VoiceFeatureStat
 use thiserror::Error;
 
 mod openai;
+mod preview;
 mod qwen;
 
 pub use openai::{OpenAiTtsConfig, OpenAiTtsProvider};
+pub use preview::GatewayVoicePreview;
 pub use qwen::{QwenTtsConfig, QwenTtsProvider};
 
 /// Provider 合成结果。
@@ -110,6 +112,14 @@ impl TtsError {
             Self::InvalidAudioUrl => "invalid_audio_url",
             Self::EmptyAudio => "empty_audio",
             Self::AudioTooLarge { .. } => "audio_too_large",
+        }
+    }
+
+    /// 非 2xx 响应的状态码可安全记录，便于区分参数错误、鉴权和余额问题。
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::Status { status } => Some(status.as_u16()),
+            _ => None,
         }
     }
 }

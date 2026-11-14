@@ -7,6 +7,7 @@
 ### Added
 
 * 新增 OpenAI Speech TTS：`TTS_PROVIDER=openai` 使用独立 `OPENAI_TTS_API_KEY`，默认 `tts-1` / `alloy`，返回的 mp3 以 Base64 `file_data` 直传 QQ 语音；千问 URL 投递保持不变，失败仍回退原始文字。
+* 配置中心“回复与语音”新增 TTS 试听：复用配置中心已保存的 Provider、模型、音色与密钥生成音频并在浏览器播放，便于保存后直接验证 TTS 配置、查看上游 HTTP 状态，不经过 QQ 上传或发送。
 
 ## [v0.26.1] - 2026-10-23
 
