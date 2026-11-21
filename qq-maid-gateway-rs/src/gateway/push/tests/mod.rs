@@ -22,6 +22,7 @@ struct MockOneBotSender {
     account_id: Option<String>,
     calls: Mutex<Vec<String>>,
     fail: bool,
+    typing_delay: Option<Duration>,
 }
 
 struct StaticTtsProvider;
@@ -42,7 +43,13 @@ impl MockOneBotSender {
             account_id: Some(account_id.to_owned()),
             calls: Mutex::new(Vec::new()),
             fail: false,
+            typing_delay: None,
         }
+    }
+
+    fn with_typing_delay(mut self, delay: Duration) -> Self {
+        self.typing_delay = Some(delay);
+        self
     }
 
     fn calls(&self) -> Vec<String> {
@@ -57,6 +64,9 @@ impl PushOneBotSender for MockOneBotSender {
     }
 
     async fn send_typing(&self, target_id: &str) {
+        if let Some(delay) = self.typing_delay {
+            tokio::time::sleep(delay).await;
+        }
         self.calls
             .lock()
             .unwrap()

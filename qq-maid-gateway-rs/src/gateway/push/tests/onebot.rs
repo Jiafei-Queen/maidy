@@ -201,6 +201,7 @@ async fn onebot_push_rejects_offline_missing_or_wrong_account_without_sending() 
             account_id: None,
             calls: Mutex::new(Vec::new()),
             fail: false,
+            typing_delay: None,
         }),
         ref_index: crate::gateway::ref_index::ref_index(),
     }
@@ -249,6 +250,7 @@ async fn onebot_transport_failure_is_propagated_for_outbox_retry() {
             account_id: Some("bot-1".to_owned()),
             calls: Mutex::new(Vec::new()),
             fail: true,
+            typing_delay: None,
         }),
         crate::gateway::ref_index::ref_index(),
     );
@@ -368,4 +370,34 @@ async fn onebot_group_send_delay_does_not_send_typing() {
     tokio::time::advance(Duration::from_millis(500)).await;
     task.await.expect("delay task should not panic").unwrap();
     assert_eq!(sender.calls(), vec!["group:group-1:群里回复"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn slow_typing_does_not_extend_send_delay() {
+    use qq_maid_core::runtime::tools::message::{ChatSendIntent, ChatSendSink};
+    use std::time::Duration;
+
+    // typing 请求真实耗时 30 秒；发送延迟只有 200ms，不能被 typing 拖长。
+    let sink = GatewayPushSink::unbound();
+    let sender =
+        Arc::new(MockOneBotSender::connected("bot-1").with_typing_delay(Duration::from_secs(30)));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    let sink = Arc::new(sink);
+    let task = tokio::spawn(async move {
+        sink.send_messages(ChatSendIntent {
+            target: PushTarget::onebot11("bot-1", PushTargetType::Private, "user-1"),
+            reply_to_message_id: None,
+            messages: vec!["回复".to_owned()],
+            initial_delay: Some(Duration::from_millis(200)),
+            gap: None,
+            on_sent: None,
+        })
+        .await
+    });
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(200)).await;
+    let result = task.await.expect("delay task should not panic").unwrap();
+    assert_eq!(result.sent.len(), 1);
+    assert!(sender.calls().contains(&"private:user-1:回复".to_owned()));
 }
