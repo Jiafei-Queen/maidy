@@ -16,8 +16,9 @@ pub const DEFAULT_GROUP_ACTIVE_KEYWORDS: &[&str] = &["小女仆"];
 pub const DEFAULT_CONVERSATION_QUEUE_CAPACITY: usize = 16;
 pub const DEFAULT_MAX_ACTIVE_CONVERSATION_WORKERS: usize = 64;
 pub const DEFAULT_CONVERSATION_WORKER_IDLE_TIMEOUT_SECS: u64 = 300;
-pub const DEFAULT_MESSAGE_AGGREGATION_QUIET_MS: u64 = 1200;
-pub const DEFAULT_MESSAGE_AGGREGATION_MAX_WAIT_MS: u64 = 3000;
+pub const DEFAULT_MESSAGE_AGGREGATION_QUIET_MS: u64 = 2000;
+/// `0` 表示只按静默窗口封口，不设硬上限。
+pub const DEFAULT_MESSAGE_AGGREGATION_MAX_WAIT_MS: u64 = 0;
 pub const DEFAULT_MESSAGE_AGGREGATION_MAX_MESSAGES: usize = 10;
 pub const DEFAULT_MESSAGE_AGGREGATION_MAX_CHARS: usize = 12000;
 pub const DEFAULT_MESSAGE_AGGREGATION_MAX_ACTIVE_KEYS: usize = 1024;
@@ -660,10 +661,11 @@ fn parse_message_aggregation_config(
         env,
         "MESSAGE_AGGREGATION_MAX_WAIT_MS",
         DEFAULT_MESSAGE_AGGREGATION_MAX_WAIT_MS,
-        1,
+        0,
         300_000,
     )?;
-    if quiet_ms > max_wait_ms {
+    // 0 表示不设硬上限，此时只由 quiet 窗口决定封口时间。
+    if max_wait_ms > 0 && quiet_ms > max_wait_ms {
         return Err(ConfigError::InvalidAggregationWindow);
     }
     Ok(MessageAggregationConfig {

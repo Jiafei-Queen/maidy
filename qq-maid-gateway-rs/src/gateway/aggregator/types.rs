@@ -42,7 +42,8 @@ pub(super) struct PendingAggregation {
     pub(super) first_received_at: Instant,
     pub(super) last_received_at: Instant,
     pub(super) quiet_deadline: Instant,
-    pub(super) hard_deadline: Instant,
+    /// `None` 表示关闭了硬上限，只按 quiet_deadline 封口。
+    pub(super) hard_deadline: Option<Instant>,
     pub(super) generation: u64,
     pub(super) messages: Vec<C2cMessage>,
     pub(super) message_ids: HashSet<String>,

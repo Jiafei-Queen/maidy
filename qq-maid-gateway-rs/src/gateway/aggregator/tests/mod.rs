@@ -949,3 +949,25 @@ async fn event_id_retry_is_deduped_even_with_different_message_id() {
 }
 
 mod retry;
+
+#[tokio::test]
+async fn max_wait_zero_keeps_batch_open_while_messages_keep_arriving() {
+    pause();
+    let mut config = test_config();
+    config.message_aggregation.quiet = Duration::from_millis(100);
+    config.message_aggregation.max_wait = Duration::ZERO;
+    config.message_aggregation.max_messages = 10;
+    let h = harness_with_config(config);
+    let handle = h.aggregator.handle();
+    enqueue(&handle, c2c("1", "u1", "a")).await;
+    // 超过旧默认硬上限的模拟等待；没有硬上限时批次应继续合并。
+    for id in ["2", "3", "4"] {
+        advance(Duration::from_millis(90)).await;
+        enqueue(&handle, c2c(id, "u1", "b")).await;
+    }
+    advance(Duration::from_millis(101)).await;
+    wait_for_messages(&h.dispatcher, 1).await;
+    assert_eq!(h.dispatcher.messages().len(), 1);
+    assert_eq!(h.dispatcher.messages()[0].content, "a\nb\nb\nb");
+    h.aggregator.shutdown().await;
+}

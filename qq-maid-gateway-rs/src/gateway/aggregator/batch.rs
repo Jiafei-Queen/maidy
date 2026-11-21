@@ -30,7 +30,10 @@ pub(super) fn append_to_batch(
     batch.reservations.push(reservation);
     batch.total_chars += message_chars;
     batch.last_received_at = now;
-    batch.quiet_deadline = (now + config.quiet).min(batch.hard_deadline);
+    batch.quiet_deadline = match batch.hard_deadline {
+        Some(hard_deadline) => (now + config.quiet).min(hard_deadline),
+        None => now + config.quiet,
+    };
     batch.generation = batch.generation.saturating_add(1);
 }
 

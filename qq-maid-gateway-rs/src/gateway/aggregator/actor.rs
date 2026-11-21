@@ -354,7 +354,8 @@ impl AggregatorActor {
                 first_received_at: now,
                 last_received_at: now,
                 quiet_deadline: now + self.config.quiet,
-                hard_deadline: now + self.config.max_wait,
+                hard_deadline: (!self.config.max_wait.is_zero())
+                    .then(|| now + self.config.max_wait),
                 generation: 1,
                 messages: Vec::new(),
                 message_ids: HashSet::new(),
@@ -521,7 +522,7 @@ impl AggregatorActor {
             return;
         }
         let now = Instant::now();
-        let reason = if now >= batch.hard_deadline {
+        let reason = if batch.hard_deadline.is_some_and(|deadline| now >= deadline) {
             FlushReason::MaxWait
         } else if now >= batch.quiet_deadline {
             FlushReason::QuietTimeout
@@ -596,7 +597,10 @@ impl AggregatorActor {
         let Some(batch) = self.batches.get(&key) else {
             return;
         };
-        let deadline = batch.quiet_deadline.min(batch.hard_deadline);
+        let deadline = match batch.hard_deadline {
+            Some(hard_deadline) => batch.quiet_deadline.min(hard_deadline),
+            None => batch.quiet_deadline,
+        };
         let command_tx = self.command_tx.clone();
         let shutdown_token = self.shutdown_token.clone();
         tokio::spawn(async move {

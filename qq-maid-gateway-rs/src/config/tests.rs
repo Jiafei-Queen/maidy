@@ -698,3 +698,18 @@ fn member_detail_enrich_enabled_defaults_false_and_can_be_enabled() {
     .unwrap();
     assert!(config.member_detail_enrich_enabled);
 }
+
+#[test]
+fn aggregation_max_wait_zero_disables_hard_cap() {
+    // 0 表示只按 quiet 窗口封口，不再要求 quiet <= max_wait。
+    let config = AppConfig::from_map(&env_with_creds(&[
+        ("MESSAGE_AGGREGATION_QUIET_MS", "2000"),
+        ("MESSAGE_AGGREGATION_MAX_WAIT_MS", "0"),
+    ]))
+    .unwrap();
+    assert_eq!(
+        config.message_aggregation.quiet,
+        Duration::from_millis(2000)
+    );
+    assert_eq!(config.message_aggregation.max_wait, Duration::ZERO);
+}
