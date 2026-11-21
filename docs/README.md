@@ -54,6 +54,7 @@
 | [Scope Key 迁移策略](./design/scope-key-migration-strategy.md) | 历史数据兼容与 identity rebaseline |
 | [统一响应事件流](./design/response-event-runtime.md) | Core 响应事件与 Gateway 渲染边界 |
 | [Tool Calling 与 QQ 投递](./design/tool-calling-qq-delivery.md) | Agent / Tool 结果到 QQ 发送所有权 |
+| [消息延迟收发](./design/message-pacing.md) | 私聊连续消息聚合、`send_message` 拟人延迟与 OneBot 正在输入 |
 | [语音输入](./design/voice-input.md) | 平台 ASR 优先、STT 链回退、音频与日志边界 |
 | [Memory WebUI 身份授权与 API](./design/memory-webui-auth-api.md) | 已落地管理员认证基线和未实现 Memory API 的门禁 |
 | [Memory v3 与 Grok Build 对照](./design/memory-grok-build-evaluation.md) | Session Dream 移植来源、差异和安全边界 |
