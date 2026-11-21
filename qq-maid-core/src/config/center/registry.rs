@@ -187,6 +187,50 @@ fn validate_integer_semantics(
                 field.key
             )))
         }
+        "MESSAGE_AGGREGATION_QUIET_MS" if !(1..=60_000).contains(&value) => {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 1 and 60000",
+                field.key
+            )))
+        }
+        "MESSAGE_AGGREGATION_MAX_WAIT_MS" if !(0..=300_000).contains(&value) => {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 0 and 300000",
+                field.key
+            )))
+        }
+        "MESSAGE_AGGREGATION_MAX_MESSAGES" if !(1..=100).contains(&value) => {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 1 and 100",
+                field.key
+            )))
+        }
+        "MESSAGE_AGGREGATION_MAX_CHARS" if !(1..=1_000_000).contains(&value) => {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 1 and 1000000",
+                field.key
+            )))
+        }
+        "MESSAGE_AGGREGATION_MAX_ACTIVE_KEYS" if !(1..=100_000).contains(&value) => {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 1 and 100000",
+                field.key
+            )))
+        }
+        "CHAT_SEND_DELAY_MIN_MS" | "CHAT_SEND_DELAY_MAX_MS"
+            if !(0..=30_000).contains(&value) =>
+        {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 0 and 30000",
+                field.key
+            )))
+        }
+        "CHAT_SEND_GAP_MS" if !(0..=10_000).contains(&value) => {
+            Err(ConfigCenterError::invalid(format!(
+                "field `{}` must be between 0 and 10000",
+                field.key
+            )))
+        }
         _ => Ok(()),
     }
 }
