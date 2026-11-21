@@ -21,7 +21,7 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     config::AppConfig,
     gateway::{
-        dedupe::MessageDedupe,
+        dedupe::{MessageDedupe, MessageReservation},
         logging::mask_scope_key,
         platform::{self, InboundMessage},
     },
@@ -135,27 +135,41 @@ impl OneBotScopeDispatcher {
     }
 
     /// 只做 scope 计算、去重 reservation 和 `try_send`，不会等待 Core、sender 或 echo。
+    #[cfg(test)]
     pub(super) fn enqueue(
         &self,
         inbound: InboundMessage,
+    ) -> Result<OneBotEnqueueOutcome, OneBotEnqueueError> {
+        self.enqueue_reserved(inbound, None)
+    }
+
+    /// 聚合器已完成物理消息去重时，把预留令牌一并交给 dispatcher，避免合并消息
+    /// 再次按末尾 message_id 重复预留；普通入站继续走 `enqueue` 自行预留。
+    pub(super) fn enqueue_reserved(
+        &self,
+        inbound: InboundMessage,
+        reservations: Option<Vec<MessageReservation>>,
     ) -> Result<OneBotEnqueueOutcome, OneBotEnqueueError> {
         if self.inner.shutdown.is_cancelled() {
             return Err(OneBotEnqueueError::Shutdown);
         }
         let scope_key =
             platform::core_scope_key(&inbound).map_err(|_| OneBotEnqueueError::InvalidScope)?;
-        let reservation = match inbound.dedupe_message_key() {
-            Some(key) => match self.inner.dedupe.reserve_many([key], Instant::now()) {
-                Ok(reservation) => Some(reservation),
-                Err(_) => {
-                    debug!(
-                        scope_key = %mask_scope_key(&scope_key),
-                        "重复的 OneBot 11 消息在分发至 Core 前被忽略"
-                    );
-                    return Ok(OneBotEnqueueOutcome::Duplicate);
-                }
+        let reservations = match reservations {
+            Some(reservations) => reservations,
+            None => match inbound.dedupe_message_key() {
+                Some(key) => match self.inner.dedupe.reserve_many([key], Instant::now()) {
+                    Ok(reservation) => vec![reservation],
+                    Err(_) => {
+                        debug!(
+                            scope_key = %mask_scope_key(&scope_key),
+                            "重复的 OneBot 11 消息在分发至 Core 前被忽略"
+                        );
+                        return Ok(OneBotEnqueueOutcome::Duplicate);
+                    }
+                },
+                None => Vec::new(),
             },
-            None => None,
         };
 
         let mut state = self
@@ -170,7 +184,7 @@ impl OneBotScopeDispatcher {
         if let Some(entry) = state.scopes.get(&scope_key) {
             match entry.sender.try_send(inbound) {
                 Ok(()) => {
-                    if let Some(reservation) = reservation {
+                    for reservation in reservations {
                         reservation.commit();
                     }
                     return Ok(OneBotEnqueueOutcome::Accepted);
@@ -191,13 +205,13 @@ impl OneBotScopeDispatcher {
                         &mut state,
                         scope_key,
                         inbound,
-                        reservation,
+                        reservations,
                     );
                 }
             }
         }
 
-        self.enqueue_new_scope_locked(&mut state, scope_key, inbound, reservation)
+        self.enqueue_new_scope_locked(&mut state, scope_key, inbound, reservations)
     }
 
     fn enqueue_new_scope_locked(
@@ -205,7 +219,7 @@ impl OneBotScopeDispatcher {
         state: &mut DispatcherState,
         scope_key: String,
         inbound: InboundMessage,
-        reservation: Option<crate::gateway::dedupe::MessageReservation>,
+        reservations: Vec<MessageReservation>,
     ) -> Result<OneBotEnqueueOutcome, OneBotEnqueueError> {
         if state.scopes.len() >= self.inner.max_active_scopes {
             warn!(
@@ -238,7 +252,7 @@ impl OneBotScopeDispatcher {
                 abort_handle,
             },
         );
-        if let Some(reservation) = reservation {
+        for reservation in reservations {
             reservation.commit();
         }
         debug!(
