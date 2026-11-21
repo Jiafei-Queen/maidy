@@ -61,6 +61,11 @@ pub(super) fn validate_builtin_connections(
             check(model, format!("{name}.candidates[{index}]"), false);
         }
     }
+    if agent.stt().enabled {
+        for (index, model) in agent.stt().candidate_models().enumerate() {
+            check(model, format!("agent.stt.candidate[{index}]"), false);
+        }
+    }
     if let Some(document) = agent.document() {
         for (name, route) in &document.tools.web_search.routes {
             let location = format!("tools.web_search.routes.{name}");

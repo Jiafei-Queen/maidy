@@ -11,6 +11,7 @@ use std::{
 use anyhow::Context;
 use qq_maid_common::identity_context::MentionIdentity;
 use qq_maid_common::markdown::escape_text;
+use qq_maid_core::config::ChatScene;
 use qq_maid_core::service::{
     CoreInboundKind, CoreRespondFailure, CoreRespondOutput, CoreResponse, CoreResponseEvent,
 };
@@ -64,6 +65,7 @@ use crate::{
     },
     render::{OutboundMessage, render_respond_response_parts_for_profile},
     respond::{RespondClient, respond_error_to_qq_text},
+    stt::SttService,
 };
 
 #[derive(Debug, Default)]
@@ -295,6 +297,7 @@ pub(super) async fn handle_group_message_for_test(
         group_cooldowns,
         runtime,
         ref_index,
+        None,
     )
     .await
 }
@@ -310,6 +313,7 @@ pub(crate) async fn handle_prepared_group_message(
     group_cooldowns: &Arc<Mutex<GroupCooldowns>>,
     runtime: &GatewayRuntimeStatus,
     ref_index: &SharedRefIndex,
+    stt: Option<&SttService>,
 ) -> anyhow::Result<()> {
     let PreparedGroupMessage {
         mut message,
@@ -445,6 +449,14 @@ pub(crate) async fn handle_prepared_group_message(
         &media_context,
         &message.message_id,
         message.reply.as_mut(),
+    )
+    .await;
+    super::stt_inbound::apply_voice_transcript(
+        stt,
+        &config.stt,
+        ChatScene::Group,
+        &mut message.input_parts,
+        &message.attachments,
     )
     .await;
 

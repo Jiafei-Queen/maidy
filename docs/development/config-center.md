@@ -49,7 +49,7 @@ runtime 或 secret 保存前会构造候选最终环境视图：未修改的当�
 | OneBot 11 | enabled、bind host/port、WebSocket path | Access Token |
 | 微信服务号 | enabled、encryption mode、bind host/port、callback path | Token、AppID、AppSecret、EncodingAESKey |
 
-配置页按模型与供应商、模型路由、联网与工具、记忆与知识库、回复与语音、平台接入、待办与通知、系统与安全等业务场景分组；runtime 普通值、加密 Secret 与 Agent 策略仍分别使用原有写入协议和 revision。字段标签使用中文，底层稳定 key 不变。`command.prefix` 必须是一个可见非空白字符，自定义后仅新前缀可触发命令，旧 `/`、消息中段前缀和重复前缀按普通文本处理。
+配置页按模型与供应商、文本模型路由、转录模型路由、联网与工具、记忆与知识库、回复与语音、平台接入、待办与通知、系统与安全等业务场景分组；runtime 普通值、加密 Secret 与 Agent 策略仍分别使用原有写入协议和 revision。字段标签使用中文，底层稳定 key 不变。`command.prefix` 必须是一个可见非空白字符，自定义后仅新前缀可触发命令，旧 `/`、消息中段前缀和重复前缀按普通文本处理。
 
 “回复与语音”提供 TTS 试听：使用配置中心已保存的 Provider、模型、音色和密钥生成音频并在浏览器播放，不经过 QQ 上传或发送。保存后即可试听；试听不改变配置 revision，重启后新配置才会影响实际语音发送。
 

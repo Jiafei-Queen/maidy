@@ -200,10 +200,10 @@ fn observe_passive_group_message(
     respond: &RespondClient,
     ref_index: &SharedRefIndex,
 ) {
-    if !message
+    if message
         .current_msg_idx
         .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
+        .is_none_or(|value| value.trim().is_empty())
     {
         return;
     }

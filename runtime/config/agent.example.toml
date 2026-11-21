@@ -45,6 +45,32 @@ candidates = ["openai:gpt-5.6-luna", "gemini:gemini-2.5-flash", "mimo:mimo-v2.5"
 [model_routes.aux]
 candidates = ["openai:gpt-5.6-luna", "gemini:gemini-2.5-flash", "mimo:mimo-v2.5", "deepseek:deepseek-v4-flash"]
 
+# 语音转写（STT）。平台自带转写也作为候选链中的普通“模型”参与排序：
+# `platform:qq` 表示 QQ asr_refer_text / NapCat fetch_ptt_text，不需要音频上传或密钥；
+# 远程候选则调用 OpenAI 兼容 `/audio/transcriptions`。
+#
+# 候选格式与模型路由一致，必须是 `provider:model`。`platform:qq` 是保留的伪 Provider；
+# 其他候选的 provider 只能是内置连接或 [providers.*] 中 kind = "openai_compatible"
+# 的连接。场景链为空时回退 default。关闭 enabled 时只跳过远程候选，平台候选仍生效。
+[stt]
+enabled = false
+# 旧配置兼容字段：新配置统一关闭，平台转录由 `platform:qq` 候选表达。
+platform_asr = "off"
+# 空字符串表示不向 Provider 发送 language；Whisper 建议填 "zh"。
+language = ""
+timeout_seconds = 30
+# 仅 OneBot 的 fetch_ptt_text 使用；1..=3。
+platform_asr_attempts = 2
+max_audio_bytes = 10485760
+max_text_chars = 2000
+
+[stt.routes]
+# default 是私聊/群聊都未单独配置时的兜底链。
+# 示例：也可追加其他 OpenAI 兼容转录模型，例如 bigmodel:glm-asr-2512。
+default = ["platform:qq", "openai:whisper-1"]
+private = []
+group = []
+
 # 联网搜索统一配置。裸模型兼容为内置 OpenAI；显式 `provider:model` 会严格选择
 # Gemini 或声明为 openai_responses 的自定义 Provider，不按模型名猜测。
 [tools.web_search]

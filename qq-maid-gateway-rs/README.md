@@ -156,6 +156,16 @@ QQ 官方与 OneBot 11 语音由模型主动调用 `send_voice` 工具发送：�
 
 Web 控制台的“回复与语音”提供 TTS 试听：复用配置中心已保存的 Provider 与音色生成音频并在浏览器播放，不经过 QQ 上传或发送。保存后即可试听；它只验证 TTS 合成与千问音频 URL 下载，不代表 QQ 语音发送链路已经验证，重启后新配置才会影响实际回复。
 
+### 语音输入（STT）
+
+QQ 官方与 OneBot 11 的语音转录使用同一条候选链：`platform:qq` 表示平台自带转写（QQ `asr_refer_text`、NapCat `fetch_ptt_text`），其余候选调用 OpenAI 兼容 `/audio/transcriptions`。在 `runtime/config/agent.toml` 的 `[stt]` 中启用远程候选并按顺序排列；控制台的“转录模型路由”提供“添加 QQ 平台转录”按钮，已存在时不会重复添加，删除该候选即停用平台转写。
+
+- 音频只在 Gateway 内存中流转；上传前按文件头嗅探，SILK 不会直接发给第三方。
+- 转写文本以 `[语音转文字] …` 注入 input parts，不写入 `inbound.text`，因此不会触发命令。
+- 失败时注入 `[语音消息：未识别出文字]`，不伪造成功。
+- OneBot `get_record` 的 base64 音频会让 action response 走单独的传输上限；事件帧仍按 `ONEBOT11_MAX_MESSAGE_BYTES` 校验。
+- 完整配置、回退顺序与日志边界见 [`docs/design/voice-input.md`](../docs/design/voice-input.md)。
+
 兼容旧变量名：
 
 ```env

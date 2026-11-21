@@ -12,23 +12,51 @@ import {
  * Agent 策略草稿：页面编辑状态与 agent.toml 保存契约的双向投影。
  *
  * 一次保存提交 set_knowledge + set_web_search + set_web_search_exa +
- * set_web_search_firecrawl + set_model_route×3 + set_search_route×n +
- * set_scene×2，搜索路线只在真实修改时生成操作，空输入保留 agent.toml 当前内容。
+ * set_web_search_firecrawl + set_model_route×3 + set_stt + set_stt_route×3 +
+ * set_search_route×n + set_scene×2，搜索路线只在真实修改时生成操作，空输入保留
+ * agent.toml 当前内容。
  */
 
 export const CONVERSATION_ROUTE_NAMES = ["private_main", "group_main", "aux"] as const;
 export const SEARCH_ROUTE_NAMES = ["private_search", "group_search"] as const;
 export const SCENE_NAMES = ["private", "group"] as const;
+export const STT_ROUTE_NAMES = ["default", "private", "group"] as const;
 
 export type ConversationRouteName = (typeof CONVERSATION_ROUTE_NAMES)[number];
 export type SearchRouteName = (typeof SEARCH_ROUTE_NAMES)[number];
 export type AgentSceneName = (typeof SCENE_NAMES)[number];
+export type SttRouteName = (typeof STT_ROUTE_NAMES)[number];
 
 export const AGENT_ROUTE_LABELS: Record<string, string> = {
   private_main: "私聊主路线",
   group_main: "群聊主路线",
   aux: "辅助任务路线",
 };
+
+export const STT_ROUTE_LABELS: Record<SttRouteName, string> = {
+  default: "默认链路（兜底）",
+  private: "私聊链路",
+  group: "群聊链路",
+};
+
+/** 平台自带转写在候选链中的保留模型；后端使用同一字面量识别。 */
+export const PLATFORM_STT_CANDIDATE = "platform:qq";
+
+export function hasPlatformSttCandidate(
+  routes: Record<SttRouteName, readonly string[]>,
+): boolean {
+  return STT_ROUTE_NAMES.some((name) => routes[name].includes(PLATFORM_STT_CANDIDATE));
+}
+
+export interface AgentSttDraft {
+  enabled: boolean;
+  language: string;
+  timeoutSeconds: number;
+  platformAsrAttempts: number;
+  maxAudioBytes: number;
+  maxTextChars: number;
+  routes: Record<SttRouteName, string[]>;
+}
 
 export interface AgentSceneDraft {
   toolCallingEnabled: boolean;
@@ -41,6 +69,7 @@ export interface AgentDraft {
   webSearch: AgentWebSearchConfig;
   searchRoutes: Record<SearchRouteName, string>;
   routeCandidates: Record<ConversationRouteName, string[]>;
+  stt: AgentSttDraft;
   scenes: Record<AgentSceneName, AgentSceneDraft>;
 }
 
@@ -85,10 +114,57 @@ export function createAgentDraft(agent: AgentConfigSnapshot): AgentDraft {
       group_main: stringArray(record(modelRoutes.group_main).candidates),
       aux: stringArray(record(modelRoutes.aux).candidates),
     },
+    stt: createSttDraft(record(documentValue.stt)),
     scenes: {
       private: sceneDraft(scenes.private),
       group: sceneDraft(scenes.group),
     },
+  };
+}
+
+const DEFAULT_STT_DRAFT: AgentSttDraft = {
+  enabled: false,
+  language: "",
+  timeoutSeconds: 30,
+  platformAsrAttempts: 2,
+  maxAudioBytes: 10485760,
+  maxTextChars: 2000,
+  routes: { default: [], private: [], group: [] },
+};
+
+function positiveNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * 读取 `[stt]`。旧配置只保存 `platform_asr = "auto"` 时，把平台转录迁移为
+ * `platform:qq` 候选，避免新链路编辑界面丢失既有平台优先行为。
+ */
+function createSttDraft(value: Record<string, unknown>): AgentSttDraft {
+  const routes = record(value.routes);
+  const routeCandidates: Record<SttRouteName, string[]> = {
+    default: stringArray(routes.default),
+    private: stringArray(routes.private),
+    group: stringArray(routes.group),
+  };
+  const legacyPlatformAuto = value.platform_asr !== "off";
+  if (legacyPlatformAuto && !hasPlatformSttCandidate(routeCandidates)) {
+    routeCandidates.default = [PLATFORM_STT_CANDIDATE, ...routeCandidates.default];
+    // 旧语义是每条场景链都先试平台转写；只改非空场景链，空链仍回退 default。
+    for (const name of ["private", "group"] as const) {
+      if (routeCandidates[name].length > 0) {
+        routeCandidates[name] = [PLATFORM_STT_CANDIDATE, ...routeCandidates[name]];
+      }
+    }
+  }
+  return {
+    enabled: value.enabled === true,
+    language: string(value.language),
+    timeoutSeconds: positiveNumber(value.timeout_seconds, DEFAULT_STT_DRAFT.timeoutSeconds),
+    platformAsrAttempts: positiveNumber(value.platform_asr_attempts, DEFAULT_STT_DRAFT.platformAsrAttempts),
+    maxAudioBytes: positiveNumber(value.max_audio_bytes, DEFAULT_STT_DRAFT.maxAudioBytes),
+    maxTextChars: positiveNumber(value.max_text_chars, DEFAULT_STT_DRAFT.maxTextChars),
+    routes: routeCandidates,
   };
 }
 
@@ -122,11 +198,29 @@ export function buildAgentChanges(draft: AgentDraft, agent: AgentConfigSnapshot)
   for (const name of CONVERSATION_ROUTE_NAMES) {
     changes.push({ action: "set_model_route", name, candidates: draft.routeCandidates[name] ?? [] });
   }
+  changes.push(sttConfigChange(draft.stt));
+  for (const name of STT_ROUTE_NAMES) {
+    changes.push({ action: "set_stt_route", name, candidates: draft.stt.routes[name] ?? [] });
+  }
   changes.push(...webSearchRouteChanges(savedWebSearch.routes, draft.searchRoutes));
   for (const sceneName of SCENE_NAMES) {
     changes.push(buildSceneChange(draft, agent, sceneName));
   }
   return changes;
+}
+
+function sttConfigChange(stt: AgentSttDraft): Record<string, unknown> {
+  return {
+    action: "set_stt",
+    enabled: stt.enabled,
+    // 新保存统一关闭旧策略；平台转录完全由 platform:qq 候选表达。
+    platform_asr: "off",
+    language: stt.language.trim(),
+    timeout_seconds: stt.timeoutSeconds,
+    platform_asr_attempts: stt.platformAsrAttempts,
+    max_audio_bytes: stt.maxAudioBytes,
+    max_text_chars: stt.maxTextChars,
+  };
 }
 
 /** 单场景保存：保留 agent.toml 中该场景的其余字段，只覆盖工具开关与白名单。 */

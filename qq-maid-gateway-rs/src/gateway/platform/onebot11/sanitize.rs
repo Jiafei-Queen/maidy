@@ -66,6 +66,32 @@ pub(super) fn safe_opaque_reference(value: &str) -> Option<String> {
     safe_filename(value)
 }
 
+/// `record.file` 是回传给 client 的不透明令牌，不是本机路径；只拒绝路径形态值。
+pub(super) fn safe_record_token(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()
+        && value.len() <= 256
+        && !value.contains(['/', '\\'])
+        && !value.chars().any(char::is_control)
+        && !value.to_ascii_lowercase().starts_with("base64"))
+    .then(|| value.to_owned())
+}
+
+pub(super) fn infer_audio_mime(filename: Option<&str>) -> Option<String> {
+    let extension = filename?.rsplit('.').next()?.to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "silk" => "audio/silk",
+        "amr" => "audio/amr",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "opus" => "audio/ogg",
+        "m4a" | "aac" => "audio/mp4",
+        "flac" => "audio/flac",
+        _ => return None,
+    };
+    Some(mime.to_owned())
+}
+
 pub(super) fn safe_mime_type(value: &str) -> Option<String> {
     let value = value.trim().to_ascii_lowercase();
     (!value.is_empty()

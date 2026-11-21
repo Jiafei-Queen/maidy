@@ -38,11 +38,11 @@ export interface AddCandidateResult {
 }
 
 /** 追加候选到末尾；空值、重复、非法格式返回明确错误。 */
-export function addCandidate(list: readonly string[], candidate: string): AddCandidateResult {
+export function addCandidate(list: readonly string[], candidate: string, entityLabel = "模型"): AddCandidateResult {
   const value = candidate.trim();
-  if (!value) return { list: [...list], error: "模型不能为空" };
+  if (!value) return { list: [...list], error: `${entityLabel}不能为空` };
   if (isMalformedCandidate(value)) return { list: [...list], error: "格式应为 provider:model" };
-  if (list.some((item) => item === value)) return { list: [...list], error: "该模型已在路线中" };
+  if (list.some((item) => item === value)) return { list: [...list], error: `该${entityLabel}已在路线中` };
   return { list: [...list, value], error: null };
 }
 
@@ -64,22 +64,45 @@ export function moveCandidate(list: readonly string[], from: number, to: number)
   return next;
 }
 
+export interface ModelRouteQuickAdd {
+  label: string;
+  value: string;
+  /** 已在链路中时展示的文案，默认“已添加”。 */
+  addedLabel?: string;
+}
+
+/** 快捷候选只追加一次；已存在时保持原顺序，避免重复点击产生重复项。 */
+export function appendQuickAddCandidate(list: readonly string[], value: string): string[] {
+  return list.includes(value) ? [...list] : [...list, value];
+}
+
 export interface ModelRouteEditorProps {
   label: string;
   candidates: readonly string[];
   disabled: boolean;
   onChange: (candidates: string[]) => void;
+  /** 候选实体的中文名，默认“模型”；转录路由使用“转录模型”。 */
+  entityLabel?: string;
+  /** 常用候选快捷添加；已存在时按钮禁用，不会重复写入。 */
+  quickAdd?: ModelRouteQuickAdd;
 }
 
 /** Chip 编辑器：排序即时生效（上移/下移/拖动），删除与添加同样即时；错误经 aria-live 播报。 */
-export function ModelRouteEditor({ label, candidates, disabled, onChange }: ModelRouteEditorProps) {
+export function ModelRouteEditor({
+  label,
+  candidates,
+  disabled,
+  onChange,
+  entityLabel = "模型",
+  quickAdd,
+}: ModelRouteEditorProps) {
   const [addValue, setAddValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   const tryAdd = (): void => {
-    const result = addCandidate(candidates, addValue);
+    const result = addCandidate(candidates, addValue, entityLabel);
     if (result.error) {
       setError(result.error);
       return;
@@ -89,10 +112,17 @@ export function ModelRouteEditor({ label, candidates, disabled, onChange }: Mode
     onChange(result.list);
   };
 
+  const quickAddPresent = quickAdd ? candidates.includes(quickAdd.value) : false;
+  const tryQuickAdd = (): void => {
+    if (!quickAdd || quickAddPresent) return;
+    setError(null);
+    onChange(appendQuickAddCandidate(candidates, quickAdd.value));
+  };
+
   return (
     <div className="flex flex-col gap-1.5">
       <p className="m-0 text-sm font-semibold text-ink">{label}</p>
-      <div role="list" aria-label={`${label}候选模型`} className="flex flex-wrap gap-1.5">
+      <div role="list" aria-label={`${label}候选${entityLabel}`} className="flex flex-wrap gap-1.5">
         {candidates.map((candidate, index) => (
           <span
             key={candidate}
@@ -154,15 +184,15 @@ export function ModelRouteEditor({ label, candidates, disabled, onChange }: Mode
           </span>
         ))}
         {candidates.length === 0 ? (
-          <span className="text-xs text-muted">暂无候选模型</span>
+          <span className="text-xs text-muted">暂无候选{entityLabel}</span>
         ) : null}
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Input
           type="text"
           placeholder="provider:model"
           disabled={disabled}
-          aria-label={`为 ${label} 添加候选模型`}
+          aria-label={`为 ${label} 添加候选${entityLabel}`}
           value={addValue}
           onChange={(event) => setAddValue(event.target.value)}
           onKeyDown={(event) => {
@@ -181,6 +211,22 @@ export function ModelRouteEditor({ label, candidates, disabled, onChange }: Mode
         >
           添加
         </button>
+        {quickAdd ? (
+          <button
+            type="button"
+            disabled={disabled || quickAddPresent}
+            onClick={tryQuickAdd}
+            title={quickAddPresent ? `${quickAdd.value} 已在当前链路中` : `追加 ${quickAdd.value}`}
+            aria-label={
+              quickAddPresent
+                ? `${quickAdd.label}已添加，无需重复添加`
+                : `${quickAdd.label}，追加 ${quickAdd.value}`
+            }
+            className="rounded-console border border-line bg-glass-muted px-3 py-1.5 text-xs font-bold text-ink transition-colors hover:bg-accent-soft disabled:opacity-50"
+          >
+            {quickAddPresent ? quickAdd.addedLabel ?? "已添加" : quickAdd.label}
+          </button>
+        ) : null}
       </div>
       <p role="status" aria-live="polite" className="m-0 min-h-4 text-xs text-error">
         {error}

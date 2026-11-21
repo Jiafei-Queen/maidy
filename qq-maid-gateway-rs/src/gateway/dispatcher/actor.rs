@@ -46,7 +46,7 @@ use super::types::{
     WorkerExitReason,
 };
 use super::worker::{WorkerContext, run_worker};
-use crate::{api::QqApiClient, config::AppConfig, respond::RespondClient};
+use crate::{api::QqApiClient, config::AppConfig, respond::RespondClient, stt::SttService};
 
 pub(super) type HandlerFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 
@@ -67,6 +67,7 @@ pub(super) struct RealMessageHandler {
     group_outbound_cache: Arc<std::sync::Mutex<BotOutboundCache>>,
     group_cooldowns: Arc<std::sync::Mutex<GroupCooldowns>>,
     runtime: GatewayRuntimeStatus,
+    stt: Option<Arc<SttService>>,
 }
 
 impl RealMessageHandler {
@@ -84,6 +85,7 @@ impl RealMessageHandler {
         group_outbound_cache: Arc<std::sync::Mutex<BotOutboundCache>>,
         group_cooldowns: Arc<std::sync::Mutex<GroupCooldowns>>,
         runtime: GatewayRuntimeStatus,
+        stt: Option<Arc<SttService>>,
     ) -> Arc<dyn MessageHandler> {
         Arc::new(Self {
             config,
@@ -95,6 +97,7 @@ impl RealMessageHandler {
             group_outbound_cache,
             group_cooldowns,
             runtime,
+            stt,
         })
     }
 }
@@ -113,6 +116,7 @@ impl MessageHandler for RealMessageHandler {
                         &self.dedupe,
                         &self.ref_index,
                         &self.runtime,
+                        self.stt.as_deref(),
                     )
                     .await
                 }
@@ -127,6 +131,7 @@ impl MessageHandler for RealMessageHandler {
                         &self.group_cooldowns,
                         &self.runtime,
                         &self.ref_index,
+                        self.stt.as_deref(),
                     )
                     .await
                 }

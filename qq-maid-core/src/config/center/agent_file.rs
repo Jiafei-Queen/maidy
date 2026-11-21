@@ -11,6 +11,7 @@ use crate::config::agent::{
     AgentConfigDocument, AgentConfigSource, AgentProfileConfig, AgentProviderKind,
     AgentRuntimeConfig, AgentSceneConfig, ChatScene, ExaConfigFile, FirecrawlConfigFile,
     KnowledgeEmbeddingConfig, KnowledgeRetrievalMode, ProviderFile, RouteFile, SearchRouteFile,
+    SttPlatformAsrMode,
 };
 
 use super::{
@@ -39,6 +40,20 @@ pub enum AgentConfigChange {
     },
     RemoveModelRoute {
         name: String,
+    },
+    /// 写入 `[stt]` 的开关与运行参数；候选链由 `SetSttRoute` 单独维护。
+    SetStt {
+        enabled: bool,
+        platform_asr: SttPlatformAsrMode,
+        language: String,
+        timeout_seconds: u64,
+        platform_asr_attempts: u8,
+        max_audio_bytes: u64,
+        max_text_chars: usize,
+    },
+    SetSttRoute {
+        name: String,
+        candidates: Vec<String>,
     },
     SetSearchRoute {
         name: String,
@@ -358,6 +373,36 @@ fn apply_change(
         }
         AgentConfigChange::RemoveModelRoute { name } => {
             document.model_routes.remove(entry_name(name)?.as_str());
+        }
+        AgentConfigChange::SetStt {
+            enabled,
+            platform_asr,
+            language,
+            timeout_seconds,
+            platform_asr_attempts,
+            max_audio_bytes,
+            max_text_chars,
+        } => {
+            document.stt.enabled = *enabled;
+            document.stt.platform_asr = *platform_asr;
+            document.stt.language = language.clone();
+            document.stt.timeout_seconds = *timeout_seconds;
+            document.stt.platform_asr_attempts = *platform_asr_attempts;
+            document.stt.max_audio_bytes = *max_audio_bytes;
+            document.stt.max_text_chars = *max_text_chars;
+        }
+        AgentConfigChange::SetSttRoute { name, candidates } => {
+            let candidates = candidates.clone();
+            match name.trim() {
+                "default" => document.stt.routes.default = candidates,
+                "private" => document.stt.routes.private = candidates,
+                "group" => document.stt.routes.group = candidates,
+                other => {
+                    return Err(ConfigCenterError::invalid(format!(
+                        "unknown stt route `{other}`; expected default, private or group"
+                    )));
+                }
+            }
         }
         AgentConfigChange::SetSearchRoute { name, model } => {
             let name = entry_name(name)?;

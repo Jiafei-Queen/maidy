@@ -75,6 +75,7 @@ export const FIELD_LABELS: Record<string, string> = {
 export type ConfigurationBusinessGroup =
   | "models-providers"
   | "model-routing"
+  | "stt-routing"
   | "online-tools"
   | "memory-knowledge"
   | "replies-voice"
@@ -85,7 +86,8 @@ export type ConfigurationBusinessGroup =
 
 export const BUSINESS_GROUPS: ReadonlyArray<{ id: ConfigurationBusinessGroup; label: string; description: string }> = [
   { id: "models-providers", label: "模型与供应商", description: "配置内置模型服务、自定义 Provider 及对应凭据。" },
-  { id: "model-routing", label: "模型路由", description: "为私聊、群聊、辅助任务和搜索场景设置候选模型链。" },
+  { id: "model-routing", label: "文本模型路由", description: "为私聊、群聊、辅助任务和搜索场景设置文本候选模型链。" },
+  { id: "stt-routing", label: "转录模型路由", description: "配置语音转写开关、平台转写策略和 STT 提供商的转录模型链。" },
   { id: "online-tools", label: "联网与工具", description: "管理联网搜索、天气服务、Tool Calling 与场景白名单。" },
   { id: "memory-knowledge", label: "记忆与知识库", description: "管理记忆整理、Session Dream 和本地知识检索策略。" },
   { id: "replies-voice", label: "回复与语音", description: "设置聊天命令入口和最终回复的语音能力。" },

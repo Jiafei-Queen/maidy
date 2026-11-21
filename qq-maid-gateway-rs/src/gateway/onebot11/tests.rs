@@ -367,6 +367,14 @@ fn private_message_event(message_id: &str, text: &str) -> String {
 }
 
 fn private_message_event_for(message_id: &str, user_id: &str, text: &str) -> String {
+    private_message_with_segments(
+        message_id,
+        user_id,
+        json!([{"type": "text", "data": {"text": text}}]),
+    )
+}
+
+fn private_message_with_segments(message_id: &str, user_id: &str, segments: Value) -> String {
     json!({
         "time": 1720000000,
         "self_id": "10001",
@@ -375,7 +383,7 @@ fn private_message_event_for(message_id: &str, user_id: &str, text: &str) -> Str
         "user_id": user_id,
         "message_id": message_id,
         "sender": {"nickname": "测试用户"},
-        "message": [{"type": "text", "data": {"text": text}}]
+        "message": segments
     })
     .to_string()
 }
@@ -408,6 +416,84 @@ async fn complete_action(socket: &mut ClientSocket, request: &ActionRequest, mes
         ))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn private_voice_uses_platform_transcript_without_writing_command_text() {
+    let core = Arc::new(RecordingCore::new("收到语音"));
+    let (handle, _runtime, shutdown) = spawn_server_with_core(test_config(), core.clone()).await;
+    let mut client = connect(handle.local_addr, PATH, TOKEN, Some("10001"))
+        .await
+        .unwrap();
+    client
+        .send(Message::Text(
+            private_message_with_segments(
+                "voice-private-1",
+                "20002",
+                json!([{"type": "record", "data": {
+                    "file": "0123456789abcdef0123456789abcdef",
+                    "url": "https://example.test/voice.silk",
+                    "file_size": 1024
+                }}]),
+            )
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let asr = next_action_request(&mut client).await;
+    assert_eq!(asr.action, "fetch_ptt_text");
+    assert_eq!(asr.params["message_id"], json!("voice-private-1"));
+    client
+        .send(Message::Text(
+            serde_json::to_string(&action_response(&asr, json!({"text": "你好"})))
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let reply = next_action_request(&mut client).await;
+    assert_eq!(reply.action, "send_private_msg");
+    complete_action(&mut client, &reply, "reply-voice-1").await;
+    wait_until(|| core.requests().len() == 1).await;
+    let request = core.requests().remove(0);
+    assert!(request.text.contains("[语音转文字] 你好"));
+    // 转写不写入正文，语音说命令也不会被当成用户键入的命令。
+    assert!(!request.text.starts_with("/"));
+    shutdown.cancel();
+    handle.task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn group_voice_without_mention_does_not_call_platform_asr() {
+    let core = Arc::new(RecordingCore::new("不应回复"));
+    let (handle, _runtime, shutdown) = spawn_server_with_core(test_config(), core.clone()).await;
+    let mut client = connect(handle.local_addr, PATH, TOKEN, Some("10001"))
+        .await
+        .unwrap();
+    client
+        .send(Message::Text(
+            group_message_event(
+                "voice-group-1",
+                json!([{"type": "record", "data": {
+                    "file": "0123456789abcdef0123456789abcdef",
+                    "url": "https://example.test/voice.silk"
+                }}]),
+            )
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(80), client.next())
+            .await
+            .is_err()
+    );
+    assert!(core.requests().is_empty());
+    shutdown.cancel();
+    handle.task.await.unwrap().unwrap();
 }
 
 #[tokio::test]

@@ -116,6 +116,14 @@ pub async fn run_with_application_version(
     );
     // 微信与 QQ 共用 Core；监听器只创建一次，之后统一交给渠道监督器管理生命周期。
     let dedupe = Arc::new(MessageDedupe::new(DEDUPE_TTL));
+    // 平台转录不需要远程客户端；只有配置了远程候选但缺少凭证时才降级提示。
+    let stt_service = crate::stt::SttService::from_config(&config.stt);
+    if config.stt.enabled && config.stt.has_remote_candidates() && stt_service.is_none() {
+        warn!(
+            status = config.stt.status.as_str(),
+            "语音转写已启用但没有可用凭证，远程候选将跳过，仅使用平台转录"
+        );
+    }
     // QQ 官方 REFIDX 与 OneBot message_id 共用同一进程内索引实现，但 key 始终包含
     // platform/account/conversation，平台语义不会相互污染。
     let ref_index = ref_index();
@@ -190,6 +198,7 @@ pub async fn run_with_application_version(
             dedupe,
             ref_index,
             qq_auth.expect("enabled QQ channel should have an auth manager"),
+            stt_service,
         ))),
         QqOfficialBindingState::Unbound => {
             push_sink.mark_qq_official_unavailable("QQ official channel is not bound");
@@ -315,6 +324,7 @@ async fn run_qq_official(
     dedupe: Arc<MessageDedupe>,
     ref_index: SharedRefIndex,
     auth: AccessTokenManager,
+    stt: Option<Arc<crate::stt::SttService>>,
 ) -> anyhow::Result<()> {
     let (app_id, _) = config
         .enabled_qq_official_credentials()
@@ -351,6 +361,7 @@ async fn run_qq_official(
         group_cooldowns.clone(),
         bot_identity.clone(),
         runtime.clone(),
+        stt,
         dispatcher_shutdown,
     );
     let dispatcher_handle = dispatcher.handle();

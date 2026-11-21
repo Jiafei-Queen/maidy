@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use qq_maid_common::command_prefix::CommandPrefix;
-use qq_maid_core::config::VoiceFeatureConfig;
+use qq_maid_core::config::{SttRuntimeConfig, VoiceFeatureConfig};
 use thiserror::Error;
 
 mod managed;
@@ -67,6 +67,8 @@ pub struct AppConfig {
     pub command_prefix: CommandPrefix,
     /// 语音工具与 TTS 试听配置；Provider 实现仍留在 Gateway。
     pub voice: VoiceFeatureConfig,
+    /// 语音转写配置；由 Core 的 `[stt]` 快照注入，默认关闭。
+    pub stt: SttRuntimeConfig,
     /// QQ 官方 Bot 是否启用。凭证成对存在时默认启用，保持旧配置行为。
     pub qq_official_enabled: bool,
     /// QQ 官方 Bot 凭证必须成对存在；`None` 表示渠道未绑定，不使用空串占位。
@@ -402,6 +404,7 @@ impl AppConfig {
         Ok(Self {
             command_prefix,
             voice,
+            stt: SttRuntimeConfig::disabled(),
             qq_official_enabled,
             app_id,
             app_secret,
@@ -443,6 +446,12 @@ impl AppConfig {
         } else {
             QqOfficialBindingState::Disabled
         }
+    }
+
+    /// 注入 Core 已解析的 STT 快照；默认配置保持关闭，避免测试与旧部署隐式外发音频。
+    pub fn with_stt(mut self, stt: SttRuntimeConfig) -> Self {
+        self.stt = stt;
+        self
     }
 
     /// 首次配置完成判定只关心是否至少有一个真实入口可启动，不把默认 enabled 但未绑定

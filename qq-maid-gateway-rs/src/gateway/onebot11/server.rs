@@ -30,6 +30,7 @@ use crate::{
         ref_index::{SharedRefIndex, ref_index},
     },
     respond::RespondClient,
+    stt::SttService,
 };
 
 use super::{
@@ -38,11 +39,15 @@ use super::{
     protocol::{ActionResponse, OneBotEvent, OneBotId},
     scope_dispatcher::{OneBotEnqueueError, OneBotEnqueueOutcome, OneBotScopeDispatcher},
     sender::OneBotSender,
+    voice::OneBotVoiceTranscriber,
 };
 
 const AUTHORIZATION: &str = "authorization";
 const X_SELF_ID: &str = "x-self-id";
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
+/// STT 启用时 `get_record` 的 base64 音频会作为 action response 回到同一 WS；
+/// 传输层单独放宽响应上限，事件帧仍在应用层按 `ONEBOT11_MAX_MESSAGE_BYTES` 校验。
+const STT_ACTION_RESPONSE_MAX_BYTES: usize = 20 * 1024 * 1024;
 
 pub struct OneBotServerHandle {
     pub local_addr: SocketAddr,
@@ -59,6 +64,8 @@ struct ServerState {
     runtime: GatewayRuntimeStatus,
     shutdown: CancellationToken,
     dispatcher: OneBotScopeDispatcher,
+    /// action response 的传输层上限；未启用 STT 时与事件上限一致。
+    action_response_max_bytes: usize,
 }
 
 /// 先完成 bind 再返回，调用方可把 task 纳入 Gateway 顶层监督；客户端连接错误由 Axum
@@ -114,6 +121,21 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
         .context("read OneBot 11 listener address")?;
     let path = config.websocket_path.clone();
     let connection = OneBotConnectionContext::new(config.request_timeout);
+    let stt = SttService::from_config(&app_config.stt);
+    let voice =
+        OneBotVoiceTranscriber::new(connection.clone(), stt, Arc::new(app_config.stt.clone()));
+    let action_response_max_bytes = if app_config.stt.enabled {
+        STT_ACTION_RESPONSE_MAX_BYTES.max(config.max_message_bytes)
+    } else {
+        config.max_message_bytes
+    };
+    if app_config.stt.enabled {
+        info!(
+            action_response_max_bytes,
+            event_max_bytes = config.max_message_bytes,
+            "OneBot 11 语音转写已启用，单独放宽 action response 传输上限"
+        );
+    }
     let dispatcher = OneBotScopeDispatcher::new(
         &app_config,
         OneBotInboundDispatcher::new(
@@ -123,6 +145,7 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
             ref_index,
             commands,
             command_prefix,
+            voice,
         ),
         dedupe,
         &shutdown,
@@ -136,6 +159,7 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
         runtime: runtime.clone(),
         shutdown: shutdown.clone(),
         dispatcher,
+        action_response_max_bytes,
     };
     let app = Router::new()
         .route(&path, get(upgrade_websocket))
@@ -182,7 +206,9 @@ async fn upgrade_websocket(
         },
         None => None,
     };
-    let max_message_bytes = state.config.max_message_bytes;
+    let max_message_bytes = state
+        .action_response_max_bytes
+        .max(state.config.max_message_bytes);
     websocket
         .max_message_size(max_message_bytes)
         .max_frame_size(max_message_bytes)
@@ -335,10 +361,6 @@ async fn handle_message(
             return MessageOutcome::Disconnect("unsupported binary frame");
         }
     };
-    if text.len() > state.config.max_message_bytes {
-        close_socket(socket, close_code::SIZE, "message too large").await;
-        return MessageOutcome::Disconnect("message too large");
-    }
     let value: Value = match serde_json::from_str(text.as_str()) {
         Ok(value) => value,
         Err(_) => {
@@ -347,7 +369,18 @@ async fn handle_message(
             return MessageOutcome::Disconnect("invalid JSON");
         }
     };
-    if value.get("echo").is_some() && value.get("retcode").is_some() {
+    let is_action_response = value.get("echo").is_some() && value.get("retcode").is_some();
+    // 传输层可能因 STT 放宽到 20 MiB；事件帧必须继续按公开配置的 1 MiB 上限拒绝。
+    let limit = if is_action_response {
+        state.action_response_max_bytes
+    } else {
+        state.config.max_message_bytes
+    };
+    if text.len() > limit {
+        close_socket(socket, close_code::SIZE, "message too large").await;
+        return MessageOutcome::Disconnect("message too large");
+    }
+    if is_action_response {
         let response = match serde_json::from_value::<ActionResponse>(value) {
             Ok(response) => response,
             Err(_) => {

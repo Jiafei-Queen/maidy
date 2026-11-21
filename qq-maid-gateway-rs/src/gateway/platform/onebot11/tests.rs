@@ -417,6 +417,67 @@ fn text_image_and_file_segments_preserve_order_and_safe_metadata() {
 }
 
 #[test]
+fn record_segment_maps_to_audio_file_without_local_path() {
+    let inbound = message(inbound_from_event(&event(json!({
+        "self_id": "10001",
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": "20002",
+        "message_id": "voice-1",
+        "message": [
+            {"type": "record", "data": {
+                "file": "0123456789abcdef0123456789abcdef",
+                "url": "https://example.test/voice.silk?token=secret",
+                "file_size": 4096
+            }}
+        ]
+    }))));
+
+    assert!(inbound.text.is_empty());
+    let MessageInputPart::File { media } = &inbound.input_parts[0] else {
+        panic!("expected audio file part");
+    };
+    assert_eq!(media.mime_type.as_deref(), Some("audio/silk"));
+    assert_eq!(
+        media.file_id.as_deref(),
+        Some("0123456789abcdef0123456789abcdef")
+    );
+    assert_eq!(
+        media.remote_url(),
+        Some("https://example.test/voice.silk?token=secret")
+    );
+    assert_eq!(media.local_path, None);
+    assert_eq!(media.status, MediaStatus::Available);
+    // record 的 file 令牌只用于回传 get_record，不进入 Core 可见的 fallback 文案。
+    assert!(!media.file_id.as_deref().unwrap().contains('/'));
+}
+
+#[test]
+fn record_segment_rejects_path_shaped_file_token() {
+    let inbound = message(inbound_from_event(&event(json!({
+        "self_id": "10001",
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": "20002",
+        "message_id": "voice-2",
+        "message": [
+            {"type": "record", "data": {
+                "file": "/root/napcat/voice.silk",
+                "url": "file:///root/napcat/voice.silk"
+            }}
+        ]
+    }))));
+
+    let MessageInputPart::File { media } = &inbound.input_parts[0] else {
+        panic!("expected audio file part");
+    };
+    assert_eq!(media.file_id, None);
+    assert_eq!(media.url, None);
+    assert_eq!(media.local_path, None);
+    assert!(!inbound.input_parts[0].fallback_text().contains("root"));
+}
+
+#[test]
 fn unsafe_local_base64_and_oversized_media_degrade_without_leaking_paths() {
     let inbound = message(inbound_from_event_with_media_limit(
         &event(json!({
