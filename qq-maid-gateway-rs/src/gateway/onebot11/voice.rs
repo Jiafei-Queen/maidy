@@ -1,4 +1,4 @@
-//! OneBot 11 语音转写编排：NapCat 平台转写优先，STT 链回退。
+//! OneBot 11 语音转写编排：按 `[stt]` 候选链执行平台与远程候选。
 //!
 //! 只处理 `record` 段映射出的音频文件；转写文本以 `Transcript` 注入 input parts，
 //! 不写入 `inbound.text`，因此语音不会触发 `/todo` 等命令。日志不记录转写文本、
@@ -11,7 +11,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use qq_maid_common::input_part::{MediaStatus, MessageInputPart, MessageMedia, TextSource};
-use qq_maid_core::config::{ChatScene, SttPlatformAsrMode};
+use qq_maid_core::config::{ChatScene, SttRuntimeConfig, SttStep};
 use serde_json::json;
 use tokio::time::sleep;
 use tracing::{debug, info};
@@ -21,7 +21,7 @@ use crate::{
         onebot11::connection::{OneBotCallError, OneBotConnectionContext},
         platform::{ConversationTarget, InboundMessage, onebot11::RECORD_MEDIA_ID},
     },
-    stt::{SttError, SttService},
+    stt::{SttAudio, SttError, SttService},
 };
 
 const PLATFORM_ASR_RETRY_DELAY: Duration = Duration::from_millis(400);
@@ -42,9 +42,7 @@ struct CapabilityCache {
 pub(super) struct OneBotVoiceTranscriber {
     connection: OneBotConnectionContext,
     stt: Option<Arc<SttService>>,
-    stt_enabled: bool,
-    platform_asr: SttPlatformAsrMode,
-    platform_asr_attempts: u8,
+    config: Arc<SttRuntimeConfig>,
     capabilities: Arc<Mutex<CapabilityCache>>,
 }
 
@@ -52,67 +50,99 @@ impl OneBotVoiceTranscriber {
     pub(super) fn new(
         connection: OneBotConnectionContext,
         stt: Option<Arc<SttService>>,
-        stt_enabled: bool,
-        platform_asr: SttPlatformAsrMode,
-        platform_asr_attempts: u8,
+        config: Arc<SttRuntimeConfig>,
     ) -> Self {
         Self {
             connection,
             stt,
-            stt_enabled,
-            platform_asr,
-            platform_asr_attempts: platform_asr_attempts.max(1),
+            config,
             capabilities: Arc::new(Mutex::new(CapabilityCache::default())),
         }
     }
 
-    /// 是否在语音上启用了任何识别路径；完全关闭时不插入占位，避免改变旧行为提示。
-    fn recognition_enabled(&self) -> bool {
-        self.platform_asr == SttPlatformAsrMode::Auto || self.stt_enabled
-    }
-
     pub(super) async fn apply(&self, inbound: &mut InboundMessage) {
-        if !self.recognition_enabled() {
-            return;
-        }
         let Some((index, media)) = first_voice_media(inbound) else {
             return;
         };
+        let scene = match inbound.conversation {
+            ConversationTarget::Private { .. } => ChatScene::Private,
+            ConversationTarget::Group { .. } => ChatScene::Group,
+            _ => return,
+        };
+        let steps = self.config.steps(scene);
+        if steps.is_empty() {
+            return;
+        }
         if media.status == MediaStatus::SizeExceeded {
             inbound
                 .input_parts
                 .insert(index + 1, failure_placeholder_part());
             return;
         }
-        let scene = match inbound.conversation {
-            ConversationTarget::Private { .. } => ChatScene::Private,
-            ConversationTarget::Group { .. } => ChatScene::Group,
-            _ => return,
-        };
 
-        if self.platform_asr == SttPlatformAsrMode::Auto
-            && let Some(text) = self.platform_transcript(&inbound.message_id).await
-        {
-            inbound
-                .input_parts
-                .insert(index + 1, transcript_part(&text));
-            return;
-        }
-
-        if let Some(stt) = self.stt.as_ref() {
-            match self.stt_transcript(stt, scene, &media).await {
-                Ok(text) => {
-                    inbound
-                        .input_parts
-                        .insert(index + 1, transcript_part(&text));
-                    return;
+        let mut remote_audio: Option<SttAudio> = None;
+        let mut last_error = SttError::NoCandidate;
+        for (chain_index, step) in steps.iter().enumerate() {
+            match step {
+                SttStep::Platform => {
+                    if let Some(text) = self.platform_transcript(&inbound.message_id).await {
+                        inbound
+                            .input_parts
+                            .insert(index + 1, transcript_part(&text));
+                        return;
+                    }
                 }
-                Err(error) => {
-                    debug!(error_class = error.kind(), "OneBot 11 语音 STT 回退失败");
+                SttStep::Remote(candidate) => {
+                    let Some(stt) = self.stt.as_ref() else {
+                        last_error = SttError::NotConfigured;
+                        continue;
+                    };
+                    if remote_audio.is_none() {
+                        match self.load_audio(stt, &media).await {
+                            Ok(audio) => remote_audio = Some(audio),
+                            Err(error) => {
+                                debug!(
+                                    chain_index,
+                                    error_class = error.kind(),
+                                    "OneBot 11 语音音频准备失败"
+                                );
+                                last_error = error;
+                                continue;
+                            }
+                        }
+                    }
+                    let Some(audio) = remote_audio.as_ref() else {
+                        last_error = SttError::DownloadFailed;
+                        continue;
+                    };
+                    match stt
+                        .transcribe_candidate(scene, chain_index, candidate, audio)
+                        .await
+                    {
+                        Ok(text) => {
+                            inbound
+                                .input_parts
+                                .insert(index + 1, transcript_part(&text));
+                            return;
+                        }
+                        Err(error) => {
+                            debug!(
+                                chain_index,
+                                provider = %candidate.provider,
+                                model = %candidate.model,
+                                error_class = error.kind(),
+                                "OneBot 11 语音 STT 候选失败，尝试下一候选"
+                            );
+                            last_error = error;
+                        }
+                    }
                 }
             }
         }
-
+        debug!(
+            error_class = last_error.kind(),
+            "OneBot 11 语音转写候选链全部失败"
+        );
         inbound
             .input_parts
             .insert(index + 1, failure_placeholder_part());
@@ -128,7 +158,7 @@ impl OneBotVoiceTranscriber {
         if self.platform_asr_unsupported() {
             return None;
         }
-        for attempt in 0..self.platform_asr_attempts {
+        for attempt in 0..self.config.platform_asr_attempts.max(1) {
             if attempt > 0 {
                 sleep(PLATFORM_ASR_RETRY_DELAY).await;
             }
@@ -157,7 +187,7 @@ impl OneBotVoiceTranscriber {
                     self.mark_platform_asr_unsupported();
                     info!(
                         source = "platform_asr",
-                        "OneBot 客户端不支持 fetch_ptt_text，后续语音将直接使用 STT"
+                        "OneBot 客户端不支持 fetch_ptt_text，后续语音将跳过平台候选"
                     );
                     return None;
                 }
@@ -171,18 +201,18 @@ impl OneBotVoiceTranscriber {
         }
         debug!(
             source = "platform_asr",
-            attempts = self.platform_asr_attempts,
+            attempts = self.config.platform_asr_attempts,
             "OneBot 11 平台转写未返回可用文本"
         );
         None
     }
 
-    async fn stt_transcript(
+    /// 平台转码优先；同一轮多个远程候选复用同一份音频，避免重复触发 ffmpeg。
+    async fn load_audio(
         &self,
         stt: &SttService,
-        scene: ChatScene,
         media: &MessageMedia,
-    ) -> Result<String, SttError> {
+    ) -> Result<SttAudio, SttError> {
         if let Some(file_token) = media
             .file_id
             .as_deref()
@@ -191,9 +221,7 @@ impl OneBotVoiceTranscriber {
             && !self.get_record_unsupported()
         {
             match self.get_record(file_token).await {
-                Ok(Some(bytes)) => {
-                    return stt.transcribe_bytes(scene, bytes, Some("voice.mp3")).await;
-                }
+                Ok(Some(bytes)) => return stt.prepare_audio(bytes, Some("voice.mp3")),
                 Ok(None) => {}
                 Err(error) => {
                     debug!(
@@ -204,8 +232,8 @@ impl OneBotVoiceTranscriber {
                 }
             }
         }
-        match media.url.as_deref() {
-            Some(url) if !url.trim().is_empty() => stt.transcribe_url(scene, url).await,
+        match media.url.as_deref().map(str::trim) {
+            Some(url) if !url.is_empty() => stt.fetch_audio(url).await,
             _ => Err(SttError::DownloadFailed),
         }
     }

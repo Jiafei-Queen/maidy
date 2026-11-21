@@ -108,6 +108,97 @@ default = ["removed_provider:whisper-1"]
 }
 
 #[test]
+fn platform_candidate_is_accepted_without_real_provider() {
+    let config = parse(
+        r#"
+[stt]
+enabled = true
+[stt.routes]
+default = ["platform:qq", "openai:whisper-1"]
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        config
+            .stt()
+            .routes
+            .default
+            .iter()
+            .map(|model| model.to_request_model())
+            .collect::<Vec<_>>(),
+        ["platform:qq", "openai:whisper-1"]
+    );
+}
+
+#[test]
+fn platform_candidate_rejects_unknown_platform_model() {
+    let error = parse(
+        r#"
+[stt]
+enabled = true
+[stt.routes]
+default = ["platform:wechat"]
+"#,
+    )
+    .unwrap_err();
+    assert!(error.message.contains("only platform:qq"));
+}
+
+#[test]
+fn platform_only_chain_satisfies_enabled_requirement() {
+    let config = parse(
+        r#"
+[stt]
+enabled = true
+[stt.routes]
+default = ["platform:qq"]
+"#,
+    )
+    .unwrap();
+    assert!(config.stt().enabled);
+    assert_eq!(config.stt().routes.default.len(), 1);
+}
+
+#[test]
+fn console_saved_shape_with_legacy_field_off_is_accepted() {
+    let config = parse(
+        r#"
+[stt]
+enabled = false
+platform_asr = "off"
+[stt.routes]
+default = ["platform:qq", "openai:whisper-1"]
+"#,
+    )
+    .unwrap();
+    assert!(!config.stt().enabled);
+    assert_eq!(
+        config
+            .stt()
+            .routes
+            .default
+            .iter()
+            .map(|model| model.to_request_model())
+            .collect::<Vec<_>>(),
+        ["platform:qq", "openai:whisper-1"]
+    );
+}
+
+#[test]
+fn duplicate_platform_candidate_is_rejected() {
+    let error = parse(
+        r#"
+[stt]
+enabled = true
+[stt.routes]
+default = ["platform:qq", "platform:qq"]
+"#,
+    )
+    .unwrap_err();
+    assert!(error.message.contains("duplicate"));
+}
+
+#[test]
 fn stt_candidate_requires_explicit_provider_prefix() {
     let error = parse(
         r#"

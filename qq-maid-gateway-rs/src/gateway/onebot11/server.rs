@@ -122,13 +122,8 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
     let path = config.websocket_path.clone();
     let connection = OneBotConnectionContext::new(config.request_timeout);
     let stt = SttService::from_config(&app_config.stt);
-    let voice = OneBotVoiceTranscriber::new(
-        connection.clone(),
-        stt,
-        app_config.stt.enabled,
-        app_config.stt.platform_asr,
-        app_config.stt.platform_asr_attempts,
-    );
+    let voice =
+        OneBotVoiceTranscriber::new(connection.clone(), stt, Arc::new(app_config.stt.clone()));
     let action_response_max_bytes = if app_config.stt.enabled {
         STT_ACTION_RESPONSE_MAX_BYTES.max(config.max_message_bytes)
     } else {

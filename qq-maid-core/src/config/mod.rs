@@ -26,11 +26,12 @@ mod voice;
 pub use agent::{
     AgentProfileConfig, AgentRuntimeConfig, AgentSceneConfig, ChatScene, KnowledgeRetrievalMode,
     MAX_STT_MAX_AUDIO_BYTES, MAX_STT_MAX_TEXT_CHARS, MAX_STT_PLATFORM_ASR_ATTEMPTS,
-    MAX_STT_TIMEOUT_SECONDS, MIN_STT_MAX_AUDIO_BYTES, ResolvedAgentPolicy, SttPlatformAsrMode,
-    SttRouteChains, SttSettings, ensure_default_agent_config,
+    MAX_STT_TIMEOUT_SECONDS, MIN_STT_MAX_AUDIO_BYTES, PLATFORM_STT_PROVIDER,
+    PLATFORM_STT_QQ_CANDIDATE, PLATFORM_STT_QQ_MODEL, ResolvedAgentPolicy, SttPlatformAsrMode,
+    SttRouteChains, SttSettings, ensure_default_agent_config, is_platform_stt_model,
 };
 pub use managed::managed_config_fields;
-pub use stt::{SttCandidate, SttRouteSet, SttRuntimeConfig, SttRuntimeStatus};
+pub use stt::{SttCandidate, SttRouteSet, SttRuntimeConfig, SttRuntimeStatus, SttStep};
 pub use voice::{
     DEFAULT_OPENAI_TTS_BASE_URL, DEFAULT_OPENAI_TTS_MODEL, DEFAULT_OPENAI_TTS_VOICE,
     DEFAULT_QWEN_TTS_BASE_URL, DEFAULT_QWEN_TTS_MODEL, DEFAULT_QWEN_TTS_VOICE,

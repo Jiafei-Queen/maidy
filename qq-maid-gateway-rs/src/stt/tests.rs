@@ -4,7 +4,7 @@ use std::{
 };
 
 use qq_maid_core::config::{
-    ChatScene, SttCandidate, SttRouteSet, SttRuntimeConfig, SttRuntimeStatus,
+    ChatScene, SttCandidate, SttRouteSet, SttRuntimeConfig, SttRuntimeStatus, SttStep,
 };
 
 use super::{
@@ -23,7 +23,7 @@ fn candidate(provider: &str, model: &str, api_key: Option<&str>) -> SttCandidate
     }
 }
 
-fn config(default: Vec<SttCandidate>) -> SttRuntimeConfig {
+fn config(default: Vec<SttStep>) -> SttRuntimeConfig {
     SttRuntimeConfig {
         enabled: true,
         status: SttRuntimeStatus::Available,
@@ -39,6 +39,15 @@ fn config(default: Vec<SttCandidate>) -> SttRuntimeConfig {
             group: Vec::new(),
         },
     }
+}
+
+fn remote(number: usize, api_key: Option<&str>) -> SttStep {
+    let (provider, model) = if number == 0 {
+        ("openai", "whisper-1")
+    } else {
+        ("bigmodel", "glm-asr-2512")
+    };
+    SttStep::Remote(candidate(provider, model, api_key))
 }
 
 struct ScriptedTransport {
@@ -92,20 +101,41 @@ fn wav_bytes() -> Vec<u8> {
     bytes
 }
 
+/// 按 Core 提供的步骤顺序执行远程候选；平台步骤由各平台 adapter 处理。
+async fn run_chain(
+    service: &SttService,
+    scene: ChatScene,
+    audio: &SttAudio,
+) -> Result<String, SttError> {
+    let mut last_error = SttError::NoCandidate;
+    for (chain_index, step) in service.config().steps(scene).into_iter().enumerate() {
+        let SttStep::Remote(candidate) = step else {
+            continue;
+        };
+        match service
+            .transcribe_candidate(scene, chain_index, &candidate, audio)
+            .await
+        {
+            Ok(text) => return Ok(text),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
 #[tokio::test]
 async fn chain_falls_back_to_next_candidate_on_failure() {
     let transport = ScriptedTransport::new(vec![
         Err(SttError::Status { status: 500 }),
         Ok("你好 世界\n".to_owned()),
     ]);
-    let config = config(vec![
-        candidate("openai", "whisper-1", Some("key-1")),
-        candidate("bigmodel", "glm-asr-2512", Some("key-2")),
-    ]);
+    let config = config(vec![remote(0, Some("key-1")), remote(1, Some("key-2"))]);
     let service = SttService::with_transport(config, transport.clone());
+    let audio = service
+        .prepare_audio(wav_bytes(), Some("voice.wav"))
+        .unwrap();
 
-    let text = service
-        .transcribe_bytes(ChatScene::Private, wav_bytes(), Some("voice.wav"))
+    let text = run_chain(&service, ChatScene::Private, &audio)
         .await
         .unwrap();
 
@@ -122,14 +152,11 @@ async fn all_candidates_fail_returns_last_error_without_fake_text() {
         Err(SttError::Timeout),
         Err(SttError::Status { status: 429 }),
     ]);
-    let config = config(vec![
-        candidate("openai", "whisper-1", Some("key-1")),
-        candidate("bigmodel", "glm-asr-2512", Some("key-2")),
-    ]);
+    let config = config(vec![remote(0, Some("key-1")), remote(1, Some("key-2"))]);
     let service = SttService::with_transport(config, transport);
+    let audio = service.prepare_audio(wav_bytes(), None).unwrap();
 
-    let error = service
-        .transcribe_bytes(ChatScene::Group, wav_bytes(), None)
+    let error = run_chain(&service, ChatScene::Group, &audio)
         .await
         .unwrap_err();
 
@@ -139,14 +166,11 @@ async fn all_candidates_fail_returns_last_error_without_fake_text() {
 #[tokio::test]
 async fn candidate_without_credentials_is_skipped() {
     let transport = ScriptedTransport::new(vec![Ok("可用文本".to_owned())]);
-    let config = config(vec![
-        candidate("openai", "whisper-1", None),
-        candidate("bigmodel", "glm-asr-2512", Some("key")),
-    ]);
+    let config = config(vec![remote(0, None), remote(1, Some("key"))]);
     let service = SttService::with_transport(config, transport.clone());
+    let audio = service.prepare_audio(wav_bytes(), None).unwrap();
 
-    let text = service
-        .transcribe_bytes(ChatScene::Private, wav_bytes(), None)
+    let text = run_chain(&service, ChatScene::Private, &audio)
         .await
         .unwrap();
 
@@ -155,14 +179,29 @@ async fn candidate_without_credentials_is_skipped() {
 }
 
 #[tokio::test]
+async fn platform_step_does_not_call_remote_transport() {
+    let transport = ScriptedTransport::new(vec![Ok("不应调用".to_owned())]);
+    let config = config(vec![SttStep::Platform]);
+    let service = SttService::with_transport(config, transport.clone());
+    let audio = service.prepare_audio(wav_bytes(), None).unwrap();
+
+    let error = run_chain(&service, ChatScene::Private, &audio)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error, SttError::NoCandidate);
+    assert!(transport.calls().is_empty());
+}
+
+#[tokio::test]
 async fn transcript_truncates_on_character_boundary() {
     let transport = ScriptedTransport::new(vec![Ok("一二三四五六".to_owned())]);
-    let mut config = config(vec![candidate("openai", "whisper-1", Some("key"))]);
+    let mut config = config(vec![remote(0, Some("key"))]);
     config.max_text_chars = 3;
     let service = SttService::with_transport(config, transport);
+    let audio = service.prepare_audio(wav_bytes(), None).unwrap();
 
-    let text = service
-        .transcribe_bytes(ChatScene::Private, wav_bytes(), None)
+    let text = run_chain(&service, ChatScene::Private, &audio)
         .await
         .unwrap();
 
@@ -172,16 +211,11 @@ async fn transcript_truncates_on_character_boundary() {
 #[tokio::test]
 async fn silk_audio_is_rejected_before_upload() {
     let transport = ScriptedTransport::new(vec![Ok("不应调用".to_owned())]);
-    let config = config(vec![candidate("openai", "whisper-1", Some("key"))]);
+    let config = config(vec![remote(0, Some("key"))]);
     let service = SttService::with_transport(config, transport.clone());
 
     let error = service
-        .transcribe_bytes(
-            ChatScene::Private,
-            b"\x02#!SILK_V3raw".to_vec(),
-            Some("voice.silk"),
-        )
-        .await
+        .prepare_audio(b"\x02#!SILK_V3raw".to_vec(), Some("voice.silk"))
         .unwrap_err();
 
     assert_eq!(error, SttError::SilkNotSupported);
@@ -191,14 +225,11 @@ async fn silk_audio_is_rejected_before_upload() {
 #[tokio::test]
 async fn oversized_audio_is_rejected_before_upload() {
     let transport = ScriptedTransport::new(vec![Ok("不应调用".to_owned())]);
-    let mut config = config(vec![candidate("openai", "whisper-1", Some("key"))]);
+    let mut config = config(vec![remote(0, Some("key"))]);
     config.max_audio_bytes = 16;
     let service = SttService::with_transport(config, transport.clone());
 
-    let error = service
-        .transcribe_bytes(ChatScene::Private, wav_bytes(), None)
-        .await
-        .unwrap_err();
+    let error = service.prepare_audio(wav_bytes(), None).unwrap_err();
 
     assert_eq!(error, SttError::AudioTooLarge);
     assert!(transport.calls().is_empty());

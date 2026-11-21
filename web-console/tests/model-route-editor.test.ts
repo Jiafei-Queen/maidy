@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addCandidate,
+  appendQuickAddCandidate,
   isMalformedCandidate,
   moveCandidate,
   normalizeCandidates,
@@ -40,6 +41,17 @@ describe("模型路线候选编辑", () => {
     expect(moveCandidate(list, 0, -5)).toEqual(list);
     expect(moveCandidate(list, 1, 99)).toEqual(["a:1", "c:3", "d:4", "b:2"]);
     expect(moveCandidate(list, 0, 0)).toEqual(list);
+  });
+
+  it("快捷候选已存在时不重复添加", () => {
+    expect(appendQuickAddCandidate(["openai:whisper-1"], "platform:qq")).toEqual([
+      "openai:whisper-1",
+      "platform:qq",
+    ]);
+    expect(appendQuickAddCandidate(["platform:qq", "openai:whisper-1"], "platform:qq")).toEqual([
+      "platform:qq",
+      "openai:whisper-1",
+    ]);
   });
 
   it("归一化去除空白与重复并保持顺序", () => {

@@ -9,6 +9,7 @@ import { agentToolDisplayName, agentToolOptions } from "./agent-tool-options.js"
 import {
   AGENT_ROUTE_LABELS,
   CONVERSATION_ROUTE_NAMES,
+  PLATFORM_STT_CANDIDATE,
   SCENE_NAMES,
   STT_ROUTE_LABELS,
   STT_ROUTE_NAMES,
@@ -216,9 +217,9 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
         <section aria-label="转录模型路由" className="flex flex-col gap-5">
           <h3 className="m-0 text-base font-bold">转录模型路由</h3>
           <p className="m-0 text-xs leading-relaxed text-muted">
-            平台自带转写（QQ asr_refer_text / NapCat fetch_ptt_text）按策略优先；失败后按下面的候选链调用
-            OpenAI 兼容的 /audio/transcriptions。STT 提供商复用现有 Provider 连接与凭据，候选格式为
-            provider:model，场景链为空时回退默认链路。
+            QQ 平台转录以 platform:qq 作为普通候选参与排序：点“添加 QQ 平台转录”加入链路，删除该候选即停用；平台候选不需要音频上传，
+            失败后按顺序继续尝试 OpenAI 兼容的 /audio/transcriptions 远程候选。STT 提供商复用现有 Provider 连接与凭据，
+            候选格式为 provider:model，场景链为空时回退默认链路。
           </p>
           <label className="flex items-center gap-2 text-sm text-ink">
             <input
@@ -228,24 +229,9 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
               onChange={(event) => setDraft({ ...draft, stt: { ...draft.stt, enabled: event.target.checked } })}
               className="size-3.5 accent-[var(--console-accent)]"
             />
-            启用语音转写
+            启用远程语音转写（platform:qq 不受影响）
           </label>
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="平台转写策略" id="agent-stt-platform-asr" hint="auto：先试平台转写；off：直接走转录模型">
-              {(props) => (
-                <select
-                  {...props}
-                  disabled={!editable}
-                  value={draft.stt.platformAsr}
-                  onChange={(event) =>
-                    setDraft({ ...draft, stt: { ...draft.stt, platformAsr: event.target.value === "off" ? "off" : "auto" } })}
-                  className={SELECT_CLASS}
-                >
-                  <option value="auto">auto（平台优先）</option>
-                  <option value="off">off（跳过平台转写）</option>
-                </select>
-              )}
-            </Field>
             <Field label="语言（可选）" id="agent-stt-language" hint="留空不发送 language；Whisper 建议填写 zh">
               {(props) => (
                 <Input
@@ -323,6 +309,11 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
               key={routeName}
               label={STT_ROUTE_LABELS[routeName]}
               entityLabel="转录模型"
+              quickAdd={{
+                label: "添加 QQ 平台转录",
+                value: PLATFORM_STT_CANDIDATE,
+                addedLabel: "QQ 平台转录已添加",
+              }}
               candidates={draft.stt.routes[routeName]}
               disabled={!editable}
               onChange={(candidates) =>

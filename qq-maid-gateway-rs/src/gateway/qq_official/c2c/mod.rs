@@ -352,8 +352,7 @@ pub(crate) async fn handle_c2c_message(
     .await;
     super::stt_inbound::apply_voice_transcript(
         stt,
-        config.stt.enabled,
-        config.stt.platform_asr,
+        &config.stt,
         ChatScene::Private,
         &mut message.input_parts,
         &message.attachments,

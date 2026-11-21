@@ -6,9 +6,9 @@
 
 ### Added
 
-* 新增语音输入（STT）：QQ 官方与 OneBot 11 用户语音会先尝试平台自带转写，失败后可回退到 OpenAI 兼容 `/audio/transcriptions` 候选链；候选格式为 `provider:model`，复用现有 Provider 连接与密钥，场景链为空时回退 `default`。
-* `agent.toml` 新增 `[stt]` 配置（开关、平台转写策略、语言、超时、音频与文本上限）与 `default/private/group` 转录路由；控制台把原“模型路由”拆分为“文本模型路由”和“转录模型路由”。
-* OneBot 新增 `record` 段映射与 NapCat `fetch_ptt_text` / `get_record(out_format="mp3")` 编排；启用 STT 时仅放宽 action response 的 WebSocket 传输上限，事件帧默认 1 MiB 不变。
+* 新增语音输入（STT）：QQ 官方与 OneBot 11 的语音转录共用候选链，平台自带转写以保留候选 `platform:qq` 参与排序，其余候选调用 OpenAI 兼容 `/audio/transcriptions`；候选格式为 `provider:model`，复用现有 Provider 连接与密钥，场景链为空时回退 `default`。
+* `agent.toml` 新增 `[stt]` 配置（开关、语言、超时、音频与文本上限）与 `default/private/group` 转录路由；控制台把原“模型路由”拆分为“文本模型路由”和“转录模型路由”，并提供“添加 QQ 平台转录”按钮，已存在时不重复添加。
+* OneBot 新增 `record` 段映射与 NapCat `fetch_ptt_text` / `get_record(out_format="mp3")` 编排；启用远程候选时仅放宽 action response 的 WebSocket 传输上限，事件帧默认 1 MiB 不变。
 * 新增 Exa 与 Firecrawl 独立 Search API 后端：`tools.web_search.backend = "exa" | "firecrawl"`，供 `/查` 与 Agent 搜索使用；密钥通过配置中心 `tools.web_search.exa.api_key` / `tools.web_search.firecrawl.api_key` 或兼容环境变量 `EXA_API_KEY` / `FIRECRAWL_API_KEY` 注入。
 * Exa 支持搜索模式、分类、内容提取、正文最大字符数、缓存时效、域名过滤、用户地区、内容审核和默认时间范围；Firecrawl 支持来源、分类、时间过滤（仅 web 来源）、国家/地区、正文抓取、仅正文、安全搜索和高亮摘要。
 * 控制台新增 Exa / Firecrawl 选项和对应参数表单，独立完整替换动作不会清空其他后端配置。
@@ -26,7 +26,7 @@
 
 ### Compatibility
 
-* 旧 `agent.toml` 没有 `[stt]` 时按“STT 关闭、平台转写 auto”处理；唯一默认行为变化是 OneBot 会探测一次 NapCat `fetch_ptt_text`，不支持时缓存并跳过。旧二进制无法读取含 `[stt]` 的新配置，降级需删除该节。
+* 旧 `agent.toml` 没有 `[stt]` 时按“远程 STT 关闭、平台转写 auto”处理；旧 `platform_asr = "auto"` 且链路没有 `platform:qq` 时，运行时会前置一次平台转写，控制台加载时会把该行为迁移为显式候选，保存时把旧字段写为 `off`。`enabled = false` 只跳过远程候选，`platform:qq` 仍可工作。旧二进制无法读取含 `[stt]` 的新配置，降级需删除该节。
 * 无 SQLite migration 或必填配置迁移；默认 `provider_native` 与已有 Tavily/DeepSeek 配置保持不变。
 * `voice_preferences` 表作为历史 migration 保留但不再读写，已有数据库可安全升级和回滚；升级后旧 `/语音` 偏好不再生效，`/语音` 按未知命令处理。
 * 新装默认 Agent 配置包含 `send_voice`；已有 `agent.toml` 需要手动把 `send_voice` 加入私聊/群聊 `enabled_tools`，且群聊完整 Tool Loop 仍默认关闭。

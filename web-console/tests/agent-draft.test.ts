@@ -74,8 +74,8 @@ describe("Agent 草稿构造", () => {
     expect(draft.scenes.private).toEqual({ toolCallingEnabled: true, enabledTools: ["todo_write", "legacy_tool"] });
     expect(draft.scenes.group.toolCallingEnabled).toBe(false);
     expect(draft.stt.enabled).toBe(false);
-    expect(draft.stt.platformAsr).toBe("auto");
-    expect(draft.stt.routes).toEqual({ default: [], private: [], group: [] });
+    // 旧配置没有 [stt] 时默认 platform_asr=auto，草稿把平台转录迁移为显式候选。
+    expect(draft.stt.routes).toEqual({ default: ["platform:qq"], private: [], group: [] });
   });
 
   it("缺失字段回落默认值", () => {
@@ -187,7 +187,6 @@ describe("Agent 保存契约", () => {
     const draft = createAgentDraft(agent);
     expect(draft.stt).toMatchObject({
       enabled: true,
-      platformAsr: "off",
       language: "zh",
       timeoutSeconds: 45,
       routes: {
@@ -213,6 +212,66 @@ describe("Agent 保存契约", () => {
       { action: "set_stt_route", name: "private", candidates: ["bigmodel:glm-asr-2512"] },
       { action: "set_stt_route", name: "group", candidates: [] },
     ]);
+  });
+
+  it("旧 platform_asr=auto 迁移为显式平台候选且不重复", () => {
+    const agent = agentSnapshot({
+      savedValue: {
+        ...SAVED_VALUE,
+        stt: {
+          enabled: true,
+          platform_asr: "auto",
+          routes: {
+            default: ["openai:whisper-1"],
+            private: ["bigmodel:glm-asr-2512"],
+            group: [],
+          },
+        },
+      },
+    });
+    const draft = createAgentDraft(agent);
+    expect(draft.stt.routes).toEqual({
+      default: ["platform:qq", "openai:whisper-1"],
+      private: ["platform:qq", "bigmodel:glm-asr-2512"],
+      group: [],
+    });
+    const setStt = buildAgentChanges(draft, agent).find(
+      (change) => (change as { action: string }).action === "set_stt",
+    ) as { platform_asr: string };
+    expect(setStt.platform_asr).toBe("off");
+
+    const explicit = createAgentDraft(
+      agentSnapshot({
+        savedValue: {
+          ...SAVED_VALUE,
+          stt: {
+            enabled: true,
+            platform_asr: "auto",
+            routes: { default: ["platform:qq", "openai:whisper-1"], private: [], group: [] },
+          },
+        },
+      }),
+    );
+    expect(explicit.stt.routes.default).toEqual(["platform:qq", "openai:whisper-1"]);
+  });
+
+  it("从所有链删除平台候选后保存 platform_asr=off", () => {
+    const agent = agentSnapshot({
+      savedValue: {
+        ...SAVED_VALUE,
+        stt: {
+          enabled: true,
+          platform_asr: "auto",
+          routes: { default: ["platform:qq"], private: [], group: [] },
+        },
+      },
+    });
+    const draft = createAgentDraft(agent);
+    draft.stt.routes.default = [];
+    const setStt = buildAgentChanges(draft, agent).find(
+      (change) => (change as { action: string }).action === "set_stt",
+    ) as { platform_asr: string };
+    expect(setStt.platform_asr).toBe("off");
   });
 
   it("单场景保存保留该场景其余字段", () => {

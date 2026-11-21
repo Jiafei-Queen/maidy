@@ -11,19 +11,26 @@
 
 本期不做：本地 SILK 解码、内置 ffmpeg、流式转写、频道/微信语音、引用语音的 STT 回退。
 
-## 两层识别
+## 候选链中的平台模型
 
-1. **平台 ASR**：QQ 官方 `asr_refer_text`，OneBot/NapCat `fetch_ptt_text`。免费、无需密钥。
-2. **STT 链**：OpenAI 兼容 `POST /audio/transcriptions`，按 `provider:model` 候选顺序降级。
+平台自带转写不再是一个独立策略开关，而是候选链中的保留模型 `platform:qq`：
 
-`[stt] platform_asr = "auto"` 时先试平台转写；只有空文本或去掉标点后没有实际文字才回退。`"off"` 时跳过平台转写，直接使用 STT 链。一条消息最多跑一次 STT 链。
+1. **`platform:qq`**：QQ 官方 `asr_refer_text`，OneBot/NapCat `fetch_ptt_text`。免费、不需要密钥，也不上传音频。
+2. **远程候选**：OpenAI 兼容 `POST /audio/transcriptions`，按 `provider:model` 顺序降级。
+
+同一条消息只执行一次候选链，命中即停止。平台文本为空或去掉标点后没有实际文字时，继续尝试下一个候选；把 `platform:qq` 放在远程候选之后，就会先调用远程 STT。从链路中删除 `platform:qq` 即停用平台转写。
+
+控制台的“转录模型路由”为每条链路提供“添加 QQ 平台转录”按钮；链路已存在该候选时按钮禁用，不会写入重复项。
+
+`[stt] enabled = false` 只跳过远程候选；`platform:qq` 仍可工作，因为平台文本不会外发音频。`[stt] platform_asr` 仅保留旧配置兼容：没有显式 `platform:qq` 且值为 `"auto"` 时，运行时会在链路前补一次平台转写；`"off"` 不补。控制台保存会统一写入 `"off"`，并只通过候选链表达平台转录。
 
 ## 配置
 
 ```toml
 [stt]
 enabled = false
-platform_asr = "auto"
+# 旧配置兼容字段；新配置统一为 off，平台转录由 platform:qq 候选表达。
+platform_asr = "off"
 language = ""
 timeout_seconds = 30
 platform_asr_attempts = 2
@@ -31,7 +38,7 @@ max_audio_bytes = 10485760
 max_text_chars = 2000
 
 [stt.routes]
-default = ["openai:whisper-1", "bigmodel:glm-asr-2512"]
+default = ["platform:qq", "openai:whisper-1", "bigmodel:glm-asr-2512"]
 private = []
 group = []
 ```
@@ -39,7 +46,8 @@ group = []
 - 场景选择：私聊优先 `private`，群聊优先 `group`；场景链为空时回退 `default`。
 - `enabled = true` 时至少要求 `default` 或某个场景链非空。
 - 候选 Provider 复用内置连接或 `[providers.*]`；只接受 `kind = "openai_compatible"`，`openai_responses` 在保存/启动校验时拒绝。
-- 缺钥匙不阻止启动：状态降级为 `missing_credentials`，只保留平台转写。
+- `platform:qq` 不需要 Provider 声明；其他 `platform:*` 模型会被拒绝。
+- 缺钥匙不阻止启动：状态降级为 `missing_credentials`，远程候选跳过，平台候选仍可用。
 
 ## 音频来源与格式
 
@@ -71,10 +79,10 @@ group = []
 ## 安全与日志
 
 - 群聊语音仍只在 `@` 或引用机器人时处理。
-- 日志只记录 `provider`、`model`、`chain_index`、`duration_ms`、`audio_bytes`、`transcript_chars`、`error_class`。
+- 日志只记录来源、provider、model、chain_index、duration_ms、audio_bytes、transcript_chars、error_class。
 - 不记录转写文本、音频 URL、base64、message_id、openid 或群号。
-- STT 默认关闭；平台 ASR 不会把音频发送到第三方。
+- 远程 STT 默认关闭；`platform:qq` 只使用平台下发的文本，不会把音频发送到第三方。
 
 ## OneBot WebSocket 上限
 
-`ONEBOT11_MAX_MESSAGE_BYTES` 的公开默认值仍是 1 MiB，事件帧继续按该值拒绝。启用 STT 时，传输层只对 **action response** 使用内部 20 MiB 上限，因为 NapCat `get_record` 的 base64 音频会走同一条反向 WebSocket 返回；应用层仍把非 action response 限制在配置值内。
+`ONEBOT11_MAX_MESSAGE_BYTES` 的公开默认值仍是 1 MiB，事件帧继续按该值拒绝。启用远程候选时，传输层只对 **action response** 使用内部 20 MiB 上限，因为 NapCat `get_record` 的 base64 音频会走同一条反向 WebSocket 返回；应用层仍把非 action response 限制在配置值内。

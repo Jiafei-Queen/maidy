@@ -21,8 +21,9 @@ use provider_config::{default_auth_header, default_auth_scheme, provider_from_fi
 use stt::SttConfigFile;
 pub use stt::{
     MAX_STT_MAX_AUDIO_BYTES, MAX_STT_MAX_TEXT_CHARS, MAX_STT_PLATFORM_ASR_ATTEMPTS,
-    MAX_STT_TIMEOUT_SECONDS, MIN_STT_MAX_AUDIO_BYTES, SttPlatformAsrMode, SttRouteChains,
-    SttSettings,
+    MAX_STT_TIMEOUT_SECONDS, MIN_STT_MAX_AUDIO_BYTES, PLATFORM_STT_PROVIDER,
+    PLATFORM_STT_QQ_CANDIDATE, PLATFORM_STT_QQ_MODEL, SttPlatformAsrMode, SttRouteChains,
+    SttSettings, is_platform_stt_model,
 };
 use web_search_config::web_search_from_file;
 pub(in crate::config) use web_search_config::{

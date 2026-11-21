@@ -22,14 +22,33 @@ pub const MAX_STT_MAX_AUDIO_BYTES: u64 = 12 * 1024 * 1024;
 pub const MAX_STT_MAX_TEXT_CHARS: usize = 8000;
 pub const MAX_STT_LANGUAGE_CHARS: usize = 16;
 
-/// 平台自带语音转写（QQ `asr_refer_text` / NapCat `fetch_ptt_text`）的使用策略。
+/// 平台自带转写在转录链路中的保留 Provider 名。
+///
+/// `platform:qq` 不是真实 HTTP Provider：它表示 QQ 官方 `asr_refer_text` 或
+/// OneBot/NapCat `fetch_ptt_text`。使用保留前缀可以继续复用 `provider:model`
+/// 候选格式，同时避免与用户声明的普通 Provider 混淆。
+pub const PLATFORM_STT_PROVIDER: &str = "platform";
+pub const PLATFORM_STT_QQ_MODEL: &str = "qq";
+pub const PLATFORM_STT_QQ_CANDIDATE: &str = "platform:qq";
+
+/// 判断候选是否为 QQ 平台自带转写。
+pub fn is_platform_stt_model(model: &ModelId) -> bool {
+    matches!(
+        model.provider.as_ref(),
+        Some(ModelProvider::Custom(name)) if name == PLATFORM_STT_PROVIDER
+    ) && model.name == PLATFORM_STT_QQ_MODEL
+}
+
+/// 旧版平台自带语音转写策略；新配置使用候选链中的 `platform:qq`。
+///
+/// 该字段仅在链路没有显式平台候选时提供升级兼容，避免旧配置升级后丢失平台转写。
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SttPlatformAsrMode {
-    /// 先尝试平台转写，空结果或失败时再回退 STT 链。
+    /// 旧配置默认值：链路没有 `platform:qq` 时前置一次平台转写。
     #[default]
     Auto,
-    /// 跳过平台转写，直接使用 STT 链。
+    /// 不自动补平台转写；显式 `platform:qq` 候选仍按链路执行。
     Off,
 }
 
@@ -238,7 +257,15 @@ fn parse_candidates(
                 "invalid {location}: transcription candidate must use provider:model"
             )));
         };
-        if validate_providers {
+        // `platform:qq` 是内置平台转写占位，不需要也不允许映射到真实 Provider。
+        if matches!(&provider, ModelProvider::Custom(name) if name == PLATFORM_STT_PROVIDER) {
+            if model.name != PLATFORM_STT_QQ_MODEL {
+                return Err(LlmError::config(format!(
+                    "{location} references unknown platform transcription model `{}`; only {PLATFORM_STT_QQ_CANDIDATE} is supported",
+                    model.name
+                )));
+            }
+        } else if validate_providers {
             match &provider {
                 ModelProvider::OpenAi
                 | ModelProvider::DeepSeek

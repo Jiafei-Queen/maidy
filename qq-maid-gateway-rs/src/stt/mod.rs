@@ -1,7 +1,8 @@
 //! 入站语音转写（STT）。
 //!
 //! 音频只在 Gateway 内存中流转，Core/LLM 只接收转写文本。Provider 复用现有
-//! OpenAI 兼容连接，只实现 `/audio/transcriptions`；平台自带转写由各 adapter 优先尝试。
+//! OpenAI 兼容连接，只实现 `/audio/transcriptions`；平台候选与远程候选的顺序由
+//! 各平台 adapter 按 Core 提供的 `SttStep` 链编排。
 
 use std::{
     future::Future,
@@ -12,7 +13,7 @@ use std::{
 
 use qq_maid_core::config::{ChatScene, SttCandidate, SttRuntimeConfig};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 mod audio;
 mod openai;
@@ -96,9 +97,11 @@ impl std::fmt::Debug for SttService {
 }
 
 impl SttService {
-    /// 仅在 `enabled=true` 且至少一个候选配置了密钥时创建客户端。
+    /// 仅在启用且至少一个远程候选有凭证时创建客户端。
+    ///
+    /// 平台候选不创建 HTTP 客户端；它的调用由各平台 adapter 直接编排。
     pub fn from_config(config: &SttRuntimeConfig) -> Option<Arc<Self>> {
-        if !config.is_usable() {
+        if !config.enabled || !config.has_remote_credentials() {
             return None;
         }
         let client = qq_maid_common::http_client::client();
@@ -125,93 +128,77 @@ impl SttService {
         &self.config
     }
 
-    /// 下载并转写远程音频；下载阶段同样受音频上限与超时约束。
-    pub async fn transcribe_url(&self, scene: ChatScene, url: &str) -> Result<String, SttError> {
-        let audio = audio::download_audio(
+    /// 下载远程音频但暂不上传；同一消息的多个远程候选应复用该结果。
+    pub async fn fetch_audio(&self, url: &str) -> Result<SttAudio, SttError> {
+        audio::download_audio(
             &self.client,
             url,
             self.config.max_audio_bytes,
             self.config.timeout,
         )
-        .await?;
-        self.transcribe_audio(scene, audio).await
+        .await
     }
 
-    /// 转写已在内存中的音频；上传前统一做格式嗅探，避免把 SILK 直接发给服务商。
-    pub async fn transcribe_bytes(
+    /// 校验并准备内存音频；上传前统一做格式嗅探，避免把 SILK 直接发给服务商。
+    pub fn prepare_audio(
         &self,
-        scene: ChatScene,
         bytes: Vec<u8>,
         filename_hint: Option<&str>,
-    ) -> Result<String, SttError> {
-        let audio = audio::audio_from_bytes(bytes, filename_hint, self.config.max_audio_bytes)?;
-        self.transcribe_audio(scene, audio).await
+    ) -> Result<SttAudio, SttError> {
+        audio::audio_from_bytes(bytes, filename_hint, self.config.max_audio_bytes)
     }
 
-    async fn transcribe_audio(
+    /// 执行单个远程候选；调用方负责按链路顺序迭代、跳过平台候选与降级。
+    pub async fn transcribe_candidate(
         &self,
         scene: ChatScene,
-        audio: SttAudio,
+        chain_index: usize,
+        candidate: &SttCandidate,
+        audio: &SttAudio,
     ) -> Result<String, SttError> {
-        let mut last_error = SttError::NoCandidate;
-        for (index, candidate) in self.config.chain(scene).iter().enumerate() {
-            if candidate
-                .api_key
-                .as_deref()
-                .map(str::trim)
-                .unwrap_or_default()
-                .is_empty()
-            {
-                debug!(
+        if candidate
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err(SttError::NotConfigured);
+        }
+        let timeout = candidate.request_timeout(self.config.timeout);
+        let started = Instant::now();
+        match self
+            .transport
+            .transcribe(candidate, audio, self.config.language.as_deref(), timeout)
+            .await
+        {
+            Ok(text) => {
+                let text = clean_transcript(&text, self.config.max_text_chars)?;
+                info!(
+                    scene = scene.as_str(),
                     provider = %candidate.provider,
                     model = %candidate.model,
-                    chain_index = index,
-                    error_class = "missing_credentials",
-                    "STT 候选缺少凭证，已跳过"
+                    chain_index,
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    audio_bytes = audio.bytes.len(),
+                    transcript_chars = text.chars().count(),
+                    "语音转写成功"
                 );
-                continue;
+                Ok(text)
             }
-            let timeout = candidate.request_timeout(self.config.timeout);
-            let started = Instant::now();
-            match self
-                .transport
-                .transcribe(candidate, &audio, self.config.language.as_deref(), timeout)
-                .await
-            {
-                Ok(text) => {
-                    let text = clean_transcript(&text, self.config.max_text_chars)?;
-                    info!(
-                        scene = scene.as_str(),
-                        provider = %candidate.provider,
-                        model = %candidate.model,
-                        chain_index = index,
-                        duration_ms = started.elapsed().as_millis() as u64,
-                        audio_bytes = audio.bytes.len(),
-                        transcript_chars = text.chars().count(),
-                        "语音转写成功"
-                    );
-                    return Ok(text);
-                }
-                Err(error) => {
-                    debug!(
-                        scene = scene.as_str(),
-                        provider = %candidate.provider,
-                        model = %candidate.model,
-                        chain_index = index,
-                        duration_ms = started.elapsed().as_millis() as u64,
-                        error_class = error.kind(),
-                        "STT 候选失败，尝试下一候选"
-                    );
-                    last_error = error;
-                }
+            Err(error) => {
+                debug!(
+                    scene = scene.as_str(),
+                    provider = %candidate.provider,
+                    model = %candidate.model,
+                    chain_index,
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    error_class = error.kind(),
+                    "STT 候选失败"
+                );
+                Err(error)
             }
         }
-        warn!(
-            scene = scene.as_str(),
-            error_class = last_error.kind(),
-            "STT 候选链全部失败"
-        );
-        Err(last_error)
     }
 }
 

@@ -453,8 +453,7 @@ pub(crate) async fn handle_prepared_group_message(
     .await;
     super::stt_inbound::apply_voice_transcript(
         stt,
-        config.stt.enabled,
-        config.stt.platform_asr,
+        &config.stt,
         ChatScene::Group,
         &mut message.input_parts,
         &message.attachments,

@@ -1,60 +1,139 @@
-//! QQ 官方语音的 STT 回退。
+//! QQ 官方语音的转录编排。
 //!
-//! 平台 `asr_refer_text` 仍是第一优先级；只有没有可用平台文本时，才下载
-//! `voice_wav_url`（或原始 URL）并调用 STT 链。转写只注入 input parts，不写入正文。
+//! 平台 `asr_refer_text` 已由事件解析阶段注入；本模块按 `[stt]` 候选链决定是否采用
+//! 平台文本、是否下载 `voice_wav_url` 调用远程 STT。转写只注入 input parts，不写入正文。
 
 use qq_maid_common::input_part::{MessageInputPart, TextSource};
-use qq_maid_core::config::{ChatScene, SttPlatformAsrMode};
+use qq_maid_core::config::{ChatScene, SttRuntimeConfig, SttStep};
 use tracing::debug;
 
-use crate::{gateway::event::Attachment, stt::SttService};
+use crate::{
+    gateway::event::Attachment,
+    stt::{SttAudio, SttError, SttService},
+};
 
 const TRANSCRIPT_PREFIX: &str = "[语音转文字]";
 const FAILED_PLACEHOLDER: &str = "[语音消息：未识别出文字]";
 
-/// 按平台 ASR 策略补齐当前消息的语音转写。
+/// 按候选链补齐当前消息的语音转写。
 ///
-/// - `platform_asr=off`：先移除事件解析阶段注入的平台转写，再走 STT 链。
-/// - `platform_asr=auto`：平台已有转写时不重复上传音频。
+/// 平台文本会先从 input parts 取出，只有链路执行到 `platform:qq` 时才重新注入；
+/// 因此把平台候选放在远程候选之后就真的先调用远程 STT，不会同时留下两份转写。
 pub(super) async fn apply_voice_transcript(
     stt: Option<&SttService>,
-    stt_enabled: bool,
-    platform_asr: SttPlatformAsrMode,
+    config: &SttRuntimeConfig,
     scene: ChatScene,
     input_parts: &mut Vec<MessageInputPart>,
     attachments: &[Attachment],
 ) {
-    let platform_transcript_usable = usable_platform_transcript(input_parts);
-    if platform_asr == SttPlatformAsrMode::Auto && platform_transcript_usable {
+    let platform_text = take_platform_transcript(input_parts);
+    let steps = config.steps(scene);
+    if steps.is_empty() {
         return;
     }
-    if platform_asr == SttPlatformAsrMode::Off || !platform_transcript_usable {
-        // 平台纯标点或空转写不算成功；清理后继续走 STT 链。
-        input_parts.retain(|part| {
-            !matches!(
-                part,
-                MessageInputPart::Text {
-                    source: Some(TextSource::Transcript),
-                    ..
+    let attachment = attachments.iter().find(|attachment| attachment.is_audio());
+    if attachment.is_none() && platform_text.is_none() {
+        return;
+    }
+
+    let mut remote_audio: Option<SttAudio> = None;
+    let mut last_error = SttError::NoCandidate;
+    for (chain_index, step) in steps.iter().enumerate() {
+        match step {
+            SttStep::Platform => {
+                let Some(text) = platform_text
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| usable_platform_text(text))
+                else {
+                    continue;
+                };
+                input_parts.push(transcript_part(text));
+                return;
+            }
+            SttStep::Remote(candidate) => {
+                let Some(stt) = stt else {
+                    last_error = SttError::NotConfigured;
+                    continue;
+                };
+                let Some(attachment) = attachment else {
+                    continue;
+                };
+                if remote_audio.is_none() {
+                    let Some(url) = audio_url(attachment) else {
+                        continue;
+                    };
+                    match stt.fetch_audio(url).await {
+                        Ok(audio) => remote_audio = Some(audio),
+                        Err(error) => {
+                            debug!(
+                                chain_index,
+                                error_class = error.kind(),
+                                "QQ 官方语音音频下载失败"
+                            );
+                            last_error = error;
+                            continue;
+                        }
+                    }
                 }
-            )
-        });
-    }
-    let Some(attachment) = attachments.iter().find(|attachment| attachment.is_audio()) else {
-        return;
-    };
-    // 平台与 STT 都主动关闭时保持旧行为，不额外插入占位提示。
-    if !stt_enabled && platform_asr == SttPlatformAsrMode::Off {
-        return;
-    }
-    let stt = match stt {
-        Some(stt) => stt,
-        None => {
-            input_parts.push(failure_placeholder());
-            return;
+                let Some(audio) = remote_audio.as_ref() else {
+                    last_error = SttError::DownloadFailed;
+                    continue;
+                };
+                match stt
+                    .transcribe_candidate(scene, chain_index, candidate, audio)
+                    .await
+                {
+                    Ok(text) => {
+                        input_parts.push(transcript_part(&text));
+                        return;
+                    }
+                    Err(error) => {
+                        debug!(
+                            chain_index,
+                            provider = %candidate.provider,
+                            model = %candidate.model,
+                            error_class = error.kind(),
+                            "QQ 官方语音 STT 候选失败，尝试下一候选"
+                        );
+                        last_error = error;
+                    }
+                }
+            }
         }
-    };
-    let url = attachment
+    }
+    debug!(error_class = last_error.kind(), "QQ 官方语音候选链全部失败");
+    input_parts.push(failure_placeholder());
+}
+
+/// 取出事件解析阶段注入的平台转写，并从 input parts 移除；后续按链路位置决定是否放回。
+fn take_platform_transcript(input_parts: &mut Vec<MessageInputPart>) -> Option<String> {
+    let mut found = None;
+    input_parts.retain(|part| {
+        let MessageInputPart::Text {
+            text,
+            source: Some(TextSource::Transcript),
+        } = part
+        else {
+            return true;
+        };
+        if found.is_none() {
+            let content = text
+                .strip_prefix(TRANSCRIPT_PREFIX)
+                .unwrap_or(text)
+                .trim()
+                .to_owned();
+            if !content.is_empty() {
+                found = Some(content);
+            }
+        }
+        false
+    });
+    found
+}
+
+fn audio_url(attachment: &Attachment) -> Option<&str> {
+    attachment
         .voice_wav_url
         .as_deref()
         .map(str::trim)
@@ -65,35 +144,18 @@ pub(super) async fn apply_voice_transcript(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-        });
-    let Some(url) = url else {
-        input_parts.push(failure_placeholder());
-        return;
-    };
-    match stt.transcribe_url(scene, url).await {
-        Ok(text) => input_parts.push(MessageInputPart::Text {
-            text: format!("{TRANSCRIPT_PREFIX} {text}"),
-            source: Some(TextSource::Transcript),
-        }),
-        Err(error) => {
-            debug!(error_class = error.kind(), "QQ 官方语音 STT 回退失败");
-            input_parts.push(failure_placeholder());
-        }
-    }
+        })
 }
 
-fn usable_platform_transcript(input_parts: &[MessageInputPart]) -> bool {
-    input_parts.iter().any(|part| {
-        let MessageInputPart::Text {
-            text,
-            source: Some(TextSource::Transcript),
-        } = part
-        else {
-            return false;
-        };
-        let content = text.strip_prefix(TRANSCRIPT_PREFIX).unwrap_or(text).trim();
-        content.chars().any(char::is_alphanumeric)
-    })
+fn usable_platform_text(text: &str) -> bool {
+    text.chars().any(char::is_alphanumeric)
+}
+
+fn transcript_part(text: &str) -> MessageInputPart {
+    MessageInputPart::Text {
+        text: format!("{TRANSCRIPT_PREFIX} {text}"),
+        source: Some(TextSource::Transcript),
+    }
 }
 
 fn failure_placeholder() -> MessageInputPart {
@@ -105,8 +167,15 @@ fn failure_placeholder() -> MessageInputPart {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{sync::Arc, time::Duration};
+
     use qq_maid_common::input_part::{MediaStatus, MessageMedia};
+    use qq_maid_core::config::{
+        SttCandidate, SttPlatformAsrMode, SttRouteSet, SttRuntimeStatus, SttStep,
+    };
+
+    use super::*;
+    use crate::stt::{SttFuture, SttTransport};
 
     fn audio_attachment() -> Attachment {
         Attachment {
@@ -137,6 +206,95 @@ mod tests {
         }
     }
 
+    fn remote_candidate() -> SttCandidate {
+        SttCandidate {
+            provider: "openai".to_owned(),
+            model: "whisper-1".to_owned(),
+            base_url: "https://stt.invalid/v1".to_owned(),
+            api_key: Some("key".to_owned()),
+            auth_header: "Authorization".to_owned(),
+            auth_scheme: Some("Bearer".to_owned()),
+            request_timeout_seconds: None,
+        }
+    }
+
+    fn wav_bytes() -> Vec<u8> {
+        let mut bytes = b"RIFF".to_vec();
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(&[0; 32]);
+        bytes
+    }
+
+    fn config(
+        default: Vec<SttStep>,
+        enabled: bool,
+        platform_asr: SttPlatformAsrMode,
+    ) -> SttRuntimeConfig {
+        SttRuntimeConfig {
+            enabled,
+            status: SttRuntimeStatus::Available,
+            platform_asr,
+            language: Some("zh".to_owned()),
+            timeout: Duration::from_secs(5),
+            platform_asr_attempts: 1,
+            max_audio_bytes: 1024 * 1024,
+            max_text_chars: 2000,
+            routes: SttRouteSet {
+                default,
+                private: Vec::new(),
+                group: Vec::new(),
+            },
+        }
+    }
+
+    struct ScriptedTransport;
+
+    impl SttTransport for ScriptedTransport {
+        fn transcribe<'a>(
+            &'a self,
+            _candidate: &'a SttCandidate,
+            _audio: &'a SttAudio,
+            _language: Option<&'a str>,
+            _timeout: Duration,
+        ) -> SttFuture<'a> {
+            Box::pin(async move { Ok("远程结果".to_owned()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn platform_step_keeps_existing_result() {
+        let mut parts = vec![file_part(), transcript_part()];
+        apply_voice_transcript(
+            None,
+            &config(vec![SttStep::Platform], false, SttPlatformAsrMode::Auto),
+            ChatScene::Private,
+            &mut parts,
+            &[audio_attachment()],
+        )
+        .await;
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].text_content(), Some("[语音转文字] 平台结果"));
+    }
+
+    #[tokio::test]
+    async fn platform_off_without_remote_candidates_drops_transcript() {
+        let mut parts = vec![file_part(), transcript_part()];
+        apply_voice_transcript(
+            None,
+            &config(Vec::new(), false, SttPlatformAsrMode::Off),
+            ChatScene::Group,
+            &mut parts,
+            &[audio_attachment()],
+        )
+        .await;
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0].media_kind(),
+            Some(qq_maid_common::input_part::MediaKind::File)
+        );
+    }
+
     #[tokio::test]
     async fn punctuation_only_platform_transcript_falls_back() {
         let mut parts = vec![
@@ -148,8 +306,7 @@ mod tests {
         ];
         apply_voice_transcript(
             None,
-            false,
-            SttPlatformAsrMode::Auto,
+            &config(vec![SttStep::Platform], false, SttPlatformAsrMode::Auto),
             ChatScene::Private,
             &mut parts,
             &[audio_attachment()],
@@ -157,45 +314,6 @@ mod tests {
         .await;
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[1].text_content(), Some(FAILED_PLACEHOLDER));
-    }
-
-    #[tokio::test]
-    async fn platform_auto_with_transcript_keeps_existing_result() {
-        let mut parts = vec![file_part(), transcript_part()];
-        apply_voice_transcript(
-            None,
-            false,
-            SttPlatformAsrMode::Auto,
-            ChatScene::Private,
-            &mut parts,
-            &[audio_attachment()],
-        )
-        .await;
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[1].text_content(), Some("[语音转文字] 平台结果"));
-    }
-
-    #[tokio::test]
-    async fn platform_off_drops_transcript_and_falls_back_to_placeholder_without_stt() {
-        let mut parts = vec![file_part(), transcript_part()];
-        apply_voice_transcript(
-            None,
-            true,
-            SttPlatformAsrMode::Off,
-            ChatScene::Group,
-            &mut parts,
-            &[audio_attachment()],
-        )
-        .await;
-        assert_eq!(parts.len(), 2);
-        assert_eq!(parts[1].text_content(), Some(FAILED_PLACEHOLDER));
-        assert!(matches!(
-            parts[1],
-            MessageInputPart::Text {
-                source: Some(TextSource::Context),
-                ..
-            }
-        ));
     }
 
     #[tokio::test]
@@ -203,8 +321,7 @@ mod tests {
         let mut parts = vec![file_part()];
         apply_voice_transcript(
             None,
-            false,
-            SttPlatformAsrMode::Auto,
+            &config(Vec::new(), false, SttPlatformAsrMode::Auto),
             ChatScene::Private,
             &mut parts,
             &[audio_attachment()],
@@ -212,6 +329,40 @@ mod tests {
         .await;
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[1].text_content(), Some(FAILED_PLACEHOLDER));
+    }
+
+    #[tokio::test]
+    async fn remote_candidate_before_platform_uses_remote_result() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app =
+            axum::Router::new().route("/voice.wav", axum::routing::get(|| async { wav_bytes() }));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut parts = vec![file_part(), transcript_part()];
+        let mut attachment = audio_attachment();
+        attachment.voice_wav_url = Some(format!("http://{addr}/voice.wav"));
+        let stt = SttService::with_transport(
+            config(
+                vec![SttStep::Remote(remote_candidate()), SttStep::Platform],
+                true,
+                SttPlatformAsrMode::Auto,
+            ),
+            Arc::new(ScriptedTransport),
+        );
+        apply_voice_transcript(
+            Some(&stt),
+            stt.config(),
+            ChatScene::Private,
+            &mut parts,
+            &[attachment],
+        )
+        .await;
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1].text_content(), Some("[语音转文字] 远程结果"));
+        server.abort();
     }
 
     #[tokio::test]
@@ -224,8 +375,7 @@ mod tests {
         };
         apply_voice_transcript(
             None,
-            false,
-            SttPlatformAsrMode::Auto,
+            &config(Vec::new(), false, SttPlatformAsrMode::Auto),
             ChatScene::Private,
             &mut parts,
             &[attachment],
