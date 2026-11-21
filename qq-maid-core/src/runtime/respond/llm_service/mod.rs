@@ -13,7 +13,9 @@ use qq_maid_common::{
     time_context::{RequestTimeContext, request_time_context},
 };
 use qq_maid_llm::{
-    agent_loop::{AgentRunHandle, AgentTextDeltaSink, ToolLoopProgressSink},
+    agent_loop::{
+        AgentRunHandle, AgentTextDeltaSink, DynAgentInterjectionSource, ToolLoopProgressSink,
+    },
     context_budget::{
         BudgetItem, BudgetItemKind, ContextBudgetConfig, apply_context_budget,
         estimated_json_chars, log_budget_report,
@@ -198,13 +200,14 @@ impl LlmChatService {
             agent: Default::default(),
         };
         log_llm_request_completed(&req, &outcome, &cache_diagnostics);
-        output_from_raw_reply(&req, raw_reply, outcome, &self.bot_display_name)
+        output_from_raw_reply(&req, raw_reply, outcome, &self.bot_display_name, false)
     }
 
     /// 使用 provider 原生 Tool Calling 执行普通聊天。
     ///
     /// 该入口只用于私聊普通聊天；命令、pending、群聊和内部结构化任务仍走既有路径，
     /// 避免 Tool Loop 绕过原有业务边界。
+    #[allow(clippy::too_many_arguments)]
     pub async fn respond_with_tools(
         &self,
         req: RespondRequest,
@@ -213,6 +216,8 @@ impl LlmChatService {
         progress_sink: Option<ToolLoopProgressSink>,
         final_delta_sink: Option<AgentTextDeltaSink>,
         run_handle: Option<AgentRunHandle>,
+        allow_empty_final_answer: bool,
+        interjections: Option<DynAgentInterjectionSource>,
     ) -> Result<RespondOutput, LlmError> {
         let messages = self.build_messages_for_request(&req)?;
         trace_chat_messages(&req, &messages);
@@ -228,6 +233,8 @@ impl LlmChatService {
                     progress_sink,
                     final_delta_sink,
                     run_handle,
+                    allow_empty_final_answer,
+                    interjections,
                 })
                 .await?
         } else {
@@ -235,7 +242,13 @@ impl LlmChatService {
         };
         log_llm_request_completed(&req, &outcome, &cache_diagnostics);
         let raw_reply = outcome.reply.trim().to_owned();
-        output_from_raw_reply(&req, raw_reply, outcome, &self.bot_display_name)
+        output_from_raw_reply(
+            &req,
+            raw_reply,
+            outcome,
+            &self.bot_display_name,
+            allow_empty_final_answer,
+        )
     }
 }
 
@@ -281,7 +294,7 @@ impl ChatService for LlmChatService {
         let outcome = self.provider.chat(chat_req).await?;
         log_llm_request_completed(&req, &outcome, &cache_diagnostics);
         let raw_reply = outcome.reply.trim().to_owned();
-        output_from_raw_reply(&req, raw_reply, outcome, &self.bot_display_name)
+        output_from_raw_reply(&req, raw_reply, outcome, &self.bot_display_name, false)
     }
 }
 
@@ -290,6 +303,7 @@ fn output_from_raw_reply(
     raw_reply: String,
     outcome: ChatOutcome,
     bot_display_name: &str,
+    allow_empty_reply: bool,
 ) -> Result<RespondOutput, LlmError> {
     let parsed_reply = parse_agent_reply(raw_reply, &outcome.agent);
     let raw_reply = parsed_reply.reply;
@@ -305,6 +319,10 @@ fn output_from_raw_reply(
         RespondPurpose::Chat => {
             if raw_reply.is_empty() && has_media {
                 ("图片已生成。".to_owned(), String::new(), None)
+            } else if raw_reply.is_empty() && allow_empty_reply {
+                // 本轮用户可见内容已经由 send_message 等副作用 Tool 交付，
+                // 空最终文本是预期结果，不能伪造“没整理出回复”的兜底。
+                (String::new(), String::new(), None)
             } else if raw_reply.is_empty() {
                 let fallback =
                     format!("唔，{bot_display_name}刚刚没整理出可用回复。可以再说一次。");

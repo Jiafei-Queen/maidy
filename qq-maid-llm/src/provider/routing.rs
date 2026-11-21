@@ -341,6 +341,8 @@ impl LlmProvider for ModelRouteProvider {
                             visible_final_delta_sent.clone(),
                         ),
                         run_handle: Some(run_handle.clone()),
+                        allow_empty_final_answer: req.allow_empty_final_answer,
+                        interjections: req.interjections.clone(),
                     })
                     .await
             } else {

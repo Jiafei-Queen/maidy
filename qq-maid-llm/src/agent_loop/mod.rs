@@ -45,13 +45,16 @@ pub(super) mod streaming;
 pub mod types;
 
 pub(crate) use diagnostics::{log_input_size_after_append, tool_result_chars};
-pub use runner::{run_agent_loop, run_agent_loop_with_handle};
+pub use runner::{
+    run_agent_loop, run_agent_loop_with_handle, run_agent_loop_with_handle_and_interjections,
+};
 pub use session::{AgentInputSizeEstimate, AgentStepSession, AgentStreamingDiagnostics};
 pub use types::{
-    AgentRunDiagnostics, AgentRunHandle, AgentSessionRequest, AgentStep, AgentStopReason,
-    AgentTextDeltaDelivery, AgentTextDeltaFuture, AgentTextDeltaSink, AgentToolCall,
-    AgentToolResult, ToolExecutionAttempt, ToolExecutionResult, ToolLoopProgressEvent,
-    ToolLoopProgressFuture, ToolLoopProgressSink,
+    AgentInterjectionSource, AgentRunDiagnostics, AgentRunHandle, AgentSessionRequest, AgentStep,
+    AgentStopReason, AgentTextDeltaDelivery, AgentTextDeltaFuture, AgentTextDeltaSink,
+    AgentToolCall, AgentToolResult, DynAgentInterjectionSource, ToolExecutionAttempt,
+    ToolExecutionResult, ToolLoopProgressEvent, ToolLoopProgressFuture, ToolLoopProgressSink,
+    USER_INTERJECTION_PREFIX,
 };
 
 #[cfg(test)]

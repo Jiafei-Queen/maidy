@@ -92,6 +92,10 @@ pub struct AgentRunDiagnostics {
     pub executed_tools: Vec<String>,
     /// 已实际开始执行且可能修改外部状态的工具名。
     pub side_effecting_tools_started: Vec<String>,
+    /// 已从 Gateway/Core 接收并注入模型的用户插话条数。
+    pub interjections_received: usize,
+    /// 已真正进入下一轮模型输入的插话条数。
+    pub interjections_injected: usize,
     /// 已经明确完成的工具执行摘要，包含成功结果和结构化失败结果。
     pub tool_results: Vec<ToolExecutionResult>,
     /// 与 `tool_results` 按结果下标对应的内部尝试关系；不序列化到公共诊断 JSON。
@@ -687,3 +691,31 @@ pub struct AgentSessionRequest<'a> {
     /// 不负责执行。
     pub tools: &'a ToolRegistry,
 }
+
+/// 回合内用户插话的文本前缀。
+///
+/// Gateway/Core 只提供原始用户文本；统一标记由 Agent Loop 添加，Provider
+/// 负责把它作为一条普通 user 消息追加到协议上下文。
+pub const USER_INTERJECTION_PREFIX: &str = "[任务处理期间用户插话]";
+
+/// 回合内用户插话来源。
+///
+/// Agent Loop 只在“工具结果已经形成、下一次模型调用之前”以及最终回答收尾前
+/// 调用 [`drain`](Self::drain)。实现必须是同步、非阻塞的：插话由 Gateway worker
+/// 在另一条任务中投递，不能在这里等待网络或用户输入。
+pub trait AgentInterjectionSource: Send + Sync {
+    /// 取走自上次调用以来累积的插话；没有插话时返回空。
+    fn drain(&self) -> Vec<String>;
+
+    /// 把已经取走但最终没有进入模型输入的插话退回来源。
+    ///
+    /// 回合因超时、取消、最大轮数等原因在注入前结束时会调用；实现方必须保存这些
+    /// 文本供 Core 记录，不能静默丢弃。默认实现不做任何事。
+    fn requeue(&self, _texts: Vec<String>) {}
+
+    /// 回合进入收尾后拒绝新的插话。默认实现不做任何事。
+    fn close(&self) {}
+}
+
+/// 线程安全的插话来源指针。
+pub type DynAgentInterjectionSource = Arc<dyn AgentInterjectionSource>;

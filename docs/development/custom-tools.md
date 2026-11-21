@@ -19,6 +19,8 @@
 
 第 5 步容易漏：当前 `agent.toml` 会校验工具名，未加入 `ALL_ENABLED_TOOL_NAMES` 的工具即使写进配置也会启动失败。工具是否对私聊或群聊开放不由代码默认值决定，必须在 `runtime/config/agent.example.toml` 对应 Scene 的 `enabled_tools` 中显式配置。
 
+`send_message` 是唯一例外：它是 Agent 主动发言的基础设施，由 Core 在过滤后无条件注册，不需要写进 `enabled_tools`；业务 Tool 不要仿照它绕过白名单。
+
 这 6 步只是最小注册链路。工具若包含持久化、确认、用户可见编号、主动通知或跨存储副作用，还必须补充领域操作、pending、回执和可见实体等接入，不能把真实业务完成状态交给模型自由描述。
 
 ## 当前调用链
@@ -26,12 +28,12 @@
 实际运行时不是“写了 Tool 模型就能直接调”，而是下面这条链路：
 
 1. `qq-maid-core/src/runtime/respond/tool_runtime.rs` 启动时构造服务端全量 `ToolRegistry`。
-2. 每次普通纯文本 Agent Chat 调用前，`ToolRuntime::registry_for_chat()` 根据路由模式读取场景白名单：完整 Agent 使用 `policy.enabled_tools` 并应用 Todo 恢复等请求级策略；默认群聊受限模式只选取 `save_memory` 和可用的 `send_voice`。
+2. 每次普通纯文本 Agent Chat 调用前，`ToolRuntime::registry_for_chat()` 根据路由模式读取场景白名单：完整 Agent 使用 `policy.enabled_tools` 并应用 Todo 恢复等请求级策略；默认群聊受限模式只选取 `save_memory`、可用的 `send_voice` 等明确受限工具。`send_message` 属于基础设施 Tool，会在所有过滤之后无条件加入，不受白名单和受限模式影响。
 3. `ToolRegistry::subset()` 只保留本轮实际允许的工具；未注册、未在场景白名单里或被请求级策略禁用的工具对模型不可见。
 4. Todo 这类需要用户可见编号和引用恢复的工具，会在 `replace_scoped_tools_from_request()` 中替换成带当前请求快照的受限实例；语音工具也会替换成绑定当前会话投递目标的实例。
 5. LLM crate 只负责 Tool Loop 协议和执行注册表里的 Tool，不知道 Todo、RSS 或服务器命令的业务规则。
 
-默认文件也按这个链路生效：私聊 Scene 显式设置 `tool_calling_enabled = true` 并列出白名单；群聊 Scene 设置为 `false` 时关闭完整白名单 Tool Loop，但若场景白名单包含 `save_memory` 或 `send_voice`，会进入只暴露这两个受限 Tool 的模式。是否调用由模型按 Tool 描述判断；真实 actor、会话范围、管理员权限、敏感信息、群画像 opt-out、语音发送结果和写入结果仍由服务端校验。
+默认文件也按这个链路生效：私聊 Scene 显式设置 `tool_calling_enabled = true` 并列出白名单；群聊 Scene 设置为 `false` 时关闭完整白名单 Tool Loop，但若场景白名单包含 `save_memory` 或 `send_voice`，会进入受限 Tool 模式。只要 Gateway 注入了会话发送能力，受限模式也会额外暴露 `send_message`。是否调用由模型按 Tool 描述判断；真实 actor、会话范围、管理员权限、敏感信息、群画像 opt-out、语音发送结果和写入结果仍由服务端校验。
 
 ## Agent Chat 语义提示和后处理接入
 

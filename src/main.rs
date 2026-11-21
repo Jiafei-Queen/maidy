@@ -171,6 +171,9 @@ async fn run() -> anyhow::Result<()> {
     .with_voice_preview(Arc::new(GatewayVoicePreview::new()))
     .with_voice_sink(Some(
         Arc::new(push_sink.clone()) as qq_maid_core::runtime::tools::voice::DynVoiceSendSink
+    ))
+    .with_chat_send_sink(Some(
+        Arc::new(push_sink.clone()) as qq_maid_core::runtime::tools::message::DynChatSendSink
     ));
     let core_handle = core_runtime.core_handle();
     let (core_shutdown_tx, core_shutdown_rx) = oneshot::channel::<()>();

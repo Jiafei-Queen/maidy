@@ -34,6 +34,7 @@ use super::super::{
     group_filter::GroupCooldowns,
     logging::mask_scope_key,
     ping::GatewayRuntimeStatus,
+    platform,
     qq_official::{c2c::handle_c2c_message, group::handle_prepared_group_message},
     ref_index::SharedRefIndex,
 };
@@ -50,11 +51,19 @@ use crate::{api::QqApiClient, config::AppConfig, respond::RespondClient, stt::St
 
 pub(super) type HandlerFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 
+/// 尝试把新消息注入当前正在执行的 Agent 回合；返回 false 表示应回落到 backlog。
+pub(super) type SteerFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
 /// 统一的入站消息处理抽象，便于在 actor 与 worker 之间解耦，也便于测试注入
 /// `RecordingHandler`。真实实现是 `RealMessageHandler`，转发到 gateway 的
 /// `handle_c2c_message` / `handle_group_message`。
 pub(super) trait MessageHandler: Send + Sync {
     fn handle<'a>(&'a self, message: InboundEnvelope) -> HandlerFuture<'a>;
+
+    /// 默认不支持回合内插话；测试 handler 和确定性入口无需实现。
+    fn steer<'a>(&'a self, _message: &'a InboundEnvelope) -> SteerFuture<'a> {
+        Box::pin(async { false })
+    }
 }
 
 pub(super) struct RealMessageHandler {
@@ -138,6 +147,62 @@ impl MessageHandler for RealMessageHandler {
             }
         })
     }
+
+    fn steer<'a>(&'a self, message: &'a InboundEnvelope) -> SteerFuture<'a> {
+        Box::pin(async move {
+            match message {
+                InboundEnvelope::C2c(message) => {
+                    if !is_plain_text_steerable(
+                        &message.content,
+                        &message.input_parts,
+                        message.attachments.len(),
+                    ) {
+                        return false;
+                    }
+                    let inbound = platform::qq_official::inbound_from_c2c(message);
+                    self.respond
+                        .try_steer_inbound(&inbound, message.content.clone())
+                        .await
+                }
+                InboundEnvelope::Group(prepared) => {
+                    if !is_plain_text_steerable(
+                        &prepared.respond_content,
+                        &prepared.message.input_parts,
+                        prepared.message.attachments.len(),
+                    ) {
+                        return false;
+                    }
+                    let inbound = platform::qq_official::inbound_from_group(&prepared.message);
+                    self.respond
+                        .try_steer_inbound(&inbound, prepared.respond_content.clone())
+                        .await
+                }
+            }
+        })
+    }
+}
+
+/// steering 只接受纯文本普通聊天；命令、媒体和附件继续排队，避免绕过确定性
+/// 命令、pending 和文件处理边界。
+fn is_plain_text_steerable(
+    content: &str,
+    input_parts: &[qq_maid_common::input_part::MessageInputPart],
+    attachment_count: usize,
+) -> bool {
+    let trimmed = content.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('／')
+        || attachment_count > 0
+    {
+        return false;
+    }
+    input_parts.iter().all(|part| {
+        matches!(
+            part,
+            qq_maid_common::input_part::MessageInputPart::Text { .. }
+        )
+    })
 }
 
 pub(super) struct DispatcherActor {

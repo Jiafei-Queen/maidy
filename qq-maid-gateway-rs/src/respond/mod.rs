@@ -180,6 +180,31 @@ impl RespondClient {
         Ok(output)
     }
 
+    /// 尝试把一条普通文本消息注入 Core 当前 Agent 回合。
+    ///
+    /// 映射失败、回合不存在或回合已进入收尾时返回 false，由 dispatcher 回落到
+    /// 下一轮队列，不能静默丢弃用户消息。
+    pub(crate) async fn try_steer_inbound(
+        &self,
+        inbound: &platform::InboundMessage,
+        content: String,
+    ) -> bool {
+        let request =
+            match platform::to_core_request(&self.prepare_inbound(inbound.clone()), content) {
+                Ok(request) => request,
+                Err(error) => {
+                    warn!(
+                        message_id = %inbound.message_id,
+                        platform = %inbound.platform.as_str(),
+                        error = %error,
+                        "Core 插话入站消息转换失败"
+                    );
+                    return false;
+                }
+            };
+        self.core.try_steer(request).await
+    }
+
     pub(crate) async fn classify_inbound(
         &self,
         inbound: &platform::InboundMessage,

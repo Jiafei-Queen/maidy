@@ -16,6 +16,7 @@ pub(crate) struct TestToolCallingOptions {
     pub(crate) knowledge_mode: Option<crate::config::KnowledgeRetrievalMode>,
     pub(crate) voice_enabled: bool,
     pub(crate) voice_sink: Option<crate::runtime::tools::voice::DynVoiceSendSink>,
+    pub(crate) chat_send_sink: Option<crate::runtime::tools::message::DynChatSendSink>,
 }
 
 pub(crate) fn test_service() -> RustRespondService {
@@ -323,6 +324,67 @@ impl crate::runtime::tools::voice::VoiceSendSink for TestVoiceSink {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct TestChatSendSink {
+    calls: std::sync::Mutex<Vec<crate::runtime::tools::message::ChatSendIntent>>,
+}
+
+impl TestChatSendSink {
+    pub(crate) fn calls(&self) -> Vec<crate::runtime::tools::message::ChatSendIntent> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::runtime::tools::message::ChatSendSink for TestChatSendSink {
+    async fn send_messages(
+        &self,
+        intent: crate::runtime::tools::message::ChatSendIntent,
+    ) -> Result<
+        crate::runtime::tools::message::ChatSendResult,
+        crate::runtime::tools::message::ChatSendError,
+    > {
+        let sent = intent
+            .messages
+            .iter()
+            .enumerate()
+            .map(
+                |(index, text)| crate::runtime::tools::message::SentChatMessage {
+                    text: text.clone(),
+                    message_id: Some(format!("test-message-{index}")),
+                },
+            )
+            .collect();
+        self.calls.lock().unwrap().push(intent);
+        Ok(crate::runtime::tools::message::ChatSendResult { sent })
+    }
+}
+
+pub(crate) fn test_service_with_provider_and_message_tool(
+    provider: MockProvider,
+    group_enabled_tools: Option<Vec<String>>,
+) -> (RustRespondService, std::sync::Arc<TestChatSendSink>) {
+    let sink = std::sync::Arc::new(TestChatSendSink::default());
+    let (service, _) = test_service_with_provider_base_title_query_weather_train_models_and_options(
+        provider,
+        None,
+        Arc::new(MockWebSearchExecutor),
+        Arc::new(MockWeatherExecutor::new()),
+        Arc::new(MockTrainExecutor::new()),
+        TestModelOptions::default(),
+        TestToolCallingOptions {
+            enabled: true,
+            group_enabled: false,
+            group_enabled_tools,
+            voice_enabled: false,
+            voice_sink: None,
+            chat_send_sink: Some(sink.clone()),
+            ..TestToolCallingOptions::default()
+        },
+    );
+    (service, sink)
+}
+
 pub(crate) fn test_service_with_provider_base_title_query_weather_train_models_and_options(
     provider: MockProvider,
     title_model: Option<String>,
@@ -353,6 +415,7 @@ pub(crate) fn test_service_with_provider_base_title_query_weather_train_models_a
             train_executor,
             radar_executor: Arc::new(MockRadarExecutor::new()),
             voice_sink: tool_calling.voice_sink.clone(),
+            chat_send_sink: tool_calling.chat_send_sink.clone(),
         },
         RespondStores {
             memory_store: MemoryStore::new(database.clone()),

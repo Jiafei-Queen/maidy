@@ -109,6 +109,9 @@ const ALL_ENABLED_TOOL_NAMES: &[&str] = &[
     "merge_todos",
     "save_memory",
     "send_voice",
+    // `send_message` 由 Agent Runtime 无条件注册；列入已知工具集合只是允许
+    // 配置文件显式书写它，不代表它受白名单控制。
+    "send_message",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

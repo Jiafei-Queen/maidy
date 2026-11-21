@@ -23,9 +23,9 @@ pub(super) const WECHAT_CUSTOMER_REQUEST_TIMEOUT: Duration = Duration::from_secs
 ///
 /// 该限制来自微信公众平台客服接口的文本消息约定；它不是 JSON 请求体的字符数，
 /// 也不是 Rust `str::chars().count()` 的结果。
-pub(super) const WECHAT_CUSTOMER_TEXT_MAX_BYTES: usize = 2048;
+pub(crate) const WECHAT_CUSTOMER_TEXT_MAX_BYTES: usize = 2048;
 
-pub(super) fn build_customer_messenger(
+pub(crate) fn build_customer_messenger(
     config: &WechatServiceConfig,
 ) -> Option<Arc<dyn WechatCustomerMessenger>> {
     let (Some(app_id), Some(app_secret)) = (config.app_id.as_ref(), config.app_secret.as_ref())
@@ -41,7 +41,7 @@ pub(super) fn build_customer_messenger(
 }
 
 #[async_trait]
-pub(super) trait WechatCustomerMessenger: Send + Sync {
+pub(crate) trait WechatCustomerMessenger: Send + Sync {
     async fn send_text(&self, touser: &str, text: &str) -> Result<(), WechatCustomerMessageError>;
 }
 
@@ -62,7 +62,7 @@ struct CachedWechatAccessToken {
 }
 
 #[derive(Debug, Error)]
-pub(super) enum WechatCustomerMessageError {
+pub(crate) enum WechatCustomerMessageError {
     #[error("WeChat API request failed: {0}")]
     Http(#[from] reqwest::Error),
     #[error("WeChat API request timed out")]

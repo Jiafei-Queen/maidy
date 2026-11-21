@@ -27,6 +27,14 @@ pub trait CoreService: Send + Sync {
 
     async fn upstream_check(&self) -> Result<(), CoreError>;
 
+    /// 把一条普通文本消息注入当前会话正在运行的 Agent 回合。
+    ///
+    /// 返回 false 表示没有可接收的回合，Gateway 应把消息回落到下一轮队列。
+    /// 默认实现保持旧 mock / 只读实现兼容。
+    async fn try_steer(&self, _request: CoreRequest) -> bool {
+        false
+    }
+
     fn health_snapshot(&self) -> CoreHealthSnapshot;
 }
 

@@ -33,8 +33,8 @@ use futures::{Stream, StreamExt, stream};
 
 use crate::{
     agent_loop::{
-        AgentSessionRequest, AgentStepSession, AgentTextDeltaSink, ToolLoopProgressSink,
-        run_agent_loop_with_handle,
+        AgentSessionRequest, AgentStepSession, AgentTextDeltaSink, DynAgentInterjectionSource,
+        ToolLoopProgressSink, run_agent_loop_with_handle_and_interjections,
     },
     config::{LlmConfig, ProviderMode},
     error::LlmError,
@@ -102,6 +102,12 @@ pub struct ToolChatRequest {
     pub final_delta_sink: Option<AgentTextDeltaSink>,
     /// 与 Core 共享的 Agent 轨迹和取消边界。
     pub run_handle: Option<AgentRunHandle>,
+    /// 是否允许最终回答为空。
+    ///
+    /// 仅当本轮用户可见内容已经由 `send_message` 等副作用 Tool 交付时开启。
+    pub allow_empty_final_answer: bool,
+    /// 回合内用户插话来源；未传入时保持旧行为。
+    pub interjections: Option<DynAgentInterjectionSource>,
 }
 
 /// Provider 已适配的 Tool Calling 协议类型。
@@ -179,6 +185,8 @@ pub trait LlmProvider: Send + Sync {
             progress_sink,
             final_delta_sink,
             run_handle,
+            allow_empty_final_answer,
+            interjections,
         } = req;
         let run_handle = run_handle.unwrap_or_default();
         let attempt_baseline = run_handle.ensure_candidate_attempt()?;
@@ -199,8 +207,9 @@ pub trait LlmProvider: Send + Sync {
             }
         };
         match session {
-            Some(session) => {
-                run_agent_loop_with_handle(
+            Some(mut session) => {
+                session.set_allow_empty_final_answer(allow_empty_final_answer);
+                run_agent_loop_with_handle_and_interjections(
                     session,
                     tools,
                     tool_context,
@@ -208,6 +217,7 @@ pub trait LlmProvider: Send + Sync {
                     progress_sink,
                     final_delta_sink,
                     Some(run_handle),
+                    interjections,
                 )
                 .await
             }

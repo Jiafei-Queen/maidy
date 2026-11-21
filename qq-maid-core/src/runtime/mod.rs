@@ -13,6 +13,7 @@ pub mod prompt;
 pub mod push;
 pub mod respond;
 pub mod session;
+pub mod steering;
 pub mod tools;
 pub mod translation;
 pub mod visible_entity;

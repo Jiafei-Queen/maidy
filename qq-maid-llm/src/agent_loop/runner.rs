@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 use crate::{
     agent_loop::{
         AgentRunDiagnostics, AgentRunHandle, AgentStopReason, AgentTextDeltaSink,
-        ToolLoopProgressSink, tool_result_chars,
+        DynAgentInterjectionSource, ToolLoopProgressSink, tool_result_chars,
     },
     error::LlmError,
     metrics::MetricsRecorder,
@@ -74,6 +74,31 @@ pub async fn run_agent_loop_with_handle(
     final_delta_sink: Option<AgentTextDeltaSink>,
     run_handle: Option<AgentRunHandle>,
 ) -> Result<ChatOutcome, LlmError> {
+    run_agent_loop_with_handle_and_interjections(
+        session,
+        tools,
+        tool_context,
+        max_rounds,
+        progress_sink,
+        final_delta_sink,
+        run_handle,
+        None,
+    )
+    .await
+}
+
+/// 运行统一 Agent Loop，并允许 Core 在工具结果之后注入用户插话。
+#[allow(clippy::too_many_arguments)]
+pub async fn run_agent_loop_with_handle_and_interjections(
+    session: Box<dyn AgentStepSession + Send>,
+    tools: ToolRegistry,
+    tool_context: ToolContext,
+    max_rounds: usize,
+    progress_sink: Option<ToolLoopProgressSink>,
+    final_delta_sink: Option<AgentTextDeltaSink>,
+    run_handle: Option<AgentRunHandle>,
+    interjections: Option<DynAgentInterjectionSource>,
+) -> Result<ChatOutcome, LlmError> {
     run_agent_loop_with_timeouts(
         session,
         tools,
@@ -82,6 +107,7 @@ pub async fn run_agent_loop_with_handle(
         progress_sink,
         final_delta_sink,
         run_handle,
+        interjections,
         AGENT_STREAMING_FIRST_ACTIVITY_TIMEOUT,
         AGENT_NON_STREAM_STEP_TIMEOUT,
     )
@@ -97,6 +123,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
     progress_sink: Option<ToolLoopProgressSink>,
     final_delta_sink: Option<AgentTextDeltaSink>,
     run_handle: Option<AgentRunHandle>,
+    interjections: Option<DynAgentInterjectionSource>,
     streaming_timeout: Duration,
     non_stream_timeout: Duration,
 ) -> Result<ChatOutcome, LlmError> {
@@ -129,6 +156,9 @@ pub(super) async fn run_agent_loop_with_timeouts(
     let mut emitted_tools = Vec::new();
     let mut fallback_used = false;
     let mut force_finalization_without_tools = false;
+    // 收到插话后允许再开一轮；该轮即使已进入最终回答预留区也保留工具，
+    // 否则模型只能输出随后会被抑制的文本，插话得不到可见回应。
+    let mut interjection_follow_up = false;
     // 上一轮工具执行结果；首轮为空，由 Loop 在执行后回填给下一轮 advance。
     let mut results: Vec<AgentToolResult> = Vec::new();
 
@@ -139,6 +169,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
                 .snapshot()
                 .stop_reason
                 .unwrap_or_else(|| stop_reason_for_error(&err));
+            recover_interjections(session.as_mut(), interjections.as_ref(), &run_handle);
             return Err(agent_error(
                 err,
                 &run_handle,
@@ -152,7 +183,10 @@ pub(super) async fn run_agent_loop_with_timeouts(
         let preserve_finalization_budget = force_finalization_without_tools
             || (run_handle.has_completed_tool_result_since(attempt_baseline.tool_results)
                 && run_handle.should_preserve_finalization_budget());
-        let allow_tool_calls = round < max_rounds && !preserve_finalization_budget;
+        let allow_tool_calls =
+            round < max_rounds && (!preserve_finalization_budget || interjection_follow_up);
+        // 插话跟进轮只对紧随其后的一轮生效，避免持续绕过最终回答预留。
+        interjection_follow_up = false;
         // Issue #361 诊断：每轮开始采样会话输入尺寸与进程内存，观察 Tool Loop
         // 多轮输入是否有界；只输出计数与尺寸，不输出正文。采样全部放进 DEBUG
         // 门控，默认级别不触碰会话上下文与 /proc 读取。
@@ -243,6 +277,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
                     .snapshot()
                     .stop_reason
                     .unwrap_or_else(|| stop_reason_for_error(&err));
+                recover_interjections(session.as_mut(), interjections.as_ref(), &run_handle);
                 return Err(agent_error(
                     err,
                     &run_handle,
@@ -256,14 +291,61 @@ pub(super) async fn run_agent_loop_with_timeouts(
         if advance.fallback_used {
             run_handle.update(|diagnostics| diagnostics.streaming_fallback_used = true);
         }
+        // 本批结果已经由本次 advance 追加到协议会话，避免收尾前因插话再开一轮时重复回填。
+        results.clear();
         match advance.step {
             AgentStep::FinalAnswer {
                 reply,
                 output_parts,
                 usage: step_usage,
             } => {
+                // 被插话中断的最终回答同样消耗了 token，usage 必须先合并。
                 let step_input_tokens = step_usage.as_ref().and_then(|item| item.input_tokens);
                 usage = merge_usage(usage, step_usage);
+                // 收尾前最后一次 drain：模型调用期间到达的插话不能静默丢失。
+                // 有轮次预算时继续一轮；否则把文本退回来源，由 Core 记录并留给下一轮。
+                let final_interjections = if final_delta_sink.is_none() {
+                    interjections
+                        .as_ref()
+                        .map(|source| source.drain())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                if !final_interjections.is_empty() && round < max_rounds {
+                    let received = final_interjections.len();
+                    let queued = session.queue_user_interjections(&final_interjections);
+                    if queued > 0 {
+                        run_handle.update(|diagnostics| {
+                            diagnostics.interjections_received += received;
+                            diagnostics.interjections_injected += queued;
+                        });
+                        debug!(
+                            provider = provider.as_str(),
+                            model = %model,
+                            round,
+                            "最终回答前收到用户插话，继续一轮 Agent 模型调用"
+                        );
+                        interjection_follow_up = true;
+                        continue;
+                    }
+                }
+                if !final_interjections.is_empty() {
+                    // 已经没有轮次预算（或 Provider 不支持插话）：退回插话来源，
+                    // 避免 Gateway 已消费的消息丢失。
+                    if let Some(source) = interjections.as_ref() {
+                        source.requeue(final_interjections);
+                    }
+                    warn!(
+                        provider = provider.as_str(),
+                        model = %model,
+                        round,
+                        "最终回答阶段收到用户插话但已无轮次预算，已退回待处理插话"
+                    );
+                }
+                if let Some(source) = interjections.as_ref() {
+                    source.close();
+                }
                 // Issue #361 诊断：最终输入尺寸与进程内存只在 DEBUG 开启时采样，
                 // 默认级别不触碰会话上下文与 /proc 读取；DEBUG 关闭时这些字段
                 // 记录为空，避免 INFO 日志出现无意义的估算值。
@@ -358,6 +440,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
                         tool_call_count = calls.len(),
                         "禁用工具后 Provider 仍返回了工具调用"
                     );
+                    recover_interjections(session.as_mut(), interjections.as_ref(), &run_handle);
                     return Err(agent_error(
                         LlmError::new(code, message, "tool_loop"),
                         &run_handle,
@@ -377,6 +460,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
                         max_rounds = max_rounds,
                         "Agent Loop 已超过最大轮数"
                     );
+                    recover_interjections(session.as_mut(), interjections.as_ref(), &run_handle);
                     return Err(agent_error(
                         LlmError::new(
                             "tool_loop_limit",
@@ -411,6 +495,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
                         has_successful_result,
                         "仅剩最终回答预算，已拒绝 Agent 工具批次"
                     );
+                    recover_interjections(session.as_mut(), interjections.as_ref(), &run_handle);
                     return Err(agent_error(
                         finalization_budget_error(),
                         &run_handle,
@@ -420,7 +505,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
                     ));
                 }
                 force_finalization_without_tools |= batch_budget_reserved;
-                let batch = execute_tool_batch(
+                let batch = match execute_tool_batch(
                     &calls,
                     round,
                     &provider,
@@ -430,12 +515,29 @@ pub(super) async fn run_agent_loop_with_timeouts(
                     attempt_baseline,
                 )
                 .await
-                .map_err(|err| {
-                    let reason = stop_reason_for_error(&err);
-                    agent_error(err, &run_handle, &executor, reason, attempt_baseline)
-                })?;
+                {
+                    Ok(batch) => batch,
+                    Err(err) => {
+                        let reason = stop_reason_for_error(&err);
+                        recover_interjections(
+                            session.as_mut(),
+                            interjections.as_ref(),
+                            &run_handle,
+                        );
+                        return Err(agent_error(
+                            err,
+                            &run_handle,
+                            &executor,
+                            reason,
+                            attempt_baseline,
+                        ));
+                    }
+                };
                 results = batch.results;
                 force_finalization_without_tools |= batch.skipped_for_finalization;
+                // 插话只在工具结果形成后、下一次模型调用前注入，保证 Provider 收到的
+                // 顺序是「工具结果 -> 用户插话」；工具执行期间不另行调用模型回应。
+                queue_pending_interjections(interjections.as_ref(), session.as_mut(), &run_handle);
                 sync_diagnostics(&run_handle, &executor, &emitted_tools, attempt_baseline);
                 // after_tool_result：只记录本轮结果的独立体积（不 clone、不序列化）。
                 // 本批结果尚未由 Provider 追加到会话 input，会话真实输入尺寸在
@@ -482,6 +584,11 @@ pub(super) async fn run_agent_loop_with_timeouts(
                             has_completed_result = false,
                             "Agent 工具批次已耗尽工具预算，且没有已完成的结果"
                         );
+                        recover_interjections(
+                            session.as_mut(),
+                            interjections.as_ref(),
+                            &run_handle,
+                        );
                         return Err(agent_error(
                             finalization_budget_error(),
                             &run_handle,
@@ -495,6 +602,7 @@ pub(super) async fn run_agent_loop_with_timeouts(
         }
     }
 
+    recover_interjections(session.as_mut(), interjections.as_ref(), &run_handle);
     Err(agent_error(
         LlmError::new(
             "tool_loop_limit",
@@ -506,6 +614,56 @@ pub(super) async fn run_agent_loop_with_timeouts(
         AgentStopReason::MaxRounds,
         attempt_baseline,
     ))
+}
+
+fn queue_pending_interjections(
+    source: Option<&DynAgentInterjectionSource>,
+    session: &mut (dyn AgentStepSession + Send),
+    run_handle: &AgentRunHandle,
+) -> usize {
+    let Some(source) = source else {
+        return 0;
+    };
+    let texts = source.drain();
+    if texts.is_empty() {
+        return 0;
+    }
+    let received = texts.len();
+    let queued = session.queue_user_interjections(&texts);
+    if queued > 0 {
+        run_handle.update(|diagnostics| {
+            diagnostics.interjections_received += received;
+            diagnostics.interjections_injected += queued;
+        });
+    } else {
+        // Provider 不支持插话时不能把已取走的文本丢掉。
+        source.requeue(texts);
+    }
+    queued
+}
+
+/// 把尚未进入模型输入的插话退回来源，避免回合异常结束时静默丢失。
+fn recover_interjections(
+    session: &mut (dyn AgentStepSession + Send),
+    source: Option<&DynAgentInterjectionSource>,
+    run_handle: &AgentRunHandle,
+) {
+    let pending = session.take_pending_interjections();
+    if pending.is_empty() {
+        return;
+    }
+    let recovered = pending.len();
+    run_handle.update(|diagnostics| {
+        diagnostics.interjections_injected =
+            diagnostics.interjections_injected.saturating_sub(recovered);
+    });
+    match source {
+        Some(source) => source.requeue(pending),
+        None => warn!(
+            dropped_interjections = pending.len(),
+            "Agent 回合异常结束且没有插话来源，未能退回用户插话"
+        ),
+    }
 }
 
 fn agent_stop_reason(emitted_tools: &[String], executor: &ToolLoopExecutor<'_>) -> AgentStopReason {

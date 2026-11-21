@@ -610,7 +610,7 @@ fn empty_chat_reply_uses_configured_bot_display_name() {
         agent: Default::default(),
     };
 
-    let output = output_from_raw_reply(&req, String::new(), outcome, "小助手").unwrap();
+    let output = output_from_raw_reply(&req, String::new(), outcome, "小助手", false).unwrap();
 
     assert_eq!(
         output.reply,
@@ -647,7 +647,7 @@ fn media_only_chat_reply_still_marks_model_text_as_empty() {
         agent: Default::default(),
     };
 
-    let output = output_from_raw_reply(&req, String::new(), outcome, "小助手").unwrap();
+    let output = output_from_raw_reply(&req, String::new(), outcome, "小助手", false).unwrap();
 
     assert!(output.model_reply_empty);
     assert_eq!(output.reply, "图片已生成。");

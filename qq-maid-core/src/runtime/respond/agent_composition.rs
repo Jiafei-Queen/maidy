@@ -48,6 +48,14 @@ pub(crate) fn compose_tool_turn_output(
             }
         }
         AgentReplySource::NaturalLanguageAgent => {
+            if outcome.delivered_only_out_of_band() && output.model_reply_empty {
+                // 发言/语音等 Tool 已经完成用户可见交付；空最终正文是预期结果，
+                // 不能再合成“模型未整理出回复”的第二条消息。
+                output.reply.clear();
+                output.text.clear();
+                output.markdown = None;
+                return;
+            }
             if outcome.can_use_model_reply_as_primary() && !output.model_reply_empty {
                 append_model_reply_with_supplement(output, outcome);
             } else {

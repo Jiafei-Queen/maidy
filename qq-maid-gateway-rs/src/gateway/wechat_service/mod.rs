@@ -53,7 +53,7 @@ use crate::{
     respond::{RespondClient, RespondError, respond_error_to_qq_text},
 };
 
-mod customer;
+pub(crate) mod customer;
 
 use customer::{
     WECHAT_CUSTOMER_REQUEST_TIMEOUT, WECHAT_CUSTOMER_TEXT_MAX_BYTES, WechatCustomerMessageError,
@@ -173,6 +173,7 @@ pub(super) async fn spawn_callback_server(
     dedupe: Arc<MessageDedupe>,
     runtime: GatewayRuntimeStatus,
     commands: GatewayCommandService,
+    push_sink: crate::gateway::push::GatewayPushSink,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<JoinHandle<anyhow::Result<()>>> {
     let addr: SocketAddr = format!("{}:{}", config.bind_host, config.bind_port)
@@ -183,8 +184,13 @@ pub(super) async fn spawn_callback_server(
         .context("bind wechat service callback listener")?;
     let path = config.callback_path.clone();
     let message_crypto = build_message_crypto(&config)?;
+    let customer_messenger = build_customer_messenger(&config);
+    match customer_messenger.as_ref() {
+        Some(messenger) => push_sink.bind_wechat(messenger.clone()),
+        None => push_sink.mark_wechat_unavailable("wechat customer messaging is disabled"),
+    }
     let state = WechatServiceState {
-        customer_messenger: build_customer_messenger(&config),
+        customer_messenger,
         customer_send_locks: Arc::new(WechatCustomerSendLocks::default()),
         message_crypto,
         config,
@@ -508,6 +514,11 @@ async fn build_reply_text(
     let Some(response) = response else {
         return FALLBACK_ERROR_TEXT.to_owned();
     };
+    // 发言 Tool 已经完成用户可见交付时，Core 会把最终正文标记为 suppressed；
+    // 这里必须返回空正文，避免微信同步回包再发一条重复内容。
+    if response.suppresses_reply() {
+        return String::new();
+    }
     render_respond_response_for_profile(&response, &capability.render)
         .map(|outbound| outbound.fallback_text().to_owned())
         .unwrap_or_default()

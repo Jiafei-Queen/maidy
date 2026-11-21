@@ -484,6 +484,8 @@ impl LlmProvider for TestProvider {
                     final_candidate_tool_result_start: Some(0),
                     tools_with_unknown_result: Vec::new(),
                     streaming_fallback_used: false,
+                    interjections_received: 0,
+                    interjections_injected: 0,
                     stop_reason: Some(AgentStopReason::ToolUsed),
                 };
                 Ok(outcome)
@@ -544,6 +546,8 @@ impl LlmProvider for TestProvider {
                     final_candidate_tool_result_start: None,
                     tools_with_unknown_result: Vec::new(),
                     streaming_fallback_used: false,
+                    interjections_received: 0,
+                    interjections_injected: 0,
                     stop_reason: Some(AgentStopReason::ToolUsed),
                 };
                 Err(
@@ -926,5 +930,7 @@ fn test_state_with_group_tool_calling_and_query_executor(
         prompt_config: PromptConfig::new(prompt_dir),
         initiative_service: crate::runtime::tools::initiative::InitiativeService::default(),
         voice_sink: None,
+        chat_send_sink: None,
+        steering: Default::default(),
     }
 }

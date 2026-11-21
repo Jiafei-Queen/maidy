@@ -106,7 +106,9 @@ qq-maid-common / reqwest / serde / tokio
 - Core 业务入口优先复用 `CoreService` 和 `qq-maid-core/src/runtime/respond/` 现有 flow；跨工具 pending envelope 与通用确认分类优先复用 `qq-maid-core/src/runtime/pending/`，Todo 专属 pending payload、确认/澄清状态机和文案必须放在 `qq-maid-core/src/runtime/tools/todo/`，`qq-maid-core/src/runtime/respond/pending.rs` 只保留会话写入 helper。
 - LLM 协议、Provider、路由、fallback、SSE、usage、健康观测、上下文预算、Web Search 和 Agent/Tool Loop 协议留在 `qq-maid-llm`；业务 prompt、session、todo、memory、RSS、知识库和具体 Tool 留在 `qq-maid-core`。
 - Tool Calling 只执行服务端显式注册的白名单 Tool。工具调用是否成功、Todo 是否写入、Memory 是否保存等必须以真实工具或持久化结果为准，不能让模型文案代替执行结果。
-- 私聊普通消息默认按 `agent.toml` 场景白名单进入可调用 Tool 的 Agent Runtime；群聊完整 Tool Loop 默认关闭，只有场景显式开启且白名单允许时才进入，关闭时仅保留受控 Memory-only 路径。slash 命令、pending 确认、文件处理和宿主机代码执行不得进入 Tool Loop；`/查` 仍是显式联网查询入口。
+- `send_message` 是 Agent 主动发言的基础设施 Tool，不是业务域；进入 Agent Runtime 后必须无条件暴露，不受场景白名单、受限模式和 `all_tools` 影响（Provider 不支持 Tool Calling 或平台未注入发送能力时显式降级）。模型最终文本在 `send_message` 成功投递后必须丢弃并由投递账本标记 `suppressed`，没有发送时才保留兼容兜底。
+- 私聊普通消息默认按 `agent.toml` 场景白名单进入可调用 Tool 的 Agent Runtime；群聊完整 Tool Loop 默认关闭，只有场景显式开启且白名单允许时才进入，关闭时仅保留受控受限 Tool 路径（含 `send_message`）。slash 命令、pending 确认、文件处理和宿主机代码执行不得进入 Tool Loop；`/查` 仍是显式联网查询入口。
+- Agent Runtime 关闭逐字 token 流式；回合运行期间到达的普通纯文本消息可以 steering 到当前回合，但插话只在工具结果形成后、下一次模型调用前注入，不额外即时回答。
 - Todo 对用户展示的编号与数据库内部 ID 分离。后续“第一条”“刚刚那条”等指代必须依赖 session 中最近可见列表快照或最近操作对象，不能把内部 ID 暴露给模型或用户。
 - Todo 删除/取消/恢复语义、session 作用域、记忆确认流程和已确认持久化数据格式不要随意改变。
 - 用户明确记忆指令写入 `UserConfirmed`；新增记忆在服务端完成范围、权限和敏感信息校验后可直接保存，不再二次确认。默认关闭的 Session Dream 可从普通聊天提取 `SystemDerived`，但只能写当前用户 Personal 或当前群成员 GroupProfile，不得写 Group 公共记忆、覆盖 `UserConfirmed` 或绕过 opt-out；清空、停用群画像等破坏性操作仍需确认。

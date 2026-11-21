@@ -20,6 +20,7 @@ async fn shared_handle_cancel_interrupts_inflight_model_round() {
             None,
             None,
             Some(task_handle),
+            None,
             std::time::Duration::from_secs(1),
             std::time::Duration::from_secs(1),
         )

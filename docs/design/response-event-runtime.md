@@ -18,7 +18,7 @@
 
 | 路径 | 当前入口 | 当前输出形态 | 现状判断 |
 | --- | --- | --- | --- |
-| Agent Chat | `RespondPlan::AgentRuntime` -> `handle_chat` -> `respond_with_tools` | `Status(AgentStarted/Running/Finalizing)`；provider 支持时产生最终回答 `TextDelta`，最后 `Completed` | 普通消息（含已适配的图片输入）在能力允许时统一走此路径；模型首轮可直接回答或发出 Tool Call。 |
+| Agent Chat | `RespondPlan::AgentRuntime` -> `handle_chat` -> `respond_with_tools` | `Status(AgentStarted/Running/Finalizing)` + `Completed`；用户可见发言由 `send_message` 或最终 `Completed` 交付，不产生逐字 `TextDelta` | 普通消息（含已适配的图片输入）在能力允许时统一走此路径；模型首轮可直接回答或发出 Tool Call。 |
 | 普通聊天降级 | `RespondPlan::StreamingChat` -> `respond_stream` -> `handle_chat_stream` | provider 支持时产生 `TextDelta`，最终 `Completed` | 仅用于 Tool Calling 未启用、Provider 不支持或工具为空等兼容场景。 |
 | WebSearch | `RespondPlan::WebSearch` -> `respond_web_search_stream` | provider 支持时复用 `/查` 的 `query_stream` delta，最终 `Completed` | 已接入 `CoreResponseStream`，但事件语义仍被压成普通文本 delta。 |
 | slash command | `/help` 试点走 `RespondPlan::CommandEvent`；其它命令仍由 `CommandDispatcher` 内确定性分发 | `/help` 输出 `Status(CommandStarted/CommandFinished)` + `Completed`；其它命令仍是 `RespondResponse` complete | 已有 `/help` 事件化试点，命令执行仍保持确定性；其余 slash command 尚未迁移。 |
@@ -95,7 +95,7 @@ FinalAnswerStarted
 - `TextDelta` 只承载最终回答正文或 WebSearch 真实结果增量。
 - 工具轮产生 tool call 时，只发系统生成的 status/progress，不发模型同轮自然语言草稿。
 - 工具参数、工具原始结果、JSON、stack、secret 不进入任何用户可见事件。
-- `Completed` 仍是最终权威响应，session、diagnostics、visible snapshot 和 ref_index 相关信息以它为准。
+- `Completed` 仍是最终权威响应，session、diagnostics、visible snapshot 和 ref_index 相关信息以它为准。Agent Runtime 中 `send_message` 成功投递后，`Completed` 只携带 `suppressed=true` 和诊断，不再重复发送模型最终文本。
 - `Failed` 必须携带用户可理解的安全失败文案，不能要求 Gateway 解析内部错误。
 
 ## Agent Chat 事件落点
@@ -223,9 +223,9 @@ ref_index 规则：
 
 ## 需要测试覆盖的关键行为
 
-- 私聊普通聊天仍能输出 `TextDelta` 并正常 `Completed`。
+- 未进入 Agent Runtime 的普通聊天仍能输出 `TextDelta` 并正常 `Completed`；Agent Runtime 只发 `Status` 与 `Completed`。
 - 私聊 Tool Loop 至少输出一个受控 status，工具参数和模型草稿不外显。
-- 工具完成后的最终回答在 provider 支持时能继续流式输出。
+- 工具完成后的最终回答由 `Completed` 交付；`send_message` 成功时 `Completed` 保持 `suppressed=true`，不得重复发送模型最终文本。
 - provider 不支持 streaming 时仍能聚合发送完整最终回复。
 - 群聊未唤醒不触发工具；群聊 Tool Loop 关闭时明确工具请求不回落无 tools 普通聊天让模型猜外部状态。
 - `/help` 成功路径输出 `CommandStarted` -> `CommandFinished` -> `Completed`，失败路径输出 `CommandStarted` -> `Failed`，且事件包装不改变用户可见最终正文。

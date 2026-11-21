@@ -121,6 +121,8 @@ pub struct RespondExecutors {
     pub radar_executor: DynRadarExecutor,
     /// 语音工具出站发送能力；未注入时语音工具不注册。
     pub voice_sink: Option<crate::runtime::tools::voice::DynVoiceSendSink>,
+    /// 会话发言工具的出站能力；未注入时 `send_message` 不注册。
+    pub chat_send_sink: Option<crate::runtime::tools::message::DynChatSendSink>,
 }
 
 /// `RustRespondService` 的策略和输出配置。
@@ -165,6 +167,7 @@ pub(crate) struct RespondServiceBootstrap {
     pub(crate) prompt_config: PromptConfig,
     pub(crate) options: RespondServiceOptions,
     pub(crate) initiative_service: crate::runtime::tools::initiative::InitiativeService,
+    pub(crate) steering: crate::runtime::steering::ActiveTurnRegistry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -284,6 +287,8 @@ impl PartialEq<PlannedRespond> for RespondPlan {
 pub struct RustRespondService {
     /// 共享 conversation 的临时先攻状态；克隆服务时保持同一张表。
     pub(crate) initiative_service: crate::runtime::tools::initiative::InitiativeService,
+    /// 进程内共享的 Agent 回合插话注册表。
+    pub(crate) steering: crate::runtime::steering::ActiveTurnRegistry,
     /// LLM 提供商（支持流式 / 非流式聊天）
     pub(crate) provider: DynLlmProvider,
     /// 联网查询执行器
@@ -362,6 +367,7 @@ impl RustRespondService {
             prompt_config,
             options,
             initiative_service: crate::runtime::tools::initiative::InitiativeService::default(),
+            steering: crate::runtime::steering::ActiveTurnRegistry::default(),
         })
     }
 
@@ -379,6 +385,7 @@ impl RustRespondService {
             prompt_config,
             options,
             initiative_service,
+            steering,
         } = bootstrap;
         let translation_service = TranslationService::new(provider.clone(), None)
             .with_agent_config(options.agent_config.clone());
@@ -417,6 +424,7 @@ impl RustRespondService {
             task_store: stores.task_store,
             roll_preference_service: stores.roll_preference_service,
             initiative_service,
+            steering,
             notification_store: stores.notification_store,
             ops_service,
             rss_store: stores.rss_store,

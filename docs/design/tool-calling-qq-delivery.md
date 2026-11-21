@@ -25,6 +25,19 @@
 6. Core 将状态、文本增量、最终回复或结构化失败写入 `CoreResponseEvent::Status / TextDelta / Completed / Failed`。
 7. Gateway 依平台能力消费这些事件：QQ 官方 C2C 可流式发送；QQ 群聊、OneBot 一期和微信通常收敛到可信 `Completed` 后一次投递。
 
+## Agent 主导发言（`send_message`）
+
+`send_message` 是基础设施 Tool，不是 Todo / Memory 之类的业务域。它由 Core 的 `runtime/tools/message/` 提供，并通过 Gateway 实现的 `ChatSendSink` 投递：
+
+- 任何进入 Agent Runtime 的会话都必须暴露 `send_message`，不读取场景白名单、群聊受限模式或业务工具开关；只有 Gateway 未注入发送能力或 Provider 不支持 Tool Calling 时才降级。
+- 会话、账号和被动回复锚点只来自服务端 `RespondRequest`，模型参数不能指定平台 ID。
+- 模型最终文本不再自动视为用户可见回复。一次 Tool 调用成功发送后，Core 清空最终文本并标记 `suppressed=true`；没有发送时保留最终文本作为兼容兜底。
+- 同一轮消息条数受平台被动回复预算约束，账本同时负责去重、剩余额度与失败记录。
+- 回合运行期间到达的普通纯文本消息可由 Gateway dispatcher 通过 `CoreService::try_steer` 注入当前 Agent Loop；插话只在工具结果形成后、下一次模型调用前进入上下文，不额外发起即时回答。
+- Agent Runtime 关闭逐字流式，最终正文只通过 `Completed` 或 `send_message` 交付，避免工具发言与模型草稿重复。
+
+`send_message` 结果在 Core 中投影为 `OutOfBand + ExternalSideEffect`：它没有确定性文字回执，但真实发送结果仍参与成功验真、诊断和最终文本抑制。
+
 ## 平台与业务数据所有权
 
 | 数据 | 所有者 | 用途 |
@@ -44,14 +57,14 @@
 - 工具一旦开始可能产生副作用，候选模型失败后不得自动重放该副作用。取消后不得启动新工具；已开始但未取得可信结果的工具必须保留 unknown 状态。
 - `CoreResponseEvent::Status` 只表示可展示的进度/状态语义，不是业务成功证明。Gateway 可按平台能力展示或忽略，但不得把 Status 当成 `Completed`。
 - Todo 写入、Memory 保存、RSS 变更等成功文案必须由各领域消费真实 Tool / 持久化结果后生成，不能直接相信模型最终文本。
-- 工具原始结果默认只进入 Agent 后续轮次和 Core 领域后处理，不应越过 Core 直接变成 QQ 消息。
+- 工具原始结果默认只进入 Agent 后续轮次和 Core 领域后处理，不应越过 Core 直接变成 QQ 消息。`send_message` / `send_voice` 是受控投递原语例外：必须服务端绑定目标、受预算和去重约束，并保留真实发送回执。
 
 ## QQ C2C 流式发送不变量
 
 1. 首帧成功前，Gateway 可保留一次普通全文回退的可能。
 2. 首帧成功并取得 QQ stream id 后，本轮回复归该 stream 所有；后续帧和最终帧失败均不再补发第二条普通全文。
 3. 同一 stream 的 `msg_seq`、stream id 和 index 推进由 Gateway 状态机维护；只在平台真实成功后提交下一状态。
-4. `Completed` 是最终响应的唯一可信所有者。`TextDelta` 是过程文本，`Status` 是状态，`Failed` 保留结构化失败与 Agent diagnostics。
+4. `Completed` 是最终响应的唯一可信所有者。`TextDelta` 是过程文本，`Status` 是状态，`Failed` 保留结构化失败与 Agent diagnostics。Agent Runtime 已关闭逐字流式，因此不存在最终回答 `TextDelta`；用户可见发言由 `send_message` 或 `Completed` 交付。
 5. QQ 流式失败只能影响平台投递结果，不得倒推 Tool 未执行或业务写入失败。业务与投递结果必须分别记录。
 
 ## 新增能力检查

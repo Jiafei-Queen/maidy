@@ -18,6 +18,7 @@ use crate::{
         agent_turn::{
             ToolTurnPostprocessContext, fallback_output_after_agent_failure, postprocess_tool_turn,
         },
+        message::{SEND_MESSAGE_TOOL_NAME, SendMessageTool, TurnDelivery},
         replace_scoped_todo_tools_from_visible_snapshot, todo,
         voice::{SEND_VOICE_TOOL_NAME, SendVoiceTool},
     },
@@ -41,6 +42,7 @@ pub(crate) struct ToolRuntime {
     web_search_tool: WebSearchTool,
     weather_available: bool,
     voice_tool: Option<SendVoiceTool>,
+    message_tool: Option<SendMessageTool>,
 }
 
 impl ToolRuntime {
@@ -71,6 +73,9 @@ impl ToolRuntime {
             .then(|| executors.voice_sink.clone())
             .flatten()
             .map(|sink| SendVoiceTool::new(sink, voice_config.max_text_chars));
+        // 发言是 Agent 的基础设施：只要 Gateway 注入发送能力就注册，不受场景
+        // 白名单、群聊受限模式和业务 Tool 开关影响。
+        let message_tool = executors.chat_send_sink.clone().map(SendMessageTool::new);
         // Tool 只通过服务端白名单注册；Todo Tool 复用现有 store、session 快照和 pending。
         let mut tools: Vec<qq_maid_llm::tool::DynTool> = vec![
             Arc::new(TrainScheduleTool::new(executors.train_executor.clone())),
@@ -101,6 +106,9 @@ impl ToolRuntime {
         if let Some(voice_tool) = &voice_tool {
             tools.push(Arc::new(voice_tool.clone()));
         }
+        if let Some(message_tool) = &message_tool {
+            tools.push(Arc::new(message_tool.clone()));
+        }
         for tool in tools {
             if let Err(err) = registry.insert(tool) {
                 tracing::warn!(
@@ -119,6 +127,7 @@ impl ToolRuntime {
             web_search_tool,
             weather_available,
             voice_tool,
+            message_tool,
         }
     }
 
@@ -131,8 +140,16 @@ impl ToolRuntime {
         policy: &ResolvedAgentPolicy,
         req: &RespondRequest,
         mode: AgentToolMode,
+        delivery: Option<&Arc<TurnDelivery>>,
     ) -> Result<(ToolRegistry, Vec<String>), LlmError> {
         let user_text = req.effective_user_text();
+        // 基础设施 Tool：不受场景白名单、群聊受限模式和业务 Tool 开关影响。
+        // 是否暴露只由 Gateway 是否注入发送能力决定。
+        let send_tool_enabled = delivery.is_some()
+            && self
+                .message_tool
+                .as_ref()
+                .is_some_and(|_| SendMessageTool::supports_request(req));
         let mut tool_names = match mode {
             AgentToolMode::ConfiguredWhitelist => {
                 todo::tool_policy::enabled_tool_names_for_request(&policy.enabled_tools, &user_text)
@@ -152,6 +169,8 @@ impl ToolRuntime {
         if !self.weather_available {
             tool_names.retain(|name| *name != WEATHER_TOOL_NAME);
         }
+        // 配置白名单不能强制暴露当前进程未注入的发言能力。
+        tool_names.retain(|name| *name != SEND_MESSAGE_TOOL_NAME);
         if !self.voice_available_for_request(req) {
             tool_names.retain(|name| *name != SEND_VOICE_TOOL_NAME);
         }
@@ -166,6 +185,10 @@ impl ToolRuntime {
                 *name != crate::runtime::tools::knowledge::KNOWLEDGE_SEARCH_TOOL_NAME
             });
         }
+        // 追加必须发生在上面的所有 retain 过滤之后，避免被任何业务过滤误删。
+        if send_tool_enabled && !tool_names.contains(&SEND_MESSAGE_TOOL_NAME) {
+            tool_names.push(SEND_MESSAGE_TOOL_NAME);
+        }
         let mut registry = self.registry.subset(&tool_names)?;
         if tool_names.contains(&WEB_SEARCH_TOOL_NAME) {
             // 自然语言搜索与 `/查` 必须复用同一份请求级场景策略；模型参数中即使
@@ -179,7 +202,7 @@ impl ToolRuntime {
         }
         // subset、请求级 scoped 替换和 diagnostics 必须共享同一份过滤结果，
         // 避免 scoped 阶段重新尝试替换本轮已禁止暴露的工具。
-        self.replace_scoped_tools_from_request(&mut registry, &tool_names, req)?;
+        self.replace_scoped_tools_from_request(&mut registry, &tool_names, req, delivery)?;
         let exposed_tools = tool_names.into_iter().map(str::to_owned).collect();
         Ok((registry, exposed_tools))
     }
@@ -234,6 +257,7 @@ impl ToolRuntime {
         registry: &mut ToolRegistry,
         enabled_tools: &[&str],
         req: &RespondRequest,
+        delivery: Option<&Arc<TurnDelivery>>,
     ) -> Result<(), LlmError> {
         let quoted_bot_lookup = req
             .quoted
@@ -266,6 +290,27 @@ impl ToolRuntime {
         {
             registry.replace(Arc::new(voice_tool))?;
         }
+        if enabled_tools.contains(&SEND_MESSAGE_TOOL_NAME)
+            && let Some(delivery) = delivery
+            && let Some(message_tool) = self
+                .message_tool
+                .as_ref()
+                .and_then(|tool| tool.scoped_for_request(req, delivery.clone()))
+        {
+            registry.replace(Arc::new(message_tool))?;
+        }
         Ok(())
+    }
+
+    /// 当前请求是否具备可真实发送的会话发言工具。
+    pub(crate) fn send_tool_available_for_request(&self, req: &RespondRequest) -> bool {
+        self.message_tool
+            .as_ref()
+            .is_some_and(|_| SendMessageTool::supports_request(req))
+    }
+
+    /// 当前请求允许的单轮发言条数；平台不支持时返回 0。
+    pub(crate) fn message_budget_for_request(&self, req: &RespondRequest) -> usize {
+        SendMessageTool::max_messages_for_request(req)
     }
 }

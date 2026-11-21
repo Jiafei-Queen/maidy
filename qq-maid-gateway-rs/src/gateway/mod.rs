@@ -135,11 +135,13 @@ pub async fn run_with_application_version(
                 dedupe.clone(),
                 runtime.clone(),
                 commands.clone(),
+                push_sink.clone(),
                 shutdown_token.clone(),
             )
             .await?,
         )
     } else {
+        push_sink.mark_wechat_unavailable("wechat service channel is disabled");
         None
     };
     let onebot11_handle = if config.onebot11.enabled {
@@ -341,6 +343,10 @@ async fn run_qq_official(
         runtime.clone(),
         group_outbound_cache.clone(),
         ref_index.clone(),
+        crate::message_chunk::ChunkLimits::new(
+            config.markdown_chunk_soft_limit,
+            config.text_chunk_soft_limit,
+        ),
     );
     let group_cooldowns = Arc::new(Mutex::new(GroupCooldowns::default()));
     let bot_identity = Arc::new(BotIdentity::new(&app_id, &config.bot_mention_ids));

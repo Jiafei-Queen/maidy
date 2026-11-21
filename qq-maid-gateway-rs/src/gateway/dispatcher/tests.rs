@@ -25,6 +25,7 @@ struct RecordingHandler {
     release: Notify,
     block: bool,
     start_barrier: Option<Arc<Barrier>>,
+    steer_messages: bool,
 }
 
 #[derive(Default)]
@@ -87,6 +88,20 @@ impl RecordingHandler {
 }
 
 impl MessageHandler for RecordingHandler {
+    fn steer<'a>(&'a self, message: &'a InboundEnvelope) -> super::actor::SteerFuture<'a> {
+        Box::pin(async move {
+            if !self.steer_messages {
+                return false;
+            }
+            let id = match message {
+                InboundEnvelope::C2c(message) => message.message_id.clone(),
+                InboundEnvelope::Group(message) => message.message.message_id.clone(),
+            };
+            self.events.lock().unwrap().push(format!("steer:{id}"));
+            true
+        })
+    }
+
     fn handle<'a>(&'a self, message: InboundEnvelope) -> HandlerFuture<'a> {
         Box::pin(async move {
             let (scope, id) = match message {
@@ -341,6 +356,44 @@ async fn same_scope_messages_keep_fifo_order() {
     assert_eq!(
         handler.max_for_scope("platform:qq_official:account:-:private:user-a"),
         1
+    );
+}
+
+#[tokio::test]
+async fn busy_worker_steers_plain_message_into_current_turn() {
+    let handler = Arc::new(RecordingHandler {
+        block: true,
+        steer_messages: true,
+        ..RecordingHandler::default()
+    });
+    let (mut actor, mut command_rx, _) = test_actor_with_handler(test_config(), handler.clone());
+    let scope = "platform:qq_official:account:-:private:user-a".to_owned();
+
+    actor
+        .enqueue(scope.clone(), queued_c2c("m1", "user-a"))
+        .await
+        .unwrap();
+    drain_worker_commands(&mut actor, &mut command_rx, 1).await;
+    wait_for_events(&handler, 1).await;
+
+    actor
+        .enqueue(scope.clone(), queued_c2c("steer-2", "user-a"))
+        .await
+        .unwrap();
+    // Worker 在等待 m1 期间消费 m2 并 steering，同时补发 WorkerDequeued。
+    drain_worker_commands(&mut actor, &mut command_rx, 1).await;
+    wait_for_events(&handler, 2).await;
+
+    handler.release_all();
+    wait_for_events(&handler, 3).await;
+
+    assert_eq!(
+        handler.events(),
+        vec![
+            "start:platform:qq_official:account:-:private:user-a:m1".to_owned(),
+            "steer:steer-2".to_owned(),
+            "end:platform:qq_official:account:-:private:user-a:m1".to_owned(),
+        ]
     );
 }
 

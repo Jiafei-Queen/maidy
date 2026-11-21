@@ -36,7 +36,6 @@ impl CoreHandle {
             state: Arc::new(state),
         }
     }
-
     pub(super) fn respond_service(&self) -> RustRespondService {
         let state = self.state.as_ref();
         RustRespondService::from_bootstrap(RespondServiceBootstrap {
@@ -47,6 +46,7 @@ impl CoreHandle {
                 train_executor: state.executors.train_executor.clone(),
                 radar_executor: state.executors.radar_executor.clone(),
                 voice_sink: state.voice_sink.clone(),
+                chat_send_sink: state.chat_send_sink.clone(),
             },
             stores: RespondStores {
                 memory_store: state.stores.memory_store.clone(),
@@ -64,6 +64,7 @@ impl CoreHandle {
             prompt_config: state.prompt_config.clone(),
             options: respond_options(&state.config),
             initiative_service: state.initiative_service.clone(),
+            steering: state.steering.clone(),
         })
     }
 
@@ -92,7 +93,11 @@ impl CoreService for CoreHandle {
         ) {
             // 微信服务号同步 XML 回包无法承载直出流式；这里仅对微信禁用 direct stream，
             // 让 Gateway 消费 Completed 后再渲染 XML，QQ 官方流式行为保持不变。
-            let provider_stream_enabled = state.provider.stream_enabled() && !force_complete_sync;
+            // Agent Runtime 由 `send_message` 决定可见发言，最终文本不再逐字外发，
+            // 因此统一走完成后再投递，避免工具发言与最终草稿重复。
+            let provider_stream_enabled = state.provider.stream_enabled()
+                && !force_complete_sync
+                && !matches!(respond_plan, RespondPlan::AgentRuntime);
             let output_policy = output_policy_for_stream(respond_plan, provider_stream_enabled);
             let status_hint = planned.status_hint();
             let bot_display_name = service.bot_display_name().to_owned();
@@ -265,6 +270,31 @@ impl CoreService for CoreHandle {
             stream: state.provider.stream_enabled(),
             upstream: state.upstream_status.snapshot(),
         }
+    }
+
+    async fn try_steer(&self, request: CoreRequest) -> bool {
+        let req: RespondRequest = request.into();
+        let text = req.effective_user_text();
+        let trimmed = text.trim();
+        if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('／') {
+            return false;
+        }
+        // 插话只接受纯文本；媒体、文件和待确认附件继续走正常排队处理。
+        if req.input_parts.iter().any(|part| {
+            !matches!(
+                part,
+                qq_maid_common::input_part::MessageInputPart::Text { .. }
+            )
+        }) {
+            return false;
+        }
+        let interaction_meta =
+            crate::runtime::respond::interaction_state::respond_interaction_meta(&req);
+        self.state.steering.try_steer(
+            &interaction_meta.scope_key,
+            trimmed,
+            req.message_id.as_deref(),
+        )
     }
 }
 

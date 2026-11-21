@@ -8,6 +8,7 @@ pub(crate) mod agent_turn;
 pub(crate) mod iching;
 pub mod knowledge;
 pub mod memory;
+pub mod message;
 pub mod ops;
 pub(crate) mod radar;
 pub(crate) mod roll;

@@ -82,6 +82,7 @@ async fn qq_group_markdown_fallback_keeps_real_mention_and_ref_index_hides_membe
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache,
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let sender = MockPushSender {
         fail_markdown: true,
@@ -220,6 +221,7 @@ async fn push_runtime_records_group_message_id_in_bot_outbound_cache() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache.clone(),
         ref_index: crate::gateway::ref_index::ref_index(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let sender = MockPushSender {
         message_id: Some("bot-msg-1".to_owned()),
@@ -256,6 +258,7 @@ async fn group_push_cache_uses_message_id_and_ref_index_uses_refidx() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache.clone(),
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let intent = PushIntent {
         target: PushTarget::qq_official(PushTargetType::Group, "g1"),
@@ -299,6 +302,7 @@ async fn group_markdown_push_success_ref_index_uses_delivered_markdown_text() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache,
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let sender = MockPushSender {
         message_id: Some("qq_md_msg".to_owned()),
@@ -343,6 +347,7 @@ async fn group_markdown_push_fallback_ref_index_uses_fallback_text() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache,
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let sender = MockPushSender {
         fail_markdown: true,
@@ -394,6 +399,7 @@ fn push_segment_outcomes_record_each_delivered_text_by_refidx() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache.clone(),
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let intent = PushIntent {
         target: PushTarget::qq_official(PushTargetType::Group, "g1"),
@@ -457,6 +463,7 @@ async fn todo_push_refidx_without_message_id_does_not_enter_group_cache() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache.clone(),
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let intent = PushIntent {
         target: PushTarget::qq_official(PushTargetType::Group, "g1"),
@@ -497,6 +504,7 @@ async fn push_with_message_id_only_does_not_forge_ref_index_entry() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache,
         ref_index: ref_index.clone(),
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let intent = PushIntent {
         target: PushTarget::qq_official(PushTargetType::Group, "g1"),
@@ -539,6 +547,7 @@ fn push_ref_index_write_failure_is_best_effort() {
         runtime: GatewayRuntimeStatus::default(),
         group_outbound_cache: cache,
         ref_index,
+        chunk_limits: crate::message_chunk::ChunkLimits::defaults(),
     };
     let intent = PushIntent {
         target: PushTarget::qq_official(PushTargetType::Group, "g1"),

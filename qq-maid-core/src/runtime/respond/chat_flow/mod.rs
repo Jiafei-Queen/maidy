@@ -48,6 +48,14 @@ const TOOL_LOOP_AMBIGUITY_PROMPT: &str = "\
 const GROUP_TOOL_WHITELIST_PROMPT: &str = "\
 群聊工具边界：当前群聊只允许调用本场景配置白名单中的工具；\
 不要声称已经执行未开放的工具，也不要声称写入了未实际修改的持久化状态。";
+/// Agent 主动发言约定。只在 `send_message` 真实可用时注入，避免模型调用
+/// 不存在的工具。
+const SEND_MESSAGE_AGENT_PROMPT: &str = "\
+发言方式：你的文字输出不会自动发送给用户，只作为推理过程。\
+需要让用户看到内容时必须调用 send_message，一次可以发送一到多条短句。\
+任务预计耗时较长时，先调用 send_message 说一句简短进度；拿到工具结果后再发送结论。\
+已经发送过的内容不要重复发送；没有需要补充的内容时可以不发送并直接结束。\
+工具返回 ok 不是 true 时，不得声称已经发送。";
 
 pub(super) struct PreparedChat {
     pub req: RespondRequest,
@@ -143,6 +151,9 @@ impl RustRespondService {
         let system_prompts = if respond_route.uses_agent_runtime() {
             let mut prompts = system_prompts;
             prompts.push(TOOL_LOOP_AMBIGUITY_PROMPT.to_owned());
+            if self.tool_runtime.send_tool_available_for_request(&req) {
+                prompts.push(SEND_MESSAGE_AGENT_PROMPT.to_owned());
+            }
             if let Some(prompt) = todo::agent_display_contract_prompt(&policy.enabled_tools) {
                 prompts.push(prompt.to_owned());
             }
@@ -244,9 +255,23 @@ impl RustRespondService {
             LlmChatService::with_context_budget(self.provider.clone(), self.context_budget)
                 .with_bot_display_name(self.bot_display_name());
         let use_agent_runtime = respond_route.uses_agent_runtime();
+        // 只有进入 Agent Runtime 的回合才注册插话入口；命令、pending 等确定性
+        // 路径保持原有串行语义。预算由平台被动回复上限派生。
+        let active_turn = use_agent_runtime.then(|| {
+            let interaction_meta = super::interaction_state::respond_interaction_meta(&req);
+            let budget = self.tool_runtime.message_budget_for_request(&req);
+            self.steering.begin_turn(
+                &interaction_meta.scope_key,
+                budget.max(1),
+                req.message_id.clone(),
+            )
+        });
+        let turn_delivery = active_turn.as_ref().map(|turn| turn.delivery.clone());
         let mut agent_finalization_error = None;
         let mut agent_exposed_tools = Vec::new();
-        let (output, agent_turn_outcome, tool_turn_diagnostics) = if use_agent_runtime {
+        // Agent Loop 结束后仍未处理的插话；必须在回合收尾时写入历史，不能静默丢弃。
+        let mut unanswered_interjections: Vec<String> = Vec::new();
+        let (mut output, agent_turn_outcome, tool_turn_diagnostics) = if use_agent_runtime {
             let tool_mode = respond_route.tool_mode().ok_or_else(|| {
                 LlmError::new(
                     "agent_tool_mode_missing",
@@ -254,11 +279,16 @@ impl RustRespondService {
                     "router",
                 )
             })?;
-            let (tools, exposed_tools) = self
-                .tool_runtime
-                .registry_for_chat(&policy, &req, tool_mode)?;
+            let (tools, exposed_tools) = self.tool_runtime.registry_for_chat(
+                &policy,
+                &req,
+                tool_mode,
+                turn_delivery.as_ref(),
+            )?;
             agent_exposed_tools = exposed_tools;
-            let output = match service
+            let allow_empty_final_answer = self.tool_runtime.send_tool_available_for_request(&req);
+            let interjections = active_turn.as_ref().map(|turn| turn.source());
+            let respond_result = service
                 .respond_with_tools(
                     chat_req,
                     tools,
@@ -266,9 +296,28 @@ impl RustRespondService {
                     progress_sink,
                     final_delta_sink,
                     run_handle,
+                    allow_empty_final_answer,
+                    interjections,
                 )
-                .await
-            {
+                .await;
+            // Agent Loop 一结束就关闭插话入口：后续 postprocess、session 写入可能耗时，
+            // 期间到达的消息必须回落到 Gateway backlog，不能进入无人消费的队列。
+            if let Some(turn) = active_turn.as_ref() {
+                turn.close();
+                unanswered_interjections = turn.take_unanswered();
+                if !unanswered_interjections.is_empty() {
+                    tracing::warn!(
+                        count = unanswered_interjections.len(),
+                        "Agent 回合结束时仍有未处理的用户插话"
+                    );
+                    // 立即写入最新会话历史：后续任何失败路径都不能让用户消息消失。
+                    self.persist_unanswered_interjections(
+                        &session.session_id,
+                        &unanswered_interjections,
+                    );
+                }
+            }
+            let output = match respond_result {
                 Ok(output) => output,
                 Err(err) => {
                     let Some(output) = self
@@ -341,7 +390,57 @@ impl RustRespondService {
             (output, None, diagnostics)
         };
 
-        let reply = output.reply.clone();
+        // 抑制判断不能只看 send_message 是否成功：若本轮仍有确定性安全警告
+        // （工具状态未知 / Tool Loop 未完整），这些信息用户无法从已发送内容得知，
+        // 必须保留正文，不能用"已经发过消息"一并清空。
+        let keep_safety_warning = agent_turn_outcome.as_ref().is_some_and(|outcome| {
+            outcome.has_incomplete_result() || outcome.has_unhandled_outcome()
+        });
+        // 发言 Tool 的真实投递结果优先于模型最终文本：已经成功发送过消息时，
+        // 最终正文只作为思考过程丢弃；没有任何发送时保留旧文本兜底。
+        let mut suppressed_by_tool_delivery = false;
+        let mut tool_delivery_sent = 0usize;
+        let mut tool_delivery_failed = 0usize;
+        let mut tool_delivery_missing = false;
+        let mut history_reply = output.reply.clone();
+        if use_agent_runtime {
+            if let Some(delivery) = turn_delivery.as_ref() {
+                tool_delivery_sent = delivery.sent_count();
+                tool_delivery_failed = delivery.failure_count();
+            }
+            tool_delivery_missing = tool_delivery_sent == 0;
+            if tool_delivery_sent > 0 && !keep_safety_warning {
+                let sent_texts = turn_delivery
+                    .as_ref()
+                    .map(|delivery| delivery.sent_texts())
+                    .unwrap_or_default();
+                if !sent_texts.is_empty() {
+                    history_reply = sent_texts.join("\n");
+                }
+                output.reply.clear();
+                output.text.clear();
+                output.markdown = None;
+                // Provider 可能把最终正文同时放进结构化 Text part；这里必须一并
+                // 清掉，否则 suppressed 判断会因残留文本 part 失效。
+                output.parts.retain(|part| {
+                    !matches!(
+                        part,
+                        qq_maid_common::output_part::OutputPart::Text { .. }
+                            | qq_maid_common::output_part::OutputPart::Markdown { .. }
+                    )
+                });
+                suppressed_by_tool_delivery = output.parts.is_empty();
+            } else if tool_delivery_sent > 0 {
+                // 保留安全警告时，历史同时记录已发送内容和警告正文。
+                let sent_texts = turn_delivery
+                    .as_ref()
+                    .map(|delivery| delivery.sent_texts())
+                    .unwrap_or_default();
+                if !sent_texts.is_empty() {
+                    history_reply = format!("{}\n{}", sent_texts.join("\n"), output.reply.trim());
+                }
+            }
+        }
         let executed_tools = output.agent.executed_tools.clone();
         let used_search = executed_tools.iter().any(|tool| tool == "web_search");
         let tool_call_emitted = !output.agent.emitted_tools.is_empty();
@@ -389,7 +488,7 @@ impl RustRespondService {
             tool_turn_diagnostics.log_tool_loop_results(&executed_tools);
         }
         self.session_store
-            .append_exchange(&mut session, &user_text, &reply)
+            .append_exchange(&mut session, &user_text, &history_reply)
             .map_err(session_error)?;
         self.schedule_memory_dream(dream_context);
         let title_model = policy.resolve_auxiliary_model(None);
@@ -470,6 +569,30 @@ impl RustRespondService {
                 "agent_emitted_tool_count".to_owned(),
                 json!(agent_emitted_tool_count),
             );
+            fields.insert("suppressed".to_owned(), json!(suppressed_by_tool_delivery));
+            fields.insert("tool_delivery_sent".to_owned(), json!(tool_delivery_sent));
+            fields.insert(
+                "tool_delivery_failed".to_owned(),
+                json!(tool_delivery_failed),
+            );
+            fields.insert(
+                "tool_delivery_missing".to_owned(),
+                json!(tool_delivery_missing),
+            );
+            fields.insert(
+                "tool_delivery_suppressed_reason".to_owned(),
+                json!(if suppressed_by_tool_delivery {
+                    "tool_sent"
+                } else if keep_safety_warning && tool_delivery_sent > 0 {
+                    "safety_warning_kept"
+                } else {
+                    ""
+                }),
+            );
+            fields.insert(
+                "steering_unanswered".to_owned(),
+                json!(unanswered_interjections.len()),
+            );
             tool_turn_diagnostics.extend_response_diagnostics(fields);
         }
         response.diagnostics = Some(diagnostics);
@@ -479,6 +602,32 @@ impl RustRespondService {
             .as_ref()
             .and_then(|outcome| outcome.visible_entity_snapshot.clone());
         Ok(response)
+    }
+
+    /// 将未处理的用户插话追加到最新会话历史。
+    ///
+    /// 只在回合失败时调用；必须重新读取最新记录，避免旧快照覆盖工具写入。
+    fn persist_unanswered_interjections(&self, session_id: &str, texts: &[String]) {
+        if texts.is_empty() {
+            return;
+        }
+        let mut latest = match self.session_store.get(session_id) {
+            Ok(Some(session)) => session,
+            Ok(None) => {
+                tracing::warn!(count = texts.len(), "未处理插话未能写入：会话不存在");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "未处理插话读取会话失败");
+                return;
+            }
+        };
+        for text in texts {
+            latest.append_message("user", text);
+        }
+        if let Err(error) = self.session_store.save(&mut latest) {
+            tracing::warn!(error = %error, "未处理插话写入会话失败");
+        }
     }
 
     /// 普通聊天真流式路径：复用非流式聊天的上下文构造和后处理，只替换 LLM 调用方式。

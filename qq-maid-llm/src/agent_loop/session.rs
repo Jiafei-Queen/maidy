@@ -72,6 +72,24 @@ pub trait AgentStepSession: Send {
     fn input_size_estimate(&self) -> AgentInputSizeEstimate {
         AgentInputSizeEstimate::default()
     }
+    /// 设置是否允许最终回答为空。
+    ///
+    /// 模型通过 `send_message` 等副作用 Tool 已经完成用户可见交付时，最终文本
+    /// 可以为空；未开启时仍保持“空最终回答是 Provider 错误”的旧语义。
+    fn set_allow_empty_final_answer(&mut self, _allow: bool) {}
+    /// 把用户插话排入下一次 `advance`，必须追加在上一轮工具结果之后。
+    ///
+    /// 返回真正接收的条数；不支持插话的 Provider 返回 0。
+    fn queue_user_interjections(&mut self, _texts: &[String]) -> usize {
+        0
+    }
+    /// 取回已经排队但尚未被 `advance` 消费的插话。
+    ///
+    /// 回合在注入后、下一次模型调用前异常结束时，Runner 用它把文本退回插话来源，
+    /// 避免用户消息被静默丢弃；不支持插话的 Provider 返回空。
+    fn take_pending_interjections(&mut self) -> Vec<String> {
+        Vec::new()
+    }
     /// 用上一轮工具执行结果推进一步。
     ///
     /// - `results`：上一轮工具执行结果；首轮为空切片。

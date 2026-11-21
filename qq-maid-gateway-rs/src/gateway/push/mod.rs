@@ -3,6 +3,7 @@
 //! Core 只通过 `PushSink` 交付推送意图；本模块按 platform/account 精确选择 sender。
 //! QQ 官方继续负责 Markdown fallback 和群消息缓存；OneBot 使用原生消息 segment。
 
+mod chat;
 mod mention;
 
 use std::{
@@ -39,8 +40,10 @@ use crate::{
         ping::GatewayRuntimeStatus,
         platform::ConversationTarget,
         ref_index::SharedRefIndex,
+        wechat_service::customer::WechatCustomerMessenger,
     },
     markdown::MarkdownPayload,
+    message_chunk::ChunkLimits,
     tts::{DynTtsProvider, TtsAudio, TtsProvider},
 };
 
@@ -83,6 +86,7 @@ pub struct GatewayPushSink {
 struct GatewayPushState {
     qq_official: PushChannelState<GatewayPushRuntime>,
     onebot11: PushChannelState<OneBotPushRuntime>,
+    wechat: PushChannelState<WechatPushRuntime>,
 }
 
 #[derive(Clone)]
@@ -96,8 +100,11 @@ enum PushChannelState<T> {
 enum RoutedPushRuntime {
     QqOfficial(GatewayPushRuntime),
     OneBot11(OneBotPushRuntime),
+    Wechat(WechatPushRuntime),
 }
 
+// 三个平台运行时的尺寸不均衡；路由枚举只在短生命周期内使用，保留直接内联实现。
+#[allow(clippy::large_enum_variant)]
 enum RouteSnapshot {
     Pending,
     Bound(RoutedPushRuntime),
@@ -111,6 +118,7 @@ struct GatewayPushRuntime {
     runtime: GatewayRuntimeStatus,
     group_outbound_cache: Arc<Mutex<BotOutboundCache>>,
     ref_index: SharedRefIndex,
+    chunk_limits: ChunkLimits,
 }
 
 #[async_trait]
@@ -198,6 +206,11 @@ struct OneBotPushRuntime {
     ref_index: SharedRefIndex,
 }
 
+#[derive(Clone)]
+struct WechatPushRuntime {
+    messenger: Arc<dyn WechatCustomerMessenger>,
+}
+
 #[derive(Debug)]
 struct PushSendOutcome {
     ids: SendMessageIds,
@@ -210,6 +223,7 @@ impl GatewayPushSink {
             inner: Arc::new(Mutex::new(GatewayPushState {
                 qq_official: PushChannelState::Pending,
                 onebot11: PushChannelState::Pending,
+                wechat: PushChannelState::Pending,
             })),
             ready: Arc::new(Notify::new()),
             voice_provider: Arc::new(Mutex::new(None)),
@@ -240,6 +254,7 @@ impl GatewayPushSink {
         runtime: GatewayRuntimeStatus,
         group_outbound_cache: Arc<Mutex<BotOutboundCache>>,
         ref_index: SharedRefIndex,
+        chunk_limits: ChunkLimits,
     ) {
         // Core scheduler 可能在 Gateway 首次连接 QQ 前启动，因此 sink 需要先存在；
         // 真正发送前必须已绑定运行期上下文，否则返回可观测错误而不是静默丢消息。
@@ -249,6 +264,7 @@ impl GatewayPushSink {
             runtime,
             group_outbound_cache,
             ref_index,
+            chunk_limits,
         });
         self.ready.notify_waiters();
     }
@@ -270,6 +286,18 @@ impl GatewayPushSink {
 
     pub(crate) fn mark_onebot11_unavailable(&self, summary: &'static str) {
         self.inner.lock().unwrap().onebot11 = PushChannelState::Unavailable(summary);
+        self.ready.notify_waiters();
+    }
+
+    /// 绑定微信服务号客服文本发送能力。
+    pub(crate) fn bind_wechat(&self, messenger: Arc<dyn WechatCustomerMessenger>) {
+        self.inner.lock().unwrap().wechat =
+            PushChannelState::Bound(WechatPushRuntime { messenger });
+        self.ready.notify_waiters();
+    }
+
+    pub(crate) fn mark_wechat_unavailable(&self, summary: &'static str) {
+        self.inner.lock().unwrap().wechat = PushChannelState::Unavailable(summary);
         self.ready.notify_waiters();
     }
 
@@ -312,6 +340,13 @@ impl GatewayPushSink {
                 }
                 PushChannelState::Unavailable(summary) => RouteSnapshot::Unavailable(summary),
             }),
+            "wechat_service" => Ok(match &state.wechat {
+                PushChannelState::Pending => RouteSnapshot::Pending,
+                PushChannelState::Bound(runtime) => {
+                    RouteSnapshot::Bound(RoutedPushRuntime::Wechat(runtime.clone()))
+                }
+                PushChannelState::Unavailable(summary) => RouteSnapshot::Unavailable(summary),
+            }),
             other => Err(PushError::Failed {
                 summary: format!("push platform `{other}` is not supported by gateway"),
             }),
@@ -326,6 +361,9 @@ impl PushSink for GatewayPushSink {
         match self.runtime(platform).await? {
             RoutedPushRuntime::QqOfficial(runtime) => runtime.push(intent).await,
             RoutedPushRuntime::OneBot11(runtime) => runtime.push(intent).await,
+            RoutedPushRuntime::Wechat(_) => Err(PushError::Failed {
+                summary: "wechat service account does not support active push".to_owned(),
+            }),
         }
     }
 }
@@ -352,6 +390,7 @@ impl VoiceSendSink for GatewayPushSink {
             RoutedPushRuntime::OneBot11(runtime) => {
                 runtime.send_voice(provider.as_ref(), intent).await
             }
+            RoutedPushRuntime::Wechat(_) => Err(VoiceSendError::UnsupportedPlatform),
         }
     }
 }

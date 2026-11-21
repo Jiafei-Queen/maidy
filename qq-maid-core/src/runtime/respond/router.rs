@@ -232,6 +232,10 @@ impl<'a> RespondRouter<'a> {
                     .iter()
                     .any(|name| name == crate::runtime::tools::voice::SEND_VOICE_TOOL_NAME)
                     && self.service.tool_runtime.voice_available_for_request(req),
+                send_tool_available: self
+                    .service
+                    .tool_runtime
+                    .send_tool_available_for_request(req),
             },
         )
     }

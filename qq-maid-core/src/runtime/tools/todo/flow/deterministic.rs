@@ -376,6 +376,8 @@ async fn execute_deterministic_todo(
         final_candidate_tool_result_start: None,
         tools_with_unknown_result: Vec::new(),
         streaming_fallback_used: false,
+        interjections_received: 0,
+        interjections_injected: 0,
         stop_reason: Some(if succeeded {
             AgentStopReason::ToolUsed
         } else {

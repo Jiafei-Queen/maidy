@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "provider": "deepseek",
+      "id": "deepseek-v4-pro",
+      "display_name": null,
+      "context_window": null,
+      "max_output_tokens": null,
+      "modalities": null,
+      "capabilities": null,
+      "status": null,
+      "enabled": false,
+      "price": null
+    },
+    {
+      "provider": "deepseek",
+      "id": "deepseek-v4-flash-vision-exp",
+      "display_name": null,
+      "context_window": null,
+      "max_output_tokens": null,
+      "modalities": null,
+      "capabilities": null,
+      "status": null,
+      "enabled": false,
+      "price": null
+    }
+  ]
+}

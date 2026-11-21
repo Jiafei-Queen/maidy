@@ -10,7 +10,8 @@ use serde_json::Value;
 use crate::{
     agent_loop::{
         AgentInputSizeEstimate, AgentStep, AgentStepSession, AgentStreamingDiagnostics,
-        AgentTextDeltaSink, AgentToolCall, AgentToolResult, log_input_size_after_append,
+        AgentTextDeltaSink, AgentToolCall, AgentToolResult, USER_INTERJECTION_PREFIX,
+        log_input_size_after_append,
     },
     config::HttpAuthConfig,
     context_budget::ContextBudgetConfig,
@@ -56,6 +57,8 @@ pub(crate) struct ResponsesAgentSession {
     context_budget: Option<ContextBudgetConfig>,
     streaming_diagnostics: Arc<Mutex<AgentStreamingDiagnostics>>,
     streaming_activity_counter: Arc<AtomicUsize>,
+    allow_empty_final_answer: bool,
+    pending_interjections: Vec<String>,
 }
 
 impl ResponsesAgentSession {
@@ -159,6 +162,8 @@ impl ResponsesAgentSession {
             context_budget,
             streaming_diagnostics: Arc::new(Mutex::new(AgentStreamingDiagnostics::default())),
             streaming_activity_counter: Arc::new(AtomicUsize::new(0)),
+            allow_empty_final_answer: false,
+            pending_interjections: Vec::new(),
         })
     }
 }
@@ -188,6 +193,25 @@ impl AgentStepSession for ResponsesAgentSession {
         responses_input_size_estimate(&self.input)
     }
 
+    fn set_allow_empty_final_answer(&mut self, allow: bool) {
+        self.allow_empty_final_answer = allow;
+    }
+
+    fn queue_user_interjections(&mut self, texts: &[String]) -> usize {
+        self.pending_interjections.extend(
+            texts
+                .iter()
+                .map(|text| text.trim())
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned),
+        );
+        self.pending_interjections.len()
+    }
+
+    fn take_pending_interjections(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_interjections)
+    }
+
     async fn advance(
         &mut self,
         results: &[AgentToolResult],
@@ -195,6 +219,8 @@ impl AgentStepSession for ResponsesAgentSession {
     ) -> Result<AgentStep, LlmError> {
         // 回填上一轮工具执行结果（首轮 results 为空，跳过）。
         append_tool_results(&mut self.input, results);
+        append_user_interjections(&mut self.input, &self.pending_interjections);
+        self.pending_interjections.clear();
         // Issue #361 诊断：append 后、payload 构造前的真实输入尺寸；DEBUG 门控。
         if tracing::enabled!(tracing::Level::DEBUG) {
             log_input_size_after_append(self.provider(), self.model(), self.input_size_estimate());
@@ -239,7 +265,8 @@ impl AgentStepSession for ResponsesAgentSession {
         if calls.is_empty() {
             let output_parts = extract_response_output_parts(&body);
             let reply = extract_response_output_text(&body).unwrap_or_default();
-            if reply.trim().is_empty() && output_parts.is_empty() {
+            if reply.trim().is_empty() && output_parts.is_empty() && !self.allow_empty_final_answer
+            {
                 return Err(LlmError::provider(
                     "OpenAI tool loop returned empty final output",
                     "provider",
@@ -281,8 +308,7 @@ impl AgentStepSession for ResponsesAgentSession {
         self.streaming_activity_counter.store(0, Ordering::SeqCst);
         let mut input = self.input.clone();
         append_tool_results(&mut input, results);
-        // 流式路径的 payload 从克隆的 input 构造；此处记录克隆后（即实际发送前）
-        // 的输入尺寸，避免把“未追加本轮结果”的会话状态误报为发送尺寸。
+        append_user_interjections(&mut input, &self.pending_interjections);
         if tracing::enabled!(tracing::Level::DEBUG) {
             log_input_size_after_append(
                 self.provider(),
@@ -332,6 +358,23 @@ impl AgentStepSession for ResponsesAgentSession {
         }
         let step = step?;
         self.input = input;
+        self.pending_interjections.clear();
         Ok(Some(step))
     }
+}
+
+/// 把用户插话作为一条普通 user 消息追加在上一轮工具结果之后。
+///
+/// 多段插话合并成一条，统一使用 [`USER_INTERJECTION_PREFIX`]，避免 Provider
+/// 把插话误认成新的独立任务或工具结果。
+fn append_user_interjections(input: &mut Vec<Value>, pending: &[String]) {
+    if pending.is_empty() {
+        return;
+    }
+    let text = format!("{}\n{}", USER_INTERJECTION_PREFIX, pending.join("\n"));
+    input.push(serde_json::json!({
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": text}],
+    }));
 }

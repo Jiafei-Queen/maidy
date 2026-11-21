@@ -81,6 +81,10 @@ pub struct CoreRuntimeState {
     pub(crate) initiative_service: InitiativeService,
     /// Gateway 注入的语音发送能力；未注入时语音工具不注册。
     pub(crate) voice_sink: Option<DynVoiceSendSink>,
+    /// Gateway 注入的会话发言能力；未注入时 `send_message` 不注册。
+    pub(crate) chat_send_sink: Option<crate::runtime::tools::message::DynChatSendSink>,
+    /// 进程内共享的 Agent 回合插话注册表。
+    pub(crate) steering: crate::runtime::steering::ActiveTurnRegistry,
 }
 
 impl CoreRuntimeState {
@@ -169,12 +173,23 @@ impl CoreRuntimeState {
             prompt_config,
             initiative_service: InitiativeService::default(),
             voice_sink: None,
+            chat_send_sink: None,
+            steering: crate::runtime::steering::ActiveTurnRegistry::default(),
         })
     }
 
     /// 统一入口注入 Gateway 的语音发送能力；Core 独立运行时不注册语音工具。
     pub fn with_voice_sink(mut self, sink: Option<DynVoiceSendSink>) -> Self {
         self.voice_sink = sink;
+        self
+    }
+
+    /// 统一入口注入 Gateway 的会话发言能力；Core 独立运行时不注册 `send_message`。
+    pub fn with_chat_send_sink(
+        mut self,
+        sink: Option<crate::runtime::tools::message::DynChatSendSink>,
+    ) -> Self {
+        self.chat_send_sink = sink;
         self
     }
 }

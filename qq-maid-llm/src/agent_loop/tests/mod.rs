@@ -743,6 +743,7 @@ fn delta_sink(deltas: Arc<StdMutex<Vec<String>>>) -> AgentTextDeltaSink {
 mod budget_timeout;
 mod cancel;
 mod fallback;
+mod interjections;
 mod streaming;
 mod tool_execution;
 mod tool_validation;

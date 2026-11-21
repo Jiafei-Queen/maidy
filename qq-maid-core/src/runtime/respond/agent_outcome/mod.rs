@@ -388,6 +388,18 @@ impl AgentTurnOutcome {
         self.tool_loop_incomplete || !self.unknown_result_tools.is_empty()
     }
 
+    /// 本轮是否只有已经独立交付的成功副作用结果（例如 `send_message`）。
+    ///
+    /// 这类回合允许模型最终正文为空；空正文就是“本轮已经说完”的正常结果，
+    /// 不能被判为 Tool Loop 失败，也不能追加“模型未整理出回复”的兜底文案。
+    pub(crate) fn delivered_only_out_of_band(&self) -> bool {
+        !self.outcomes.is_empty()
+            && self.outcomes.iter().all(|outcome| {
+                outcome.presentation == OutcomePresentation::OutOfBand
+                    && outcome.status == ToolOutcomeStatus::Succeeded
+            })
+    }
+
     pub(crate) fn render_provenance(&self) -> CommandBody {
         render_provenance_sources(&self.provenance)
     }

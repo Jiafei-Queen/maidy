@@ -573,6 +573,7 @@ async fn non_stream_timeout_returns_structured_agent_failure() {
         None,
         None,
         None,
+        None,
         std::time::Duration::from_millis(10),
         std::time::Duration::from_millis(10),
     )
@@ -603,6 +604,7 @@ async fn streaming_first_activity_timeout_and_fallback_timeout_keep_diagnostics(
         3,
         None,
         Some(delta_sink(Arc::new(StdMutex::new(Vec::new())))),
+        None,
         None,
         std::time::Duration::from_millis(10),
         std::time::Duration::from_millis(10),
@@ -637,6 +639,7 @@ async fn candidate_stream_and_non_stream_timeouts_allow_next_candidate_with_budg
         None,
         Some(delta_sink(Arc::new(StdMutex::new(Vec::new())))),
         Some(handle.clone()),
+        None,
         std::time::Duration::from_millis(10),
         std::time::Duration::from_millis(10),
     )
@@ -676,6 +679,7 @@ async fn candidate_stream_and_non_stream_timeouts_allow_next_candidate_with_budg
         None,
         None,
         Some(handle),
+        None,
         std::time::Duration::from_millis(10),
         std::time::Duration::from_millis(10),
     )
@@ -712,6 +716,7 @@ async fn exhausted_agent_deadline_blocks_next_candidate() {
         None,
         Some(delta_sink(Arc::new(StdMutex::new(Vec::new())))),
         Some(handle.clone()),
+        None,
         std::time::Duration::from_millis(100),
         std::time::Duration::from_millis(100),
     )

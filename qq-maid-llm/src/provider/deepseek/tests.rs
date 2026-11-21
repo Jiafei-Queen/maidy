@@ -282,6 +282,8 @@ async fn tool_loop_replays_reasoning_function_call_and_real_tool_output() {
                     ) as crate::agent_loop::AgentTextDeltaSink
                 }),
                 run_handle: None,
+                allow_empty_final_answer: false,
+                interjections: None,
             })
             .await
             .unwrap();
@@ -442,6 +444,8 @@ async fn model_protocol_is_selected_before_chat_stream_and_agent_requests() {
                                 progress_sink: None,
                                 final_delta_sink: None,
                                 run_handle: None,
+                                allow_empty_final_answer: false,
+                                interjections: None,
                             })
                             .await
                             .unwrap()
@@ -496,6 +500,8 @@ async fn responses_parameter_400_never_switches_to_chat() {
                     progress_sink: None,
                     final_delta_sink: None,
                     run_handle: None,
+                    allow_empty_final_answer: false,
+                    interjections: None,
                 })
                 .await
                 .unwrap_err(),

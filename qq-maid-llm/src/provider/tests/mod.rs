@@ -379,6 +379,8 @@ fn tool_request() -> ToolChatRequest {
         progress_sink: None,
         final_delta_sink: None,
         run_handle: None,
+        allow_empty_final_answer: false,
+        interjections: None,
     }
 }
 

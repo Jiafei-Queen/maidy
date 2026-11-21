@@ -180,6 +180,8 @@ enabled_tools = [
 
 # 群聊普通聊天：默认 fast，完整 Tool Loop 默认关闭；save_memory 与 send_voice
 # 保留受限工具路径，不会连带开放天气、搜索、Todo 等其他工具。
+# send_message 是 Agent 主动发言的基础设施 Tool，无论白名单和受限模式如何都会
+# 自动可用，不需要在此列出。
 # 确需开启完整群聊 Tool Loop 时，先确认群聊白名单、权限边界和敏感信息脱敏。
 # 默认群聊白名单不包含 Todo；如需开放 Todo 查询，请显式加入 list_todos / get_todo，
 # 并先确认群聊 Todo owner 语义符合预期。

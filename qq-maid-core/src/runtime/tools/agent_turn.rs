@@ -164,6 +164,7 @@ pub(crate) fn postprocess_tool_turn(
 
     let mut outcome = project_tool_turn(task_store, state_session, meta, &output)?;
     if output.model_reply_empty
+        && !outcome.delivered_only_out_of_band()
         && !outcome.has_incomplete_result()
         && !outcome.has_unhandled_outcome()
         && !outcome.can_render_deterministic_reply()
@@ -295,6 +296,8 @@ fn project_tool_turn(
         } else if let Some(outcome) = memory::agent_turn::tool_outcome_from_result(result) {
             outcomes.push(outcome);
         } else if let Some(outcome) = super::voice::tool_outcome_from_result(result) {
+            outcomes.push(outcome);
+        } else if let Some(outcome) = super::message::agent_turn::tool_outcome_from_result(result) {
             outcomes.push(outcome);
         } else {
             outcomes.push(ToolExecutionOutcome::generic(result));

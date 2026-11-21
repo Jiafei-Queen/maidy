@@ -22,6 +22,8 @@ fn agent_tool_trace(
         final_candidate_tool_result_start: Some(0),
         tools_with_unknown_result: Vec::new(),
         streaming_fallback_used: false,
+        interjections_received: 0,
+        interjections_injected: 0,
         stop_reason: Some(AgentStopReason::ToolUsed),
     }
 }
@@ -538,6 +540,8 @@ impl LlmProvider for MockProvider {
                             final_candidate_tool_result_start: Some(0),
                             tools_with_unknown_result: Vec::new(),
                             streaming_fallback_used: false,
+                            interjections_received: 0,
+                            interjections_injected: 0,
                             stop_reason: Some(AgentStopReason::ToolUsed),
                         },
                     });
@@ -731,6 +735,8 @@ impl LlmProvider for MockProvider {
                             final_candidate_tool_result_start: Some(0),
                             tools_with_unknown_result: Vec::new(),
                             streaming_fallback_used: false,
+                            interjections_received: 0,
+                            interjections_injected: 0,
                             stop_reason: Some(AgentStopReason::ToolUsed),
                         },
                     });
@@ -806,6 +812,8 @@ impl LlmProvider for MockProvider {
                             final_candidate_tool_result_start: Some(0),
                             tools_with_unknown_result: Vec::new(),
                             streaming_fallback_used: false,
+                            interjections_received: 0,
+                            interjections_injected: 0,
                             stop_reason: Some(AgentStopReason::Rejected),
                         },
                     });

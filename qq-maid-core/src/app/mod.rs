@@ -244,6 +244,15 @@ impl LlmRuntime {
         self
     }
 
+    /// 注入 Gateway 实现的会话发言能力；未注入时 Core 不注册 `send_message`。
+    pub fn with_chat_send_sink(
+        mut self,
+        sink: Option<crate::runtime::tools::message::DynChatSendSink>,
+    ) -> Self {
+        self.core_state = self.core_state.with_chat_send_sink(sink);
+        self
+    }
+
     /// 返回 Core HTTP 健康检查 URL。
     ///
     /// 当 bind 地址为通配地址（0.0.0.0 / ::）时，自动映射为本地回环地址，

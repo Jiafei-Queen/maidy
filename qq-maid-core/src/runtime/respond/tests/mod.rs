@@ -9,6 +9,7 @@ mod memory_tool;
 mod ops;
 mod rss;
 mod search;
+mod send_message_tool;
 mod session;
 mod slash_pending;
 pub(crate) mod support;

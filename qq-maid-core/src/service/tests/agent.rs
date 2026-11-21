@@ -181,7 +181,11 @@ async fn core_tool_loop_streams_only_final_answer_after_tool_status() {
             .await
             .unwrap(),
     );
-    assert_eq!(stream.output_policy(), CoreOutputPolicy::ProgressThenStream);
+    // Agent Runtime 的发言由 send_message 控制，最终文本不再逐字流式外发。
+    assert_eq!(
+        stream.output_policy(),
+        CoreOutputPolicy::ProgressThenComplete
+    );
 
     let mut status_kinds = Vec::new();
     let mut deltas = Vec::new();
@@ -197,9 +201,8 @@ async fn core_tool_loop_streams_only_final_answer_after_tool_status() {
         }
     };
 
-    // Agent 最终正文要等工具结果完成领域投影后再对外发送，因此同一轮暂存为
-    // 一个可信增量，避免平台先收到模型草稿、随后又收到确定性回执。
-    assert_eq!(deltas, vec!["最终回答".to_owned()]);
+    // 关闭 Agent 逐字流式后，最终正文只通过 Completed 交付一次。
+    assert!(deltas.is_empty());
     assert_eq!(response.text_content(), Some("最终回答"));
     assert!(status_kinds.contains(&CoreResponseStatusKind::AgentStarted));
     assert!(status_kinds.contains(&CoreResponseStatusKind::AgentFinalizing));
@@ -495,7 +498,10 @@ async fn core_private_general_chat_agent_direct_answer_streams_text_deltas() {
             .await
             .unwrap(),
     );
-    assert_eq!(stream.output_policy(), CoreOutputPolicy::ProgressThenStream);
+    assert_eq!(
+        stream.output_policy(),
+        CoreOutputPolicy::ProgressThenComplete
+    );
 
     let mut statuses = Vec::new();
     let mut deltas = Vec::new();
@@ -512,7 +518,10 @@ async fn core_private_general_chat_agent_direct_answer_streams_text_deltas() {
     };
 
     assert!(statuses.is_empty());
-    assert_eq!(deltas, vec!["普通".to_owned(), "回复".to_owned()]);
+    assert!(
+        deltas.is_empty(),
+        "Agent 文本不再通过逐字流式外发: {deltas:?}"
+    );
     assert_eq!(response.text_content(), Some("普通回复"));
     let diagnostics = response.diagnostics.as_ref().unwrap();
     assert_eq!(diagnostics["tool_calling_available"], true);
@@ -537,7 +546,10 @@ async fn core_streaming_web_search_argument_failure_sends_only_projected_error_d
             .await
             .unwrap(),
     );
-    assert_eq!(stream.output_policy(), CoreOutputPolicy::ProgressThenStream);
+    assert_eq!(
+        stream.output_policy(),
+        CoreOutputPolicy::ProgressThenComplete
+    );
 
     let mut deltas = Vec::new();
     let response = loop {
@@ -554,7 +566,7 @@ async fn core_streaming_web_search_argument_failure_sends_only_projected_error_d
 
     let expected = "【联网查询】\n\n本次联网查询的参数无效，查询未执行。请换一种说法再试。";
     let draft = "模型草稿：联网查询已经成功完成，不应直接发送。";
-    assert_eq!(deltas, vec![expected.to_owned()]);
+    assert!(deltas.is_empty(), "最终正文不再流式外发: {deltas:?}");
     assert_eq!(response.text_content(), Some(expected));
     assert!(!deltas.iter().any(|delta| delta.contains(draft)));
     assert!(!response.text_content().unwrap().contains(draft));
@@ -580,7 +592,10 @@ async fn core_agent_buffered_draft_incomplete_falls_back_to_second_candidate_wit
             .await
             .unwrap(),
     );
-    assert_eq!(stream.output_policy(), CoreOutputPolicy::ProgressThenStream);
+    assert_eq!(
+        stream.output_policy(),
+        CoreOutputPolicy::ProgressThenComplete
+    );
 
     let mut status_kinds = Vec::new();
     let mut deltas = Vec::new();
@@ -611,18 +626,13 @@ async fn core_agent_buffered_draft_incomplete_falls_back_to_second_candidate_wit
             .is_some_and(|text| text.contains(DRAFT)),
         "first-candidate draft leaked into final response"
     );
-    // 第二候选最终正文只出现一次；自然语言 Agent 的模型正文取代缓冲草稿，
-    // 且不会与第一候选草稿拼接。
-    assert_eq!(
-        deltas.len(),
-        1,
-        "final body must appear exactly once: {deltas:?}"
-    );
-    let projected = &deltas[0];
+    // 关闭逐字流式后，第二候选最终正文只通过 Completed 出现一次；
+    // 自然语言 Agent 的模型正文取代缓冲草稿，且不会与第一候选草稿拼接。
+    assert!(deltas.is_empty(), "Agent 最终正文不再流式外发: {deltas:?}");
+    let projected = response.text_content().unwrap_or_default();
     assert_eq!(projected, FINAL);
     assert!(!projected.contains("第一候选独有来源"));
     assert!(!projected.contains("https://example.test/failed-candidate"));
-    assert_eq!(response.text_content(), Some(projected.as_str()));
     // Completed 只出现一次，且之后不再产生事件。
     assert_eq!(completed, 1);
     assert!(
