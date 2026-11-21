@@ -304,3 +304,68 @@ async fn onebot_voice_tool_sends_record_segment_for_private_and_group_targets() 
         ]
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn onebot_private_send_delay_shows_typing_before_message() {
+    use qq_maid_core::runtime::tools::message::{ChatSendIntent, ChatSendSink};
+    use std::time::Duration;
+
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    let sink = Arc::new(sink);
+    let sender_for_task = sink.clone();
+    let task = tokio::spawn(async move {
+        sender_for_task
+            .send_messages(ChatSendIntent {
+                target: PushTarget::onebot11("bot-1", PushTargetType::Private, "user-1"),
+                reply_to_message_id: None,
+                messages: vec!["稍等".to_owned()],
+                initial_delay: Some(Duration::from_millis(1000)),
+                gap: None,
+                on_sent: None,
+            })
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    assert_eq!(sender.calls(), vec!["typing:user-1"]);
+    tokio::time::advance(Duration::from_millis(999)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(sender.calls(), vec!["typing:user-1"]);
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let result = task.await.expect("delay task should not panic").unwrap();
+    assert_eq!(result.sent.len(), 1);
+    assert_eq!(sender.calls(), vec!["typing:user-1", "private:user-1:稍等"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn onebot_group_send_delay_does_not_send_typing() {
+    use qq_maid_core::runtime::tools::message::{ChatSendIntent, ChatSendSink};
+    use std::time::Duration;
+
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    let sink = Arc::new(sink);
+    let sender_for_task = sink.clone();
+    let task = tokio::spawn(async move {
+        sender_for_task
+            .send_messages(ChatSendIntent {
+                target: PushTarget::onebot11("bot-1", PushTargetType::Group, "group-1"),
+                reply_to_message_id: None,
+                messages: vec!["群里回复".to_owned()],
+                initial_delay: Some(Duration::from_millis(500)),
+                gap: None,
+                on_sent: None,
+            })
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    assert!(sender.calls().is_empty());
+    tokio::time::advance(Duration::from_millis(500)).await;
+    task.await.expect("delay task should not panic").unwrap();
+    assert_eq!(sender.calls(), vec!["group:group-1:群里回复"]);
+}

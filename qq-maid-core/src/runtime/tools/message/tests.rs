@@ -294,3 +294,57 @@ async fn timeout_keeps_delivered_messages_in_ledger() {
     assert_eq!(retry.value["duplicate"], true);
     assert_eq!(delivery.sent_count(), 1);
 }
+
+#[tokio::test]
+async fn pacing_config_sets_initial_delay_and_gap() {
+    use crate::config::ChatSendPacingConfig;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::default());
+    let pacing = ChatSendPacingConfig {
+        delay_min: Duration::from_millis(1500),
+        delay_max: Duration::from_millis(1500),
+        gap: Duration::from_millis(300),
+    };
+    let tool = SendMessageTool::new(sink.clone()).with_pacing(pacing);
+    let delivery = Arc::new(TurnDelivery::new(4, Some("inbound-1".to_owned())));
+    let tool = tool
+        .scoped_for_request(&request(), delivery)
+        .expect("group request should bind a send target");
+
+    let output = tool
+        .execute(context(), json!({"messages": ["第一句"]}))
+        .await
+        .unwrap();
+
+    assert_eq!(output.value["ok"], true);
+    let calls = sink.calls.lock().unwrap();
+    assert_eq!(calls[0].initial_delay, Some(Duration::from_millis(1500)));
+    assert_eq!(calls[0].gap, Some(Duration::from_millis(300)));
+}
+
+#[tokio::test]
+async fn pacing_delay_is_dropped_when_tool_budget_is_short() {
+    use crate::config::ChatSendPacingConfig;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::default());
+    let pacing = ChatSendPacingConfig {
+        delay_min: Duration::from_secs(20),
+        delay_max: Duration::from_secs(20),
+        gap: Duration::ZERO,
+    };
+    let (tool, _) = scoped_tool(sink.clone(), 4);
+    let tool = tool.with_pacing(pacing);
+    let mut ctx = context();
+    ctx.execution_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(2));
+
+    let output = tool
+        .execute(ctx, json!({"messages": ["来不及拟人了"]}))
+        .await
+        .unwrap();
+
+    assert_eq!(output.value["ok"], true);
+    let calls = sink.calls.lock().unwrap();
+    assert_eq!(calls[0].initial_delay, None);
+}

@@ -3,15 +3,15 @@
 //! sender 只负责把平台原始目标转换成 OneBot action，并以 API response 的真实结果
 //! 判定发送成功。消息正文始终使用 segment 数组，Core 和主动推送层不接触 CQ 码。
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Number, Value, json};
 use thiserror::Error;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::gateway::logging::mask_identifier;
-use crate::media::ImagePayload;
+use crate::{config::DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED, media::ImagePayload};
 
 use super::{
     OneBotCallError, OneBotConnectionContext,
@@ -66,11 +66,51 @@ impl OneBotSendError {
 #[derive(Clone)]
 pub struct OneBotSender {
     connection: OneBotConnectionContext,
+    typing_enabled: bool,
 }
 
 impl OneBotSender {
     pub fn new(connection: OneBotConnectionContext) -> Self {
-        Self { connection }
+        Self {
+            connection,
+            typing_enabled: DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED,
+        }
+    }
+
+    /// 由启动配置决定是否尝试 NapCat 的 `set_input_status` 扩展。
+    pub fn with_typing_enabled(mut self, enabled: bool) -> Self {
+        self.typing_enabled = enabled;
+        self
+    }
+
+    /// 尽力显示私聊“正在输入”；不支持该扩展时只记 debug，不影响真实发送。
+    pub async fn send_typing(&self, user_id: &str) {
+        if !self.typing_enabled {
+            return;
+        }
+        let user_id = user_id.trim();
+        if user_id.is_empty() || user_id.parse::<u64>().is_err() {
+            return;
+        }
+        let result = self
+            .connection
+            .call_with_timeout(
+                "set_input_status",
+                json!({"user_id": user_id, "event_type": 1}),
+                Duration::from_secs(2),
+            )
+            .await;
+        match result {
+            Ok(_) => debug!(
+                target = %mask_identifier(user_id),
+                "OneBot 11 正在输入状态已发送"
+            ),
+            Err(error) => debug!(
+                target = %mask_identifier(user_id),
+                error = %error,
+                "OneBot 11 正在输入状态发送失败或适配器不支持"
+            ),
+        }
     }
 
     pub fn connected_account_id(&self) -> Option<String> {

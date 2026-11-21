@@ -124,6 +124,8 @@ struct GatewayPushRuntime {
 #[async_trait]
 trait PushOneBotSender: Send + Sync {
     fn connected_account_id(&self) -> Option<String>;
+    /// 尽力显示私聊“正在输入”；失败不能影响真实发送。
+    async fn send_typing(&self, target_id: &str);
     async fn send_private_text(
         &self,
         target_id: &str,
@@ -156,6 +158,10 @@ trait PushOneBotSender: Send + Sync {
 impl PushOneBotSender for OneBotSender {
     fn connected_account_id(&self) -> Option<String> {
         OneBotSender::connected_account_id(self)
+    }
+
+    async fn send_typing(&self, target_id: &str) {
+        OneBotSender::send_typing(self, target_id).await;
     }
 
     async fn send_private_text(

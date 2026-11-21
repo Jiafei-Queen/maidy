@@ -53,6 +53,19 @@ impl OneBotPushRuntime {
             return Err(ChatSendError::Unavailable);
         }
         let mut sent = Vec::new();
+        // 首条消息前的拟人等待；私聊同时显示平台“正在输入”，群聊没有该状态。
+        if let Some(delay) = intent.initial_delay {
+            if intent.target.target_type == PushTargetType::Private {
+                let sender = self.sender.clone();
+                let target_id = target_id.to_owned();
+                tokio::join!(
+                    async move { sender.send_typing(&target_id).await },
+                    tokio::time::sleep(delay)
+                );
+            } else {
+                tokio::time::sleep(delay).await;
+            }
+        }
         for (index, text) in intent.messages.iter().enumerate() {
             let text = text.trim();
             if text.is_empty() {
@@ -125,6 +138,9 @@ impl GatewayPushRuntime {
             return Err(ChatSendError::Unavailable);
         }
         let mut sent = Vec::new();
+        if let Some(delay) = intent.initial_delay {
+            tokio::time::sleep(delay).await;
+        }
         for (index, text) in intent.messages.iter().enumerate() {
             let text = text.trim();
             if text.is_empty() {
@@ -264,6 +280,9 @@ impl WechatPushRuntime {
             return Err(ChatSendError::TargetMissing);
         }
         let mut sent = Vec::new();
+        if let Some(delay) = intent.initial_delay {
+            tokio::time::sleep(delay).await;
+        }
         for (index, text) in intent.messages.iter().enumerate() {
             let text = text.trim();
             if text.is_empty() {

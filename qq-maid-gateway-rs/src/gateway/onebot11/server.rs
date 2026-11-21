@@ -138,7 +138,8 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
             "OneBot 11 语音转写已启用，单独放宽 action response 传输上限"
         );
     }
-    let sender = OneBotSender::new(connection.clone());
+    let sender =
+        OneBotSender::new(connection.clone()).with_typing_enabled(config.agent_typing_enabled);
     let dispatcher = OneBotScopeDispatcher::new(
         &app_config,
         OneBotInboundDispatcher::new(

@@ -160,6 +160,7 @@ fn loads_onebot11_single_account_config_without_qq_credentials() {
             access_token: Some("onebot-token".to_owned()),
             request_timeout: Duration::from_millis(2500),
             max_message_bytes: 2 * 1024 * 1024,
+            agent_typing_enabled: true,
         }
     );
 }

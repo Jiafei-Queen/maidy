@@ -56,6 +56,13 @@ impl PushOneBotSender for MockOneBotSender {
         self.account_id.clone()
     }
 
+    async fn send_typing(&self, target_id: &str) {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("typing:{target_id}"));
+    }
+
     async fn send_private_text(
         &self,
         target_id: &str,

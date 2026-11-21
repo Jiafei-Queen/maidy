@@ -467,6 +467,7 @@ fn respond_options(config: &AppConfig) -> RespondServiceOptions {
         ops_config: config.ops_config.clone(),
         command_prefix: config.command_prefix,
         voice: config.voice.clone(),
+        chat_send_pacing: config.chat_send_pacing.clone(),
     }
 }
 

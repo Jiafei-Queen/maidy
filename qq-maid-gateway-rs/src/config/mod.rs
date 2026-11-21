@@ -43,6 +43,7 @@ pub const DEFAULT_ONEBOT11_BIND_HOST: &str = "127.0.0.1";
 pub const DEFAULT_ONEBOT11_BIND_PORT: u16 = 8789;
 pub const DEFAULT_ONEBOT11_WEBSOCKET_PATH: &str = "/onebot/v11/ws";
 pub const DEFAULT_ONEBOT11_REQUEST_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED: bool = true;
 pub const DEFAULT_ONEBOT11_MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 pub const MIN_ONEBOT11_MAX_MESSAGE_BYTES: u64 = 1024;
 pub const MAX_ONEBOT11_MAX_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -122,6 +123,8 @@ pub struct OneBot11Config {
     pub access_token: Option<String>,
     pub request_timeout: Duration,
     pub max_message_bytes: usize,
+    /// 是否尝试用 NapCat `set_input_status` 显示私聊“正在输入”。
+    pub agent_typing_enabled: bool,
 }
 
 impl Default for OneBot11Config {
@@ -134,6 +137,7 @@ impl Default for OneBot11Config {
             access_token: None,
             request_timeout: Duration::from_millis(DEFAULT_ONEBOT11_REQUEST_TIMEOUT_MS),
             max_message_bytes: DEFAULT_ONEBOT11_MAX_MESSAGE_BYTES as usize,
+            agent_typing_enabled: DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED,
         }
     }
 }
@@ -515,6 +519,8 @@ fn parse_onebot11_config(env: &HashMap<String, String>) -> Result<OneBot11Config
         MIN_ONEBOT11_MAX_MESSAGE_BYTES,
         MAX_ONEBOT11_MAX_MESSAGE_BYTES,
     )?;
+    let agent_typing_enabled = parse_bool(env, "ONEBOT11_AGENT_TYPING_ENABLED")?
+        .unwrap_or(DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED);
 
     Ok(OneBot11Config {
         enabled,
@@ -525,6 +531,7 @@ fn parse_onebot11_config(env: &HashMap<String, String>) -> Result<OneBot11Config
         access_token,
         request_timeout: Duration::from_millis(request_timeout_ms),
         max_message_bytes: max_message_bytes as usize,
+        agent_typing_enabled,
     })
 }
 
