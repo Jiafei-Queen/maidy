@@ -165,18 +165,23 @@ impl OneBotMessageAggregatorHandle {
             .unwrap_or_else(|_| "invalid_scope".to_owned())
     }
 
-    fn shutdown(&self) -> oneshot::Receiver<()> {
-        let (ack, reply) = oneshot::channel();
-        let _ = self
+    /// 请求 actor 封口并退出；命令队列已满时用本地令牌兜底取消，
+    /// actor 会在 select 中观察到取消并自行 flush。
+    fn request_shutdown(&self) {
+        let (ack, _reply) = oneshot::channel();
+        if let Err(mpsc::error::TrySendError::Full(_)) = self
             .command_tx
-            .try_send(AggregatorCommand::Shutdown { ack });
-        reply
+            .try_send(AggregatorCommand::Shutdown { ack })
+        {
+            self.shutdown.cancel();
+        }
     }
 }
 
 pub(super) struct OneBotMessageAggregator {
     handle: OneBotMessageAggregatorHandle,
     join_handle: JoinHandle<()>,
+    /// 聚合器私有取消令牌：只从父令牌向下继承，关闭时不会反向取消整个 Gateway。
     shutdown: CancellationToken,
 }
 
@@ -191,6 +196,8 @@ impl OneBotMessageAggregator {
     ) -> Self {
         let capacity = config.max_active_keys.saturating_mul(2).max(8);
         let (command_tx, command_rx) = mpsc::channel(capacity);
+        // 子令牌随父 Gateway 关闭而取消；关闭自身时只影响聚合器，不反向取消 Gateway。
+        let shutdown = shutdown.child_token();
         let actor = AggregatorActor {
             config,
             respond,
@@ -220,12 +227,15 @@ impl OneBotMessageAggregator {
     }
 
     pub(super) async fn shutdown(mut self) {
-        let reply = self.handle.shutdown();
-        if timeout(AGGREGATOR_SHUTDOWN_TIMEOUT, reply).await.is_err() {
+        self.handle.request_shutdown();
+        if timeout(AGGREGATOR_SHUTDOWN_TIMEOUT, &mut self.join_handle)
+            .await
+            .is_err()
+        {
             warn!("OneBot 11 消息聚合器关闭超时，正在强制停止");
             self.shutdown.cancel();
+            let _ = timeout(AGGREGATOR_SHUTDOWN_TIMEOUT, &mut self.join_handle).await;
         }
-        let _ = timeout(AGGREGATOR_SHUTDOWN_TIMEOUT, &mut self.join_handle).await;
     }
 }
 
