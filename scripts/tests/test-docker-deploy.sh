@@ -7,8 +7,8 @@ trap 'rm -rf "${TEST_DIR}"' EXIT
 
 TARGET_COMMIT="1111111111111111111111111111111111111111"
 OLD_COMMIT="2222222222222222222222222222222222222222"
-TARGET_IMAGE="ghcr.io/kuliantnt/qq-maid-bot@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-OLD_IMAGE="ghcr.io/kuliantnt/qq-maid-bot@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+TARGET_IMAGE="ghcr.io/jiafei-queen/maidy@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+OLD_IMAGE="ghcr.io/jiafei-queen/maidy@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 FAKE_DOCKER="${TEST_DIR}/docker"
 cat > "${FAKE_DOCKER}" <<'EOF'
@@ -204,7 +204,7 @@ fi
 grep -Fqx "QQ_MAID_IMAGE=${OLD_IMAGE}" "${backup_fail_dir}/.image.env"
 
 invalid_dir="$(new_instance invalid)"
-if run_deploy "${invalid_dir}" success "ghcr.io/kuliantnt/qq-maid-bot:main" "${TARGET_COMMIT}"; then
+if run_deploy "${invalid_dir}" success "ghcr.io/jiafei-queen/maidy:main" "${TARGET_COMMIT}"; then
     echo "expected mutable tag rejection" >&2
     exit 1
 fi

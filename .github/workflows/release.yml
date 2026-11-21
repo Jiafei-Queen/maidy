@@ -129,11 +129,12 @@ jobs:
 
   # Docker 正式标签只晋级 main Container workflow 已发布的 commit 镜像；
   # 测试环境验证是否为硬门禁由独立仓库变量控制。
-  # 此 job 不执行 docker build；同一 manifest 同步到 GHCR 与 Docker Hub。
+  # 此 job 不执行 docker build；只在 CONTAINER_PUBLISH_ENABLED=true 时运行。
   promote-container:
     name: Promote existing container digest
     needs: preflight
     if: |
+      vars.CONTAINER_PUBLISH_ENABLED == 'true' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.preflight.outputs.allow_publish == 'true'
     runs-on: ubuntu-latest
@@ -142,8 +143,7 @@ jobs:
       contents: read
       packages: write
     env:
-      GHCR_REPOSITORY: ghcr.io/kuliantnt/qq-maid-bot
-      DOCKERHUB_REPOSITORY: docker.io/kuliantnt/qq-maid-bot
+      GHCR_REPOSITORY: ghcr.io/jiafei-queen/maidy
       REQUIRE_TEST_DEPLOY_FOR_RELEASE: ${{ vars.REQUIRE_TEST_DEPLOY_FOR_RELEASE || 'false' }}
 
     steps:
@@ -157,32 +157,12 @@ jobs:
           TAG_COMMIT: ${{ needs.preflight.outputs.tag_commit }}
         run: bash scripts/verify-container-release.sh
 
-      - name: Validate Docker Hub credentials
-        shell: bash
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          for name in DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
-            [[ -n "${!name}" ]] || {
-              echo "::error::缺少正式镜像发布 Secret: ${name}"
-              exit 1
-            }
-          done
-
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v4
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up crane
         uses: imjasonh/setup-crane@v0.4
@@ -193,7 +173,7 @@ jobs:
           TAG_COMMIT: ${{ needs.preflight.outputs.tag_commit }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          trap 'echo "::error::正式容器双渠道发布未完成；当前结果不能视为 GHCR 与 Docker Hub 均发布成功"' ERR
+          trap 'echo "::error::正式容器发布未完成；当前结果不能视为 GHCR 发布成功"' ERR
           if [[ ! "${TAG_NAME}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             echo "::error::容器正式晋级仅接受 vX.Y.Z 稳定版本 tag"
             exit 1
@@ -215,35 +195,21 @@ jobs:
             }
           done
 
-          # crane copy 直接复制 main 阶段已经构建的 commit manifest，不触发 Docker build。
-          crane copy "${GHCR_REPOSITORY}@${digest}" "${DOCKERHUB_REPOSITORY}:${TAG_NAME}"
-          dockerhub_digest="$(crane digest "${DOCKERHUB_REPOSITORY}:${TAG_NAME}")"
-          [[ "${dockerhub_digest}" == "${digest}" ]] || {
-            echo "::error::Docker Hub manifest digest=${dockerhub_digest} 与已测试 GHCR digest=${digest} 不一致"
-            exit 1
-          }
-
+          # commit manifest 已在 main 阶段构建，tag 阶段只追加标签，不触发 Docker build。
           for tag in "${TAG_NAME}" "${major}.${minor}" "${major}" latest; do
             crane tag "${GHCR_REPOSITORY}@${digest}" "${tag}"
-            crane tag "${DOCKERHUB_REPOSITORY}@${dockerhub_digest}" "${tag}"
-            ghcr_tag_digest="$(crane digest "${GHCR_REPOSITORY}:${tag}")"
-            dockerhub_tag_digest="$(crane digest "${DOCKERHUB_REPOSITORY}:${tag}")"
-            [[ "${ghcr_tag_digest}" == "${digest}" ]] || {
+            tag_digest="$(crane digest "${GHCR_REPOSITORY}:${tag}")"
+            [[ "${tag_digest}" == "${digest}" ]] || {
               echo "::error::GHCR 标签 ${tag} 的实际 manifest digest 不一致"
-              exit 1
-            }
-            [[ "${dockerhub_tag_digest}" == "${digest}" ]] || {
-              echo "::error::Docker Hub 标签 ${tag} 的实际 manifest digest 不一致"
               exit 1
             }
           done
 
           {
             printf '%s\n' "GHCR manifest: \`${GHCR_REPOSITORY}@${digest}\`"
-            printf '%s\n' "Docker Hub manifest: \`${DOCKERHUB_REPOSITORY}@${dockerhub_digest}\`"
             printf '%s\n' \
               "tags: \`${TAG_NAME}\`, \`${major}.${minor}\`, \`${major}\`, \`latest\`"
-            printf '%s\n' "双渠道正式标签已逐项校验为同一实际 manifest digest。"
+            printf '%s\n' "GHCR 正式标签已逐项校验为同一实际 manifest digest。"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   # ==========================================================================
@@ -359,9 +325,14 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [preflight, build-package, promote-container]
+    # promote-container 在发布开关关闭时会跳过，因此需要 always() 才能继续发布二进制包；
+    # 开关开启后，镜像晋级失败仍会阻止正式 Release。
     if: |
+      always() &&
       startsWith(github.ref, 'refs/tags/v') &&
-      needs.preflight.outputs.allow_publish == 'true'
+      needs.preflight.outputs.allow_publish == 'true' &&
+      needs.build-package.result == 'success' &&
+      (needs.promote-container.result == 'success' || needs.promote-container.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write

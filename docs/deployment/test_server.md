@@ -249,7 +249,7 @@ sudo chmod 600 \
 PR #562 合并后，下一次 `main` Container workflow 会发布：
 
 ```text
-ghcr.io/kuliantnt/qq-maid-bot:sha-<40位commit>
+ghcr.io/jiafei-queen/maidy:sha-<40位commit>
 ```
 
 打开 GitHub Actions 的 Container workflow，在 Summary 中复制：
@@ -262,7 +262,7 @@ manifest digest
 最终镜像引用类似：
 
 ```text
-ghcr.io/kuliantnt/qq-maid-bot@sha256:abc123...
+ghcr.io/jiafei-queen/maidy@sha256:abc123...
 ```
 
 不要用 `main` 标签作为部署事实；应使用完整 digest。
@@ -315,7 +315,7 @@ printf '%s' "$GHCR_READ_TOKEN" |
 cd /opt/qq-maid-bot-test
 
 ./docker-deploy.sh deploy \
-  --image ghcr.io/kuliantnt/qq-maid-bot@sha256:<完整digest> \
+  --image ghcr.io/jiafei-queen/maidy@sha256:<完整digest> \
   --commit <对应的40位commit>
 ```
 
@@ -575,7 +575,7 @@ http://127.0.0.1:8787
 
 ```bash
 ./docker-deploy.sh deploy \
-  --image ghcr.io/kuliantnt/qq-maid-bot@sha256:<旧digest> \
+  --image ghcr.io/jiafei-queen/maidy@sha256:<旧digest> \
   --commit <旧commit>
 ```
 

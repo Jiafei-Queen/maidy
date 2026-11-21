@@ -71,11 +71,12 @@ sudo chown -R 10001:10001 runtime/config runtime/data runtime/media
 找到 `QQ_MAID_IMAGE=` 那一行，把后面的内容换成：
 
 ```text
-QQ_MAID_IMAGE=docker.io/kuliantnt/qq-maid-bot:latest
+QQ_MAID_IMAGE=ghcr.io/jiafei-queen/maidy:latest
 ```
 
-> `latest` 就是「用最新版」的意思，最省事。想固定某个版本，就去
-> [Releases 页面](https://github.com/kuliantnt/qq-maid-bot/releases) 抄一个版本号，
+> 本仓库默认不发布镜像；开启 `CONTAINER_PUBLISH_ENABLED` 并成功运行一次 main
+> Container workflow 后，才会有 `latest` 和版本标签。想固定某个版本，就去
+> [Releases 页面](https://github.com/Jiafei-Queen/maidy/releases) 抄一个版本号，
 > 把 `latest` 换成它，例如 `:v0.24.1`。
 
 `runtime/config/.env` 不用动，里面已经写好了一行网页要用到的设置。
@@ -156,8 +157,7 @@ docker compose --project-directory . --env-file compose.env -f docker/compose.ya
 ```json
 {
   "registry-mirrors": [
-    "https://docker.m.daocloud.io",
-    "https://docker.mirrors.ustc.edu.cn"
+    "https://ghcr.m.daocloud.io"
   ]
 }
 ```
@@ -168,8 +168,6 @@ docker compose --project-directory . --env-file compose.env -f docker/compose.ya
 sudo systemctl restart docker
 ```
 
-> - 加速只对 Docker Hub（`docker.io`）有效，对 `ghcr.io` 没用；拉不到 `ghcr.io` 时，
->   把 `QQ_MAID_IMAGE` 换成 `docker.io/kuliantnt/qq-maid-bot:latest` 就行，两边都有官方镜像。
 > - 公共加速地址随时可能失效，失效就换一个；云服务器厂商（阿里云 / 腾讯云）控制台里
 >   一般有专属加速地址，最稳。
 
@@ -195,7 +193,7 @@ sudo systemctl restart docker
 | 遇到 | 怎么办 |
 | --- | --- |
 | 启动报 `permission denied`（没有权限） | 第 2 步的 `sudo chown -R 10001:10001 runtime/config runtime/data runtime/media` 执行过没有？ |
-| 下载镜像超时 / `429` | 看上面「下载不动怎么办」；或把 `QQ_MAID_IMAGE` 换成 Docker Hub 地址 |
+| 下载镜像超时 / `429` | 看上面「下载不动怎么办」；本仓库镜像只在 GHCR 发布，没有 Docker Hub 备用地址 |
 | 网页打不开 | `runtime/config/.env` 里有没有 `LLM_SERVER_HOST=0.0.0.0`？启动命令有没有带 `-f docker/compose.console.yaml`？ |
 | 容器一直 `unhealthy` | 看上面「机器人没起来怎么查」 |
 | 想接微信 / OneBot 11 | 要额外加载对应配置文件，详见[完整版](./docker.md) |

@@ -28,7 +28,7 @@ ARG QQ_MAID_BUILD_DATE=unknown
 
 LABEL org.opencontainers.image.title="qq-maid-bot" \
       org.opencontainers.image.description="Self-hosted multi-platform AI agent bot" \
-      org.opencontainers.image.source="https://github.com/kuliantnt/qq-maid-bot" \
+      org.opencontainers.image.source="https://github.com/Jiafei-Queen/maidy" \
       org.opencontainers.image.revision="${QQ_MAID_BUILD_COMMIT}" \
       org.opencontainers.image.version="${QQ_MAID_BUILD_VERSION}" \
       org.opencontainers.image.created="${QQ_MAID_BUILD_DATE}" \

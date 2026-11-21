@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_REPOSITORY: ghcr.io/kuliantnt/qq-maid-bot
+  IMAGE_REPOSITORY: ghcr.io/jiafei-queen/maidy
 
 jobs:
   validate:
@@ -63,6 +63,8 @@ jobs:
   build-platform:
     name: Build ${{ matrix.platform }}
     needs: validate
+    # 发布总开关：未开启时 main push 只运行 validate，不构建和推送镜像。
+    if: github.event_name != 'push' || vars.CONTAINER_PUBLISH_ENABLED == 'true'
     permissions:
       contents: read
       packages: write
@@ -187,7 +189,7 @@ jobs:
 
   publish-manifest:
     name: Publish commit manifest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && vars.CONTAINER_PUBLISH_ENABLED == 'true'
     needs: build-platform
     runs-on: ubuntu-latest
     permissions:

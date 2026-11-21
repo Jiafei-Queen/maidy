@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 测试/正式环境只部署受信仓库的 digest，避免可变 tag 在拉取和回滚期间漂移。
-EXPECTED_IMAGE_REPOSITORY="${QQ_MAID_EXPECTED_IMAGE_REPOSITORY:-ghcr.io/kuliantnt/qq-maid-bot}"
+EXPECTED_IMAGE_REPOSITORY="${QQ_MAID_EXPECTED_IMAGE_REPOSITORY:-ghcr.io/jiafei-queen/maidy}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 HEALTH_ATTEMPTS="${DEPLOY_HEALTH_ATTEMPTS:-60}"
 HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-2}"

@@ -65,7 +65,7 @@ sudo chown -R 10001:10001 runtime/config runtime/data runtime/media
 编辑 `compose.env`，把 `QQ_MAID_IMAGE` 替换为版本标签或 digest。正式环境优先使用：
 
 ```text
-QQ_MAID_IMAGE=ghcr.io/kuliantnt/qq-maid-bot@sha256:<64位digest>
+QQ_MAID_IMAGE=ghcr.io/jiafei-queen/maidy@sha256:<64位digest>
 ```
 
 应用配置字段继续以 [`runtime/config/.env.example`](../../runtime/config/.env.example) 和
@@ -152,16 +152,15 @@ docker compose --project-directory . --env-file compose.env \
 | 触发 | 容器行为 |
 | --- | --- |
 | PR | 校验 Compose 和部署脚本，在 amd64/arm64 原生 runner 构建并加载镜像；amd64 执行完整容器运行契约，arm64 执行基础启动与健康检查；不推送、不部署 |
-| `main` | 仅向 GHCR 发布 `sha-<完整commit>` 多架构镜像，输出 digest 并更新可变 `main`；只有仓库变量 `TEST_DEPLOY_ENABLED=true` 时才按 digest 部署测试服 |
-| `vX.Y.Z` | 确认 tag 位于 `main`、对应 main Container workflow 成功、GHCR `sha-<commit>` 存在且双架构 revision label 一致；严格门禁开启时还要求该 commit 已成功部署到 test。不重新构建，把同一 manifest 的 `vX.Y.Z`、`X.Y`、`X`、`latest` 同步到 GHCR 与 Docker Hub，并校验两个 Registry 的实际 digest |
+| `main` | 仓库变量 `CONTAINER_PUBLISH_ENABLED=true` 时向 GHCR 发布 `sha-<完整commit>` 多架构镜像，输出 digest 并更新可变 `main`；未开启时只校验 Compose 和部署脚本。只有仓库变量 `TEST_DEPLOY_ENABLED=true` 时才按 digest 部署测试服 |
+| `vX.Y.Z` | 确认 tag 位于 `main`、对应 main Container workflow 成功、GHCR `sha-<commit>` 存在且双架构 revision label 一致；严格门禁开启时还要求该 commit 已成功部署到 test。不重新构建，把同一 manifest 的 `vX.Y.Z`、`X.Y`、`X`、`latest` 追加到 GHCR，并校验实际 digest。镜像晋级仅在 `CONTAINER_PUBLISH_ENABLED=true` 时运行，否则只发布 GitHub Release 原生包 |
 
-GHCR 镜像为 `ghcr.io/kuliantnt/qq-maid-bot`；Docker Hub 正式镜像为
-`docker.io/kuliantnt/qq-maid-bot`。Docker Hub 不接收 `sha-*` 或 `main`。`main` 和
+GHCR 镜像为 `ghcr.io/jiafei-queen/maidy`。本仓库不向 Docker Hub 发布镜像。`main` 和
 `latest` 都是可变标签，不能作为回滚依据。测试服和正式环境均应把完整
 `仓库@sha256:digest` 记录为部署事实。tag 对应的 commit 镜像不存在时 Release workflow
 会等待最多 10 分钟，让并发触发的 main Container workflow 完成；超时后明确失败，
-不会在 tag 阶段补建另一份镜像。任一 Registry 登录、复制、打标签或 digest
-校验失败，正式发布 job 都会失败，不能视为双渠道发布成功。现有 GitHub Release 原生包仍由
+不会在 tag 阶段补建另一份镜像。GHCR 登录、打标签或 digest 校验失败时，镜像晋级
+job 会失败，但不会影响已生成的 GitHub Release 原生包。现有 GitHub Release 原生包仍由
 同一个 tag 工作流生成；创建 tag 不会自动更新正式服务器。
 
 阿里云测试服是可选能力。仓库没有测试服时，保持发布门禁默认关闭，正常的 main Container
@@ -181,15 +180,9 @@ printf '%s' "${GHCR_READ_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --
 
 不要把仓库写权限或个人高权限 Token 长期留在服务器。
 
-默认不启用测试服时，正常正式 Release 唯一需要预先配置的 GitHub Actions Secrets 是
-Docker Hub 的专用访问令牌：
-
-- `DOCKERHUB_USERNAME`
-- `DOCKERHUB_TOKEN`
-
-令牌只用于 Release workflow 同步正式标签，不参与 PR/main 构建，也不会把 GHCR 的
-`sha-*` 或 `main` 标签同步到 Docker Hub。下文的 `TEST_DEPLOY_*` Secrets 仅在选择启用
-阿里云测试服时需要，不是所有正式 Release 的前置配置。
+默认不启用测试服时，正式 Release 不需要预先配置任何镜像发布 Secret；GHCR 使用
+Actions 自带的 `GITHUB_TOKEN`。下文的 `TEST_DEPLOY_*` Secrets 仅在选择启用阿里云
+测试服时需要，不是所有正式 Release 的前置配置。
 
 ## 阿里云测试服初始化
 
@@ -221,16 +214,17 @@ GitHub Environment 创建 `test`，配置 Secrets：
 - `TEST_DEPLOY_SSH_KEY`
 - `TEST_DEPLOY_KNOWN_HOSTS`
 
-两个仓库 Variable 默认都按 `false` 处理，职责彼此独立：
+仓库 Variable 默认都按 `false` 处理，职责彼此独立：
 
 | Variable | 作用 |
 | --- | --- |
+| `CONTAINER_PUBLISH_ENABLED` | 只有精确设置为 `true` 时，main Container workflow 才构建并推送 GHCR 镜像，Release 才晋级正式镜像标签；关闭时只校验 Compose 和部署脚本，并发布 GitHub Release 原生包 |
 | `TEST_DEPLOY_ENABLED` | 只有精确设置为 `true` 时，main Container workflow 才自动进入 `test` Environment；仅控制自动部署 |
-| `REQUIRE_TEST_DEPLOY_FOR_RELEASE` | 只有精确设置为 `true` 时，Release 才强制要求 tag commit 存在成功的 test Environment 部署；仅控制正式发布门禁 |
+| `REQUIRE_TEST_DEPLOY_FOR_RELEASE` | 只有精确设置为 `true` 时，Release 才强制要求 tag commit 存在成功的 test Environment 部署；仅在 `CONTAINER_PUBLISH_ENABLED=true` 时生效 |
 
-服务器和上述 Secrets 尚未初始化时，两者都保持关闭，GHCR commit 镜像与正式 Release 仍可
-正常发布。不要用 Secret 是否为空作为部署开关。正式项目推荐在测试服验证稳定后同时开启
-两个 Variable；个人部署可以保持默认关闭。若只开启
+服务器和上述 Secrets 尚未初始化时，三个开关都保持关闭，正式 Release 原生包仍可正常发布。
+不要用 Secret 是否为空作为部署开关。正式项目推荐在测试服验证稳定后同时开启
+`CONTAINER_PUBLISH_ENABLED` 与两个部署 Variable；个人部署可以保持默认关闭。若只开启
 `REQUIRE_TEST_DEPLOY_FOR_RELEASE=true` 而未产生成功测试部署，Release 会按设计拒绝晋级。
 
 可选 Environment variable `TEST_DEPLOY_DIR`，默认 `/opt/qq-maid-bot-test`。`KNOWN_HOSTS`
@@ -272,7 +266,7 @@ docker compose --env-file compose.env --env-file .image.env logs --tail 200 bot
 
 ```bash
 ./docker-deploy.sh deploy \
-  --image ghcr.io/kuliantnt/qq-maid-bot@sha256:<digest> \
+  --image ghcr.io/jiafei-queen/maidy@sha256:<digest> \
   --commit <40位commit> \
   --release vX.Y.Z
 ```
