@@ -536,7 +536,59 @@ mod tests {
     fn core_and_gateway_managed_fields_form_one_valid_registry() {
         let mut fields = qq_maid_core::config::managed_config_fields();
         fields.extend(qq_maid_gateway_rs::config::managed_config_fields());
-        qq_maid_core::config::center::ConfigRegistry::new(fields).unwrap();
+        let registry = qq_maid_core::config::center::ConfigRegistry::new(fields).unwrap();
+
+        // 聊天节奏跨 Core/Gateway 两个领域注册，必须在合并后的真实 registry 中可写且有边界。
+        use qq_maid_core::config::center::{
+            ManagedConfigApplyMode, ManagedConfigSensitivity, ManagedConfigValueType,
+        };
+        use toml::Value;
+
+        for key in [
+            "chat.send.delay_min_ms",
+            "chat.send.delay_max_ms",
+            "chat.send.gap_ms",
+            "chat.aggregation.quiet_ms",
+            "chat.aggregation.max_wait_ms",
+            "chat.aggregation.max_messages",
+            "chat.aggregation.max_chars",
+            "chat.aggregation.max_active_keys",
+        ] {
+            let field = registry.require(key).unwrap();
+            assert_eq!(field.value_type, ManagedConfigValueType::Integer);
+            assert_eq!(field.sensitivity, ManagedConfigSensitivity::Public);
+            assert_eq!(field.apply_mode, ManagedConfigApplyMode::Restart);
+            assert!(field.web_editable);
+        }
+
+        let max_wait = registry.require("chat.aggregation.max_wait_ms").unwrap();
+        assert_eq!(max_wait.default_value, Some("0"));
+        registry
+            .validate_managed_value(max_wait, &Value::Integer(0))
+            .unwrap();
+        assert_eq!(
+            registry
+                .validate_managed_value(max_wait, &Value::Integer(300_001))
+                .unwrap_err()
+                .code(),
+            "invalid_config"
+        );
+
+        let quiet = registry.require("chat.aggregation.quiet_ms").unwrap();
+        assert_eq!(quiet.default_value, Some("2000"));
+        assert_eq!(
+            registry
+                .validate_managed_value(quiet, &Value::Integer(0))
+                .unwrap_err()
+                .code(),
+            "invalid_config"
+        );
+
+        let typing = registry
+            .require("platform.onebot11.agent_typing_enabled")
+            .unwrap();
+        assert_eq!(typing.env_name, "ONEBOT11_AGENT_TYPING_ENABLED");
+        assert_eq!(typing.default_value, Some("true"));
     }
 
     #[test]

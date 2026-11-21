@@ -623,3 +623,36 @@ fn runtime_registry_qweather_hosts_match_runtime_defaults() {
         Some(crate::runtime::tools::weather::DEFAULT_QWEATHER_GEO_HOST)
     );
 }
+
+#[test]
+fn chat_pacing_fields_are_public_restart_integers_with_bounds() {
+    let registry = ConfigRegistry::new(crate::config::managed_config_fields()).unwrap();
+
+    let delay = registry.require("chat.send.delay_min_ms").unwrap();
+    assert_eq!(delay.env_name, "CHAT_SEND_DELAY_MIN_MS");
+    assert_eq!(delay.default_value, Some("1000"));
+    assert_eq!(delay.sensitivity, ManagedConfigSensitivity::Public);
+    assert_eq!(delay.apply_mode, ManagedConfigApplyMode::Restart);
+    registry
+        .validate_managed_value(delay, &Value::Integer(0))
+        .unwrap();
+    assert_eq!(
+        registry
+            .validate_managed_value(delay, &Value::Integer(30_001))
+            .unwrap_err()
+            .code(),
+        "invalid_config"
+    );
+
+    let gap = registry.require("chat.send.gap_ms").unwrap();
+    registry
+        .validate_managed_value(gap, &Value::Integer(0))
+        .unwrap();
+    assert_eq!(
+        registry
+            .validate_managed_value(gap, &Value::Integer(10_001))
+            .unwrap_err()
+            .code(),
+        "invalid_config"
+    );
+}
