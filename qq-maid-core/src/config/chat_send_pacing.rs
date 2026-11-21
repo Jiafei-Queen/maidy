@@ -47,7 +47,7 @@ impl ChatSendPacingConfig {
 
     /// 从当前有效环境读取；`0/0` 表示关闭首条延迟。
     pub fn from_environment() -> Result<Self, LlmError> {
-        Self::from_lookup(|name| super::env_optional(name))
+        Self::from_lookup(super::env_optional)
     }
 
     /// 供配置解析和测试共用的取值入口；`lookup` 只返回已设置的原始字符串。
