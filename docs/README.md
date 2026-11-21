@@ -4,6 +4,7 @@
 
 ## 使用指南
 
+- [Web Console 首次配置检查单](./guides/console-first-run-checklist.md)：第一次进入 `/console/` 时，按必备项消除“需要完成配置”并进入正常运行态。
 - [骰子使用教程](./guides/dice.md)：本地骰式、重复投掷、取骰、优势/劣势、奖励/惩罚骰、SealDice 写法与 Entertainment DM 边界。
 
 ## 首先阅读
