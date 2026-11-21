@@ -24,6 +24,7 @@ import {
   type ConfigurationBusinessGroup,
 } from "./configuration-navigation.js";
 import { configInputValue, configurationSummary, isEmptyInputValue, parseConfigInputValue } from "./configuration-values.js";
+import { FirstRunChecklist } from "./first-run-checklist.js";
 import { PublicFieldRow } from "./configuration-field-row.js";
 import { ProviderConnections } from "./provider-connections.js";
 import { AgentEditor } from "./agent-editor.js";
@@ -204,6 +205,8 @@ export function ConfigurationPage() {
         <StatusBadge tone={summary.invalidCount === 0 ? "success" : "warning"} label={summary.invalidCount === 0 ? "本地预检通过" : "需要完成配置"} />
         <StatusBadge tone={summary.pendingCount === 0 ? "neutral" : "warning"} label={summary.pendingCount === 0 ? "无待重启变更" : `${summary.pendingCount} 项重启后生效`} />
       </div>
+
+      <FirstRunChecklist invalidCount={summary.invalidCount} onSelectGroup={changeGroup} />
 
       <QueryState query={snapshotQuery}>
         {snapshot ? (
