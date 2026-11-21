@@ -47,13 +47,20 @@ impl ChatSendPacingConfig {
 
     /// 从当前有效环境读取；`0/0` 表示关闭首条延迟。
     pub fn from_environment() -> Result<Self, LlmError> {
+        Self::from_lookup(|name| super::env_optional(name))
+    }
+
+    /// 供配置解析和测试共用的取值入口；`lookup` 只返回已设置的原始字符串。
+    pub(crate) fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, LlmError> {
         let delay_min_ms = ranged_u64(
+            &lookup,
             "CHAT_SEND_DELAY_MIN_MS",
             DEFAULT_CHAT_SEND_DELAY_MIN_MS,
             0,
             MAX_CHAT_SEND_DELAY_MS,
         )?;
         let delay_max_ms = ranged_u64(
+            &lookup,
             "CHAT_SEND_DELAY_MAX_MS",
             DEFAULT_CHAT_SEND_DELAY_MAX_MS,
             0,
@@ -65,6 +72,7 @@ impl ChatSendPacingConfig {
             ));
         }
         let gap_ms = ranged_u64(
+            &lookup,
             "CHAT_SEND_GAP_MS",
             DEFAULT_CHAT_SEND_GAP_MS,
             0,
@@ -94,8 +102,14 @@ impl ChatSendPacingConfig {
     }
 }
 
-fn ranged_u64(name: &str, default: u64, min: u64, max: u64) -> Result<u64, LlmError> {
-    let Some(value) = super::env_optional(name) else {
+fn ranged_u64(
+    lookup: &impl Fn(&str) -> Option<String>,
+    name: &str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<u64, LlmError> {
+    let Some(value) = lookup(name) else {
         return Ok(default);
     };
     let parsed = value
@@ -162,5 +176,50 @@ mod tests {
             config.effective_delay(Duration::from_secs(2)),
             Duration::ZERO
         );
+    }
+}
+
+#[cfg(test)]
+mod lookup_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn parse(pairs: &[(&str, &str)]) -> Result<ChatSendPacingConfig, LlmError> {
+        let map = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect::<HashMap<_, _>>();
+        ChatSendPacingConfig::from_lookup(|name| map.get(name).cloned())
+    }
+
+    #[test]
+    fn unset_values_use_enabled_defaults() {
+        let config = parse(&[]).unwrap();
+        assert_eq!(config, ChatSendPacingConfig::default());
+    }
+
+    #[test]
+    fn zero_zero_disables_initial_delay() {
+        let config = parse(&[
+            ("CHAT_SEND_DELAY_MIN_MS", "0"),
+            ("CHAT_SEND_DELAY_MAX_MS", "0"),
+            ("CHAT_SEND_GAP_MS", "0"),
+        ])
+        .unwrap();
+        assert_eq!(config.sample_delay(), Duration::ZERO);
+        assert_eq!(config.gap, Duration::ZERO);
+    }
+
+    #[test]
+    fn rejects_reversed_range_and_overflow() {
+        assert!(
+            parse(&[
+                ("CHAT_SEND_DELAY_MIN_MS", "3000"),
+                ("CHAT_SEND_DELAY_MAX_MS", "1000"),
+            ])
+            .is_err()
+        );
+        assert!(parse(&[("CHAT_SEND_DELAY_MIN_MS", "30001")]).is_err());
+        assert!(parse(&[("CHAT_SEND_GAP_MS", "10001")]).is_err());
     }
 }
