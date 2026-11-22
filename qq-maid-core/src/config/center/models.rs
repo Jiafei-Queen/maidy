@@ -19,7 +19,12 @@ impl ConfigCenter {
     }
 
     pub(super) fn discovery_cache_path(&self) -> PathBuf {
-        self.models_path()
+        self.external_environment
+            .get("MODELS_CONFIG_FILE")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.managed_file.path().to_path_buf())
             .with_file_name("models-discovery-cache.json")
     }
 
