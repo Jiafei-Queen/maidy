@@ -99,11 +99,38 @@ export interface RegisteredTool {
   description: string;
 }
 
+export type RouteDiagnosticKind = "model_route" | "search_route" | "stt_route";
+
+export type CandidateIssueCode =
+  | "provider_disabled"
+  | "provider_missing"
+  | "missing_credential"
+  | "model_disabled";
+
+export interface CandidateDiagnostic {
+  index: number;
+  candidate: string;
+  provider: string;
+  model: string;
+  available: boolean;
+  issues: CandidateIssueCode[];
+  message: string | null;
+}
+
+export interface RouteDiagnostic {
+  kind: RouteDiagnosticKind;
+  routeName: string;
+  active: boolean;
+  hasAvailableCandidate: boolean;
+  candidates: CandidateDiagnostic[];
+}
+
 export interface ConfigurationSnapshot {
   providers?: ProviderManagementSnapshot | undefined;
   revision: string;
   fileExists: boolean;
   agent: AgentConfigSnapshot | null;
+  routeDiagnostics?: RouteDiagnostic[] | undefined;
   fields: ConfigFieldSnapshot[];
   registeredTools: RegisteredTool[];
   restartAvailable: boolean;

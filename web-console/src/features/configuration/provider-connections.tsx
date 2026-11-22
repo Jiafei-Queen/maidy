@@ -23,6 +23,8 @@ import {
   setProviderChange,
   type ConnectionFormValues,
 } from "./provider-connection.js";
+import type { ConfigurationBusinessGroup } from "./configuration-navigation.js";
+import { affectedRoutesForProvider, type AffectedRouteItem } from "./route-health.js";
 
 /** 服务端受信预设；Credential 明文只存在于本次输入与请求，服务端不回传也不落前端持久状态。 */
 const BUILTIN_PROVIDERS: ReadonlyArray<readonly [string, string]> = [
@@ -51,6 +53,8 @@ type ProviderConnectionsProps = {
   onSecretDraftChange: (key: string, draft: SecretDraft) => void;
   /** 请求清除密钥：由页面级确认对话框承接破坏性操作。 */
   onRequestSecretClear: (key: string) => void;
+  /** 可选跳转回调：在停用影响提示中一键跳转到模型路由分组。 */
+  onSelectGroup?: ((group: ConfigurationBusinessGroup) => void) | undefined;
 };
 
 /** 供应商连接管理（Cherry Studio 风格主从布局）：
@@ -69,6 +73,7 @@ export function ProviderConnections({
   secretDraft,
   onSecretDraftChange,
   onRequestSecretClear,
+  onSelectGroup,
 }: ProviderConnectionsProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -171,6 +176,7 @@ export function ProviderConnections({
               secretDraft={secretDraft}
               onSecretDraftChange={onSecretDraftChange}
               onRequestSecretClear={onRequestSecretClear}
+              onSelectGroup={onSelectGroup}
             />
           ) : selectedEntry ? (
             <CustomProviderPane
@@ -182,6 +188,7 @@ export function ProviderConnections({
               credential={credentials[selectedEntry.id]}
               presets={presets}
               onResult={onResult}
+              onSelectGroup={onSelectGroup}
             />
           ) : (
             <p className="m-0 py-8 text-center text-sm text-muted">当前没有可管理的供应商；点左侧「+ 新建供应商」创建。</p>
@@ -240,6 +247,7 @@ type BuiltinPaneProps = {
   secretDraft: Record<string, SecretDraft>;
   onSecretDraftChange: (key: string, draft: SecretDraft) => void;
   onRequestSecretClear: (key: string) => void;
+  onSelectGroup?: ((group: ConfigurationBusinessGroup) => void) | undefined;
 };
 
 /** 内置连接：启用开关 + API 密钥（secret 草稿）+ API 地址 + 更多设置 + 测试 + 模型管理。 */
@@ -254,6 +262,7 @@ function BuiltinProviderPane({
   secretDraft,
   onSecretDraftChange,
   onRequestSecretClear,
+  onSelectGroup,
 }: BuiltinPaneProps) {
   // 普通配置与密钥使用不同草稿和保存协议，secret 不得进入 PublicFieldRow。
   const providerFields = fields.filter((field) => field.sensitivity !== "secret" && field.key.startsWith(`provider.${id}.`));
@@ -266,6 +275,10 @@ function BuiltinProviderPane({
   const secret = secretField ? secretDraft[secretField.key] : undefined;
   const enabled = enabledField ? (publicDraft[enabledField.key] ?? configInputValue(enabledField)) !== "false" : true;
   const dirty = providerFields.some((field) => publicDraft[field.key] !== undefined);
+  const affectedRoutes = useMemo(
+    () => (enabled ? [] : affectedRoutesForProvider(snapshot, id, publicDraft)),
+    [enabled, id, publicDraft, snapshot],
+  );
 
   return (
     <section aria-label={`供应商详情 ${id}`} className="flex flex-col gap-4">
@@ -292,6 +305,8 @@ function BuiltinProviderPane({
           </label>
         ) : null}
       </div>
+
+      <DisabledProviderRouteAlert providerId={id} affectedRoutes={affectedRoutes} onSelectGroup={onSelectGroup} />
 
       {secretField ? (
         <div className="flex flex-col gap-1">
@@ -357,10 +372,11 @@ type CustomPaneProps = {
   credential: ConnectionCredentialStatus | undefined;
   presets: NonNullable<ConfigurationSnapshot["providers"]>["presets"];
   onResult: (result: { error: boolean; text: string }) => void;
+  onSelectGroup?: ((group: ConfigurationBusinessGroup) => void) | undefined;
 };
 
-/** 自定义连接：保存/删除走 set_provider / remove_provider；Credential 即时 PATCH；删除被路线引用时原样报错。 */
-function CustomProviderPane({ snapshot, id, saved, preset, credential, presets, onResult }: CustomPaneProps) {
+/** 自定义连接：保存/删除走 set_provider / remove_provider；Credential 即时 PATCH；停用时展示受影响路由警告。 */
+function CustomProviderPane({ snapshot, id, saved, preset, credential, presets, onResult, onSelectGroup }: CustomPaneProps) {
   const queryClient = useQueryClient();
   const agent = snapshot.agent!;
   const running = providerRecord(agent.runningValue, id);
@@ -372,6 +388,10 @@ function CustomProviderPane({ snapshot, id, saved, preset, credential, presets, 
   const dirty = JSON.stringify(formValuesFromSaved(id, saved, preset)) !== JSON.stringify(values);
   const pending = JSON.stringify(saved) !== JSON.stringify(running) || credential?.pending_restart === true;
   const enabled = values.enabled;
+  const affectedRoutes = useMemo(
+    () => (enabled ? [] : affectedRoutesForProvider(snapshot, id)),
+    [enabled, id, snapshot],
+  );
 
   const agentChange = useMutation({
     mutationFn: ({ changes }: { changes: unknown[] }) => updateAgentConfiguration(agent.revision, changes),
@@ -462,6 +482,8 @@ function CustomProviderPane({ snapshot, id, saved, preset, credential, presets, 
         </div>
       </div>
       {dirty ? <p className="m-0 text-xs text-warning">表单有未保存修改</p> : null}
+
+      <DisabledProviderRouteAlert providerId={id} affectedRoutes={affectedRoutes} onSelectGroup={onSelectGroup} />
 
       <div className="flex flex-col gap-1">
         <Field label="API 密钥（Credential）" id={`connection-${id}-credential`} hint={credential?.configured ? "已配置；保存后原文不会再次显示" : "尚未配置"}>
@@ -753,6 +775,52 @@ function providerRecord(agentValue: unknown, id: string): Record<string, unknown
   const providers = typeof root.providers === "object" && root.providers !== null && !Array.isArray(root.providers) ? root.providers as Record<string, unknown> : {};
   const provider = providers[id];
   return typeof provider === "object" && provider !== null && !Array.isArray(provider) ? provider as Record<string, unknown> : {};
+}
+
+function DisabledProviderRouteAlert({
+  providerId,
+  affectedRoutes,
+  onSelectGroup,
+}: {
+  providerId: string;
+  affectedRoutes: readonly AffectedRouteItem[];
+  onSelectGroup?: ((group: ConfigurationBusinessGroup) => void) | undefined;
+}) {
+  const activeAffected = affectedRoutes.filter((route) => route.active);
+  if (activeAffected.length === 0) return null;
+  const emptyRoutes = activeAffected.filter((route) => route.willBecomeEmpty);
+  const severe = emptyRoutes.length > 0;
+  return (
+    <div
+      role="alert"
+      className={`flex flex-col gap-1.5 rounded-console border px-3 py-2.5 text-xs leading-relaxed ${
+        severe
+          ? "border-error/50 bg-error-soft/70 text-error"
+          : "border-warning/50 bg-warning-soft/70 text-warning"
+      }`}
+    >
+      <p className="m-0 font-semibold">
+        停用提醒：供应商 {providerId} 仍被 {activeAffected.map((route) => route.label).join("、")} 引用，停用后这些候选在运行时会被跳过。
+      </p>
+      {severe ? (
+        <p className="m-0 font-semibold">
+          严重警告：{emptyRoutes.map((route) => route.label).join("、")} 将没有剩余可用候选，保存并重启前请先调整路由。
+        </p>
+      ) : null}
+      {onSelectGroup ? (
+        <div className="pt-0.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => onSelectGroup(activeAffected.every((route) => route.kind === "stt_route") ? "stt-routing" : "model-routing")}
+            className="h-6 px-2 text-[11px]"
+          >
+            前往调整路由
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 /** revision 冲突不覆盖服务器版本：保留本地输入并提示刷新比较。 */

@@ -311,6 +311,23 @@ describe("ProviderConnections 自定义连接", () => {
     expect(view.onResult).toHaveBeenCalledWith({ error: true, text: expect.stringContaining("仍引用 Connection MyProxy") });
   });
 
+  it("停用仍被路由引用的自定义供应商时立即弹出受影响路由告警", async () => {
+    const view = renderConnections(
+      snapshotFixture({
+        modelRoutes: {
+          private_main: { candidates: ["MyProxy:gpt-test"] },
+        },
+      }),
+    );
+    await view.selectProvider("MyProxy");
+    const card = view.customCard();
+    await userEvent.click(within(card).getByRole("switch", { name: "启用供应商 MyProxy" }));
+    const alert = await within(card).findByRole("alert");
+    expect(alert).toHaveTextContent("停用提醒");
+    expect(alert).toHaveTextContent("私聊主路线");
+    expect(alert).toHaveTextContent("没有剩余可用候选");
+  });
+
   it("revision 冲突时不覆盖服务器新版本，保留本地输入并提示比较", async () => {
     const view = renderConnections(snapshotFixture({}));
     await view.selectProvider("MyProxy");

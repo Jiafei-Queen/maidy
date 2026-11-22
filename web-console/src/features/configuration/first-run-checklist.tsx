@@ -15,7 +15,7 @@ const CHECKLIST_STEPS: ReadonlyArray<ChecklistStep> = [
   {
     title: "配置模型凭证",
     description:
-      "在“模型与供应商”中为至少一个模型服务填入 API Key；该服务必须出现在每条文本模型路线的候选中。停用仍被路线引用的供应商会导致预检失败。",
+      "在“模型与供应商”中为至少一个模型服务填入 API Key；该服务必须出现在每条文本模型路线的候选中。停用被路由引用的供应商时，页面会给出告警并在运行时跳过该候选。",
     group: "models-providers",
     groupLabel: "模型与供应商",
   },

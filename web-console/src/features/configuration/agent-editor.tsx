@@ -31,6 +31,7 @@ import {
   type AgentWebSearchTimeRange,
 } from "./agent-web-search.js";
 import { ModelRouteEditor } from "./model-route-editor.js";
+import { buildProviderAvailabilityMap, diagnoseCandidateHealth } from "./route-health.js";
 import type { ConfigurationBusinessGroup } from "./configuration-navigation.js";
 
 const KNOWLEDGE_MODE_OPTIONS: ReadonlyArray<readonly [string, string]> = [
@@ -105,6 +106,10 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
   }
 
   const editable = agent.editable;
+  const providerAvailability = buildProviderAvailabilityMap(snapshot);
+  const serverDiagnostics = snapshot.routeDiagnostics ?? [];
+  const findServerDiagnostic = (kind: "model_route" | "search_route" | "stt_route", routeName: string) =>
+    serverDiagnostics.find((item) => item.kind === kind && item.routeName === routeName);
   const runningDocument = agent.runningValue;
   const runningKnowledge = record(record(runningDocument).knowledge);
   const runningEmbedding = record(runningKnowledge.embedding);
@@ -183,32 +188,61 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
       {showRoutes ? (
         <section aria-label="文本模型候选路线" className="flex flex-col gap-5">
           <h3 className="m-0 text-base font-bold">文本模型候选路线</h3>
-          {CONVERSATION_ROUTE_NAMES.map((routeName) => (
-            <ModelRouteEditor
-              key={routeName}
-              label={AGENT_ROUTE_LABELS[routeName] ?? routeName}
-              candidates={draft.routeCandidates[routeName]}
-              disabled={!editable}
-              onChange={(candidates) =>
-                setDraft({ ...draft, routeCandidates: { ...draft.routeCandidates, [routeName]: candidates } })}
-            />
-          ))}
+          {CONVERSATION_ROUTE_NAMES.map((routeName) => {
+            const serverDiagnostic = findServerDiagnostic("model_route", routeName);
+            return (
+              <ModelRouteEditor
+                key={routeName}
+                label={AGENT_ROUTE_LABELS[routeName] ?? routeName}
+                candidates={draft.routeCandidates[routeName]}
+                disabled={!editable}
+                diagnoseCandidate={(candidate) =>
+                  diagnoseCandidateHealth(candidate, providerAvailability, { serverDiagnostic })}
+                onChange={(candidates) =>
+                  setDraft({ ...draft, routeCandidates: { ...draft.routeCandidates, [routeName]: candidates } })}
+              />
+            );
+          })}
           <div className="flex flex-col gap-3 border-t border-line-inner pt-4">
             <h4 className="m-0 text-sm font-bold">搜索路线</h4>
-            {SCENE_SEARCH_ROUTE_FIELDS.map(([name, label]) => (
-              <Field key={name} label={label} id={`agent-search-${name}`} hint="留空保留 agent.toml 当前搜索模型">
-                {(props) => (
-                  <Input
-                    {...props}
-                    disabled={!editable}
-                    value={draft.searchRoutes[name]}
-                    onChange={(event) =>
-                      setDraft({ ...draft, searchRoutes: { ...draft.searchRoutes, [name]: event.target.value } })}
-                    className="max-w-96"
-                  />
-                )}
-              </Field>
-            ))}
+            {draft.webSearch.backend !== "provider_native" ? (
+              <p className="m-0 text-xs text-muted">
+                当前搜索后端为 {webSearchBackendLabel(draft.webSearch.backend)}，下方搜索模型路线仅在“Provider 原生搜索”模式下生效。
+              </p>
+            ) : null}
+            {SCENE_SEARCH_ROUTE_FIELDS.map(([name, label]) => {
+              const value = draft.searchRoutes[name];
+              const searchHealth =
+                draft.webSearch.backend === "provider_native" && value.trim()
+                  ? diagnoseCandidateHealth(value, providerAvailability, {
+                      serverDiagnostic: findServerDiagnostic("search_route", name),
+                    })
+                  : null;
+              return (
+                <div key={name} className="flex flex-col gap-1">
+                  <Field label={label} id={`agent-search-${name}`} hint="留空保留 agent.toml 当前搜索模型">
+                    {(props) => (
+                      <Input
+                        {...props}
+                        disabled={!editable}
+                        value={value}
+                        onChange={(event) =>
+                          setDraft({ ...draft, searchRoutes: { ...draft.searchRoutes, [name]: event.target.value } })}
+                        className="max-w-96"
+                      />
+                    )}
+                  </Field>
+                  {searchHealth && !searchHealth.available ? (
+                    <p
+                      role="alert"
+                      className={`m-0 text-xs font-medium ${searchHealth.severity === "error" ? "text-error" : "text-warning"}`}
+                    >
+                      搜索模型当前不可用：{searchHealth.message}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -304,25 +338,31 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
               )}
             </Field>
           </div>
-          {STT_ROUTE_NAMES.map((routeName: SttRouteName) => (
-            <ModelRouteEditor
-              key={routeName}
-              label={STT_ROUTE_LABELS[routeName]}
-              entityLabel="转录模型"
-              quickAdd={{
-                label: "添加 QQ 平台转录",
-                value: PLATFORM_STT_CANDIDATE,
-                addedLabel: "QQ 平台转录已添加",
-              }}
-              candidates={draft.stt.routes[routeName]}
-              disabled={!editable}
-              onChange={(candidates) =>
-                setDraft({
-                  ...draft,
-                  stt: { ...draft.stt, routes: { ...draft.stt.routes, [routeName]: candidates } },
-                })}
-            />
-          ))}
+          {STT_ROUTE_NAMES.map((routeName: SttRouteName) => {
+            const serverDiagnostic = findServerDiagnostic("stt_route", routeName);
+            return (
+              <ModelRouteEditor
+                key={routeName}
+                label={STT_ROUTE_LABELS[routeName]}
+                entityLabel="转录模型"
+                routeActive={draft.stt.enabled}
+                diagnoseCandidate={(candidate) =>
+                  diagnoseCandidateHealth(candidate, providerAvailability, { isStt: true, serverDiagnostic })}
+                quickAdd={{
+                  label: "添加 QQ 平台转录",
+                  value: PLATFORM_STT_CANDIDATE,
+                  addedLabel: "QQ 平台转录已添加",
+                }}
+                candidates={draft.stt.routes[routeName]}
+                disabled={!editable}
+                onChange={(candidates) =>
+                  setDraft({
+                    ...draft,
+                    stt: { ...draft.stt, routes: { ...draft.stt.routes, [routeName]: candidates } },
+                  })}
+              />
+            );
+          })}
         </section>
       ) : null}
 

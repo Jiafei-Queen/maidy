@@ -29,6 +29,7 @@ import { FirstRunChecklist } from "./first-run-checklist.js";
 import { PublicFieldRow } from "./configuration-field-row.js";
 import { ProviderConnections } from "./provider-connections.js";
 import { AgentEditor } from "./agent-editor.js";
+import { summarizeRouteHealth } from "./route-health.js";
 import { ThemePreferencesSection } from "./theme-preferences.js";
 import { BackgroundPreferencesSection } from "./background-preferences.js";
 import { VoicePreviewCard } from "./voice-preview-card.js";
@@ -168,6 +169,7 @@ export function ConfigurationPage() {
   }
 
   const summary = configurationSummary(snapshot);
+  const routeHealth = summarizeRouteHealth(snapshot);
   const activeGroupMeta = BUSINESS_GROUPS.find((group) => group.id === activeGroup);
   const activePublic = publicFields.filter(
     (field) => businessGroupOf(field.key) === activeGroup && !(activeGroup === "models-providers" && field.key.startsWith("provider.")),
@@ -260,6 +262,11 @@ export function ConfigurationPage() {
         <StatusBadge tone={snapshot.fileExists ? "success" : "warning"} label={snapshot.fileExists ? "runtime.toml 已建立" : "runtime.toml 尚未建立"} />
         <StatusBadge tone={summary.invalidCount === 0 ? "success" : "warning"} label={summary.invalidCount === 0 ? "本地预检通过" : "需要完成配置"} />
         <StatusBadge tone={summary.pendingCount === 0 ? "neutral" : "warning"} label={summary.pendingCount === 0 ? "无待重启变更" : `${summary.pendingCount} 项重启后生效`} />
+        {routeHealth.emptyActiveRoutes > 0 ? (
+          <StatusBadge tone="error" label={`${routeHealth.emptyActiveRoutes} 条活跃路由无可用候选`} />
+        ) : routeHealth.disabledCandidateCount > 0 ? (
+          <StatusBadge tone="warning" label={`路由含 ${routeHealth.disabledCandidateCount} 个已停用候选`} />
+        ) : null}
         {!snapshot.restartAvailable ? (
           <span className="text-xs text-muted">当前运行目录没有可用的 botctl 重启脚本</span>
         ) : null}
@@ -339,6 +346,7 @@ export function ConfigurationPage() {
                 secretDraft={secretDraft}
                 onSecretDraftChange={(key, draft) => setSecretDraft((current) => ({ ...current, [key]: draft }))}
                 onRequestSecretClear={setClearingKey}
+                onSelectGroup={changeGroup}
               />
             ) : null}
 
