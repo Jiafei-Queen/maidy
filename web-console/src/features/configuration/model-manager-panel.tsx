@@ -2,11 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
   ConsoleApiError,
+  deleteModelOverride,
   discoverConnectionModels,
   fetchModelMetadata,
   testProviderConnection,
   updateAgentConfiguration,
   updateModelOverride,
+  updateModelSelection,
 } from "../../api.js";
 import { Button } from "../../components/ui/button.js";
 import { Input } from "../../components/ui/field.js";
@@ -22,7 +24,15 @@ import {
   emptyModelOverrideDraft,
   type ModelOverrideDraft,
 } from "./model-override-form.js";
-import { discoveryLabel, filterModels, mergeModels } from "./provider-model-data.js";
+import {
+  applyCuratedSelection,
+  discoveryLabel,
+  effectiveDiscovery,
+  filterModels,
+  mergeModels,
+  selectionStateOf,
+} from "./provider-model-data.js";
+import { ModelSelectionDialog } from "./model-selection-dialog.js";
 // 候选路线纯操作复用 Agent 编辑器的 model-route-editor，保持 set_model_route 值语义单一来源。
 import { addCandidate, normalizeCandidates } from "./model-route-editor.js";
 
@@ -86,13 +96,20 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [visibleLimit, setVisibleLimit] = useState(50);
+  const [selectionDialogOpen, setSelectionDialogOpen] = useState(false);
   const [draft, setDraft] = useState<ModelOverrideDraft | null>(null);
   const [draftRevision, setDraftRevision] = useState("missing");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   const metadata = metadataQuery.data ?? {};
-  const rows = useMemo(() => mergeModels(discovery, metadata), [discovery, metadata]);
+  const activeDiscovery = useMemo(() => effectiveDiscovery(discovery, metadata), [discovery, metadata]);
+  const allRows = useMemo(() => mergeModels(discovery, metadata), [discovery, metadata]);
+  const selection = useMemo(() => selectionStateOf(metadata), [metadata]);
+  const rows = useMemo(
+    () => applyCuratedSelection(allRows, selection.configured, selection.selectedIds),
+    [allRows, selection.configured, selection.selectedIds],
+  );
   const visibleRows = useMemo(() => filterModels(rows, search, statusFilter), [rows, search, statusFilter]);
   const enabledCount = useMemo(
     () => rows.filter((row) => row.metadata.enabled !== false).length,
@@ -109,6 +126,9 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
     onSuccess: (result, scope) => {
       // 用请求发起时的 scope 校验当前状态，迟到的成功和失败都不能跨版本回写。
       setDiscoveryState((current) => current.scope === scope ? { ...current, result } : current);
+      if (result.state === "success") {
+        void queryClient.invalidateQueries({ queryKey: ["provider-model-metadata", scope.connection] });
+      }
     },
     onError: (cause, scope) => {
       const result = { state: "failed", category: cause instanceof Error ? cause.message : "获取失败" };
@@ -123,6 +143,33 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
     onSuccess: () => {
       invalidate();
       setStatus("本地模型已保存；重启后生效。");
+      setError("");
+    },
+    onError: (cause) => setError(overrideErrorMessage(cause)),
+  });
+
+  const selectionMutation = useMutation({
+    mutationFn: ({ expectedRevision, selectedModels }: { expectedRevision: string; selectedModels: string[] | null }) =>
+      updateModelSelection(connection, expectedRevision, selectedModels),
+    onSuccess: (_data, variables) => {
+      invalidate();
+      setSelectionDialogOpen(false);
+      setStatus(
+        variables.selectedModels === null
+          ? "已恢复显示全部模型。"
+          : `已保存精选模型（共 ${variables.selectedModels.length} 个）。`,
+      );
+      setError("");
+    },
+    onError: (cause) => setError(overrideErrorMessage(cause)),
+  });
+
+  const deleteOverrideMutation = useMutation({
+    mutationFn: ({ expectedRevision, modelId }: { expectedRevision: string; modelId: string }) =>
+      deleteModelOverride(connection, expectedRevision, modelId),
+    onSuccess: (_data, variables) => {
+      invalidate();
+      setStatus(`已删除本地模型条目 ${variables.modelId}。`);
       setError("");
     },
     onError: (cause) => setError(overrideErrorMessage(cause)),
@@ -190,14 +237,34 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
     setDraft(draftValue);
   };
 
+  const mutating = overrideMutation.isPending
+    || routeMutation.isPending
+    || selectionMutation.isPending
+    || deleteOverrideMutation.isPending;
+
   return (
     <section aria-label={`模型管理 ${connection}`} className="flex flex-col gap-3 border-t border-line-inner pt-4">
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="m-0 text-sm font-bold">
           模型
-          <span className="ml-2 font-mono text-xs font-normal text-muted">共 {rows.length} 个 · 启用 {enabledCount}</span>
+          <span className="ml-2 font-mono text-xs font-normal text-muted">
+            {selection.configured
+              ? `已精选 ${rows.length} / 候选 ${allRows.length} 个 · 启用 ${enabledCount}`
+              : `共 ${rows.length} 个 · 启用 ${enabledCount}`}
+          </span>
         </h4>
         <div className="ml-auto flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            className="px-2.5 py-1 text-xs"
+            disabled={!editable || !metadataQuery.isSuccess}
+            onClick={() => {
+              setError("");
+              setSelectionDialogOpen(true);
+            }}
+          >
+            管理 / 选择模型
+          </Button>
           <Button variant="secondary" className="px-2.5 py-1 text-xs" disabled={!enabled || discoveryPending} onClick={() => {
             setStatus("");
             discoveryMutation.mutate(discoveryState.scope);
@@ -217,12 +284,28 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
           ? error
           : status
             ? status
-            : discovery
-              ? discoveryLabel(discovery)
+            : activeDiscovery
+              ? discoveryLabel(activeDiscovery)
               : metadataQuery.isPending
                 ? "正在读取本地模型与目录…"
                 : "模型信息已加载；尚未同步 Connection 模型列表（unknown）"}
       </p>
+
+      {!selection.configured && allRows.length > 10 && editable && metadataQuery.isSuccess ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-console border border-line-inner bg-input/40 px-3 py-2 text-xs text-muted">
+          <span>当前展示全部 {allRows.length} 个候选模型；可按系列批量勾选，只保留常用模型。</span>
+          <Button
+            variant="secondary"
+            className="px-2 py-0.5 text-xs"
+            onClick={() => {
+              setError("");
+              setSelectionDialogOpen(true);
+            }}
+          >
+            批量筛选保留模型
+          </Button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
@@ -258,7 +341,11 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
 
       <div className="flex flex-col divide-y divide-line-inner rounded-console-lg border border-line">
         {visibleRows.length === 0 && !metadataQuery.isPending ? (
-          <p className="m-0 px-3 py-6 text-sm text-muted">当前没有匹配的展示条目；可先「同步模型」或「添加模型」。</p>
+          <p className="m-0 px-3 py-6 text-sm text-muted">
+            {selection.configured && rows.length === 0
+              ? "当前精选列表为空；可点击「管理 / 选择模型」勾选常用模型，或点击「+ 添加模型」。"
+              : "当前没有匹配的展示条目；可先「同步模型」、「管理 / 选择模型」或「添加模型」。"}
+          </p>
         ) : null}
         {visibleRows.slice(0, visibleLimit).map((row) => (
           <ModelRow
@@ -271,13 +358,21 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
             editable={editable}
             enabled={enabled}
             routes={modelRoutes}
-            busy={overrideMutation.isPending || routeMutation.isPending}
+            busy={mutating}
+            selectionConfigured={selection.configured}
             onEdit={() => openEditor(draftFromOverride(row.id, row.override))}
             onToggleEnabled={() => {
               saveOverride(
                 { ...row.override, provider: metadata.provider, id: row.id, enabled: row.metadata.enabled === false },
                 metadataRevision,
               );
+            }}
+            onRemoveFromSelection={() => {
+              const next = selection.selectedIds.filter((id) => id !== row.id);
+              selectionMutation.mutate({ expectedRevision: metadataRevision, selectedModels: next });
+            }}
+            onDeleteLocalOverride={() => {
+              deleteOverrideMutation.mutate({ expectedRevision: metadataRevision, modelId: row.id });
             }}
             onJoinRoute={(routeName) => joinRoute(row.id, routeName)}
           />
@@ -290,6 +385,32 @@ export function ModelManagerPanel({ snapshot, connection, enabled, discoveryRevi
           </div>
         ) : null}
       </div>
+
+      {selectionDialogOpen ? (
+        <ModelSelectionDialog
+          open={selectionDialogOpen}
+          onOpenChange={setSelectionDialogOpen}
+          connection={connection}
+          allRows={allRows}
+          selectionConfigured={selection.configured}
+          initialSelectedIds={selection.selectedIds}
+          activeDiscovery={activeDiscovery}
+          providerEnabled={enabled}
+          syncPending={discoveryPending}
+          savePending={selectionMutation.isPending}
+          saveError={error}
+          onSync={() => {
+            setStatus("");
+            discoveryMutation.mutate(discoveryState.scope);
+          }}
+          onSave={(selectedModels) => {
+            selectionMutation.mutate({ expectedRevision: metadataRevision, selectedModels });
+          }}
+          onResetToAll={() => {
+            selectionMutation.mutate({ expectedRevision: metadataRevision, selectedModels: null });
+          }}
+        />
+      ) : null}
 
       {draft ? (
         <ModelOverrideEditor
@@ -330,12 +451,30 @@ type ModelRowProps = {
   enabled: boolean;
   routes: string[];
   busy: boolean;
+  selectionConfigured: boolean;
   onEdit: () => void;
   onToggleEnabled: () => void;
+  onRemoveFromSelection: () => void;
+  onDeleteLocalOverride: () => void;
   onJoinRoute: (route: string) => void;
 };
 
-function ModelRow({ row, connection, discoveryRevision, catalogSource, editable, enabled, routes, busy, onEdit, onToggleEnabled, onJoinRoute }: ModelRowProps) {
+function ModelRow({
+  row,
+  connection,
+  discoveryRevision,
+  catalogSource,
+  editable,
+  enabled,
+  routes,
+  busy,
+  selectionConfigured,
+  onEdit,
+  onToggleEnabled,
+  onRemoveFromSelection,
+  onDeleteLocalOverride,
+  onJoinRoute,
+}: ModelRowProps) {
   const [selectedRoute, setSelectedRoute] = useState(routes[0] ?? "");
   const [check, setCheck] = useState<CheckState>({ kind: "idle" });
   const status = typeof row.metadata.status === "string" ? row.metadata.status : "unknown";
@@ -350,6 +489,8 @@ function ModelRow({ row, connection, discoveryRevision, catalogSource, editable,
     return typeof claim === "object" && claim !== null && (claim as Record<string, unknown>).advertised === true;
   });
   const enabledLocally = row.metadata.enabled !== false;
+  const hasLocalOverride = Object.keys(row.override).length > 0;
+  const fromCatalog = row.sources.includes("catalog");
 
   const checkMutation = useMutation({
     mutationFn: () => testProviderConnection(connection, discoveryRevision, row.id),
@@ -413,7 +554,7 @@ function ModelRow({ row, connection, discoveryRevision, catalogSource, editable,
         </details>
       </div>
       <div className="flex shrink-0 flex-col gap-1.5 sm:items-end">
-        <div className="flex flex-1 gap-1.5 sm:flex-none">
+        <div className="flex flex-wrap gap-1.5 sm:justify-end">
           <Button
             variant="secondary"
             className="px-2.5 py-1 text-xs"
@@ -423,6 +564,28 @@ function ModelRow({ row, connection, discoveryRevision, catalogSource, editable,
             {check.kind === "pending" ? "检查中…" : "检查"}
           </Button>
           <Button variant="secondary" className="px-2.5 py-1 text-xs" onClick={onEdit}>编辑</Button>
+          {selectionConfigured ? (
+            <Button
+              variant="secondary"
+              className="px-2 py-1 text-xs"
+              disabled={!editable || busy}
+              title="从当前精选列表中移出"
+              onClick={onRemoveFromSelection}
+            >
+              移出
+            </Button>
+          ) : null}
+          {hasLocalOverride ? (
+            <Button
+              variant="secondary"
+              className="px-2 py-1 text-xs text-error"
+              disabled={!editable || busy}
+              title={fromCatalog ? "清除该目录模型的本地覆盖" : "删除该本地自定义模型"}
+              onClick={onDeleteLocalOverride}
+            >
+              {fromCatalog ? "清除覆盖" : "删除模型"}
+            </Button>
+          ) : null}
         </div>
         {routes.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">

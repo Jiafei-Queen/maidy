@@ -937,3 +937,17 @@ export async function updateModelOverride(id: string, revision: string, model: u
     id, expected_revision: revision, model,
   }));
 }
+export async function updateModelSelection(
+  id: string,
+  revision: string,
+  selectedModels: string[] | null,
+): Promise<ConfigurationSnapshot> {
+  return parseConfigurationPayload(await mutatingJson("/api/v1/console/configuration/providers/model-selection", "PUT", {
+    id, expected_revision: revision, selected_models: selectedModels,
+  }));
+}
+export async function deleteModelOverride(id: string, revision: string, modelId: string): Promise<ConfigurationSnapshot> {
+  return parseConfigurationPayload(await mutatingJson("/api/v1/console/configuration/providers/model-override", "DELETE", {
+    id, expected_revision: revision, model_id: modelId,
+  }));
+}
