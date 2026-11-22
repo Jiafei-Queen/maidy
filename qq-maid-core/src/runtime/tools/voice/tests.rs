@@ -229,14 +229,15 @@ fn unsupported_platforms_cannot_bind_a_voice_target() {
 }
 
 #[tokio::test]
-async fn private_voice_uses_configured_pacing_delay() {
+async fn private_voice_delay_includes_estimated_speech_duration() {
     use crate::config::ChatSendPacingConfig;
+    use crate::runtime::tools::voice::estimated_speech_duration;
     use std::time::Duration;
 
     let sink = Arc::new(RecordingSink::success());
     let pacing = ChatSendPacingConfig {
-        delay_min: Duration::from_millis(1500),
-        delay_max: Duration::from_millis(1500),
+        delay_min: Duration::from_millis(1000),
+        delay_max: Duration::from_millis(1000),
         gap: Duration::ZERO,
     };
     let tool = SendVoiceTool::new(sink.clone(), 600)
@@ -244,12 +245,17 @@ async fn private_voice_uses_configured_pacing_delay() {
         .scoped_for_request(&private_request())
         .expect("request should provide a voice target");
 
-    tool.execute(context(), json!({"text": "晚安"}))
+    let text = "晚安，做个好梦";
+    tool.execute(context(), json!({ "text": text }))
         .await
         .unwrap();
 
     let calls = sink.calls();
-    assert_eq!(calls[0].target_delay, Some(Duration::from_millis(1500)));
+    // 停顿目标 = 1 秒基础延迟 + 估算语音时长，让语音整体晚一个朗读周期。
+    assert_eq!(
+        calls[0].target_delay,
+        Some(Duration::from_millis(1000) + estimated_speech_duration(text))
+    );
 }
 
 #[tokio::test]
@@ -292,7 +298,7 @@ async fn voice_pacing_is_dropped_when_tool_budget_is_short() {
         .scoped_for_request(&private_request())
         .expect("request should provide a voice target");
     let mut ctx = context();
-    // 语音链路要留 8 秒真实发送预算；剩余 5 秒时直接放弃拟人停顿。
+    // 语音链路要留 8 秒真实发送预算；剩余 5 秒时连“延迟 + 语音时长”都放不下。
     ctx.execution_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(5));
 
     tool.execute(ctx, json!({"text": "晚安"})).await.unwrap();

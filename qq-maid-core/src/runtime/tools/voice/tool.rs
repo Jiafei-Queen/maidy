@@ -158,12 +158,18 @@ impl Tool for SendVoiceTool {
         let deadline = context
             .execution_deadline
             .unwrap_or_else(|| Instant::now() + SEND_VOICE_TIMEOUT);
-        // 只有私聊有“正在输入”配合，群聊语音保持即时发送；语音链路还要预留
-        // TTS 合成和上传时间，预算不足时直接放弃停顿。
+        // 只有私聊有“正在输入”配合，群聊语音保持即时发送。
+        //
+        // 停顿目标 = 配置延迟 + 估算语音时长，让语音整体晚于纯文本回复一段
+        // “朗读时间”；Gateway 会再扣掉真实 TTS 耗时，所以这里只需表达目标值。
+        // 语音链路还要预留 TTS 合成和上传时间，预算不足时直接放弃停顿。
+        let speech = super::estimated_speech_duration(text);
         let target_delay = (target.target.target_type == PushTargetType::Private)
             .then(|| {
-                self.pacing
-                    .effective_voice_delay(deadline.saturating_duration_since(Instant::now()))
+                self.pacing.effective_voice_delay(
+                    deadline.saturating_duration_since(Instant::now()),
+                    speech,
+                )
             })
             .filter(|delay| !delay.is_zero());
         let intent = VoiceSendIntent {

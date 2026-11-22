@@ -106,10 +106,12 @@ impl ChatSendPacingConfig {
 
     /// 语音的目标停顿上限。
     ///
-    /// 语音先合成再发送，采样值只是总停顿目标；Gateway 会扣除 TTS 合成耗时，
-    /// 只等待剩余部分。这里按语音链路预算裁剪，避免把 TTS 和上传挤超时。
-    pub fn effective_voice_delay(&self, remaining: Duration) -> Duration {
+    /// 语音先合成再发送，采样值加上估算语音时长后是总停顿目标；Gateway 会扣除
+    /// TTS 合成耗时，只等待剩余部分。这里按语音链路预算裁剪，避免把 TTS 和
+    /// 上传挤超时。
+    pub fn effective_voice_delay(&self, remaining: Duration, speech: Duration) -> Duration {
         self.sample_delay()
+            .saturating_add(speech)
             .min(remaining.saturating_sub(VOICE_SEND_SAFETY_MARGIN))
     }
 }
@@ -197,20 +199,39 @@ mod tests {
             delay_max: Duration::from_secs(2),
             gap: Duration::ZERO,
         };
-        // 语音链路要留 8 秒：剩余 10 秒最多等 2 秒。
+        // 语音链路要留 8 秒：剩余 10 秒时只允许 2 秒基础延迟。
         assert_eq!(
-            config.effective_voice_delay(Duration::from_secs(10)),
+            config.effective_voice_delay(Duration::from_secs(10), Duration::ZERO),
             Duration::from_secs(2)
         );
         // 剩余 9 秒时只剩 1 秒可等。
         assert_eq!(
-            config.effective_voice_delay(Duration::from_secs(9)),
+            config.effective_voice_delay(Duration::from_secs(9), Duration::ZERO),
             Duration::from_secs(1)
         );
         // 不足 8 秒安全边际时放弃停顿。
         assert_eq!(
-            config.effective_voice_delay(Duration::from_secs(8)),
+            config.effective_voice_delay(Duration::from_secs(8), Duration::ZERO),
             Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn voice_delay_adds_estimated_speech_duration() {
+        let config = ChatSendPacingConfig {
+            delay_min: Duration::from_secs(1),
+            delay_max: Duration::from_secs(1),
+            gap: Duration::ZERO,
+        };
+        // 1 秒基础延迟 + 3 秒估算语音时长。
+        assert_eq!(
+            config.effective_voice_delay(Duration::from_secs(30), Duration::from_secs(3)),
+            Duration::from_secs(4)
+        );
+        // 预算裁剪仍按“延迟 + 语音时长”的整体计算，只给真实发送留 8 秒。
+        assert_eq!(
+            config.effective_voice_delay(Duration::from_secs(10), Duration::from_secs(5)),
+            Duration::from_secs(2)
         );
     }
 }

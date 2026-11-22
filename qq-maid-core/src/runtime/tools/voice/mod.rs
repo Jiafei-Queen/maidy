@@ -6,6 +6,7 @@
 
 mod agent_turn;
 mod delivery;
+mod estimate;
 mod legacy;
 mod tool;
 
@@ -13,6 +14,7 @@ mod tool;
 mod tests;
 
 pub(crate) use agent_turn::tool_outcome_from_result;
+pub use estimate::estimated_speech_duration;
 
 pub use delivery::{
     DynVoiceSendSink, VoiceSendError, VoiceSendIntent, VoiceSendResult, VoiceSendSink,
