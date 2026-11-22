@@ -73,7 +73,10 @@ impl ToolRuntime {
             .is_available()
             .then(|| executors.voice_sink.clone())
             .flatten()
-            .map(|sink| SendVoiceTool::new(sink, voice_config.max_text_chars));
+            .map(|sink| {
+                SendVoiceTool::new(sink, voice_config.max_text_chars)
+                    .with_pacing(chat_send_pacing.clone())
+            });
         // 发言是 Agent 的基础设施：只要 Gateway 注入发送能力就注册，不受场景
         // 白名单、群聊受限模式和业务 Tool 开关影响。
         let message_tool = executors

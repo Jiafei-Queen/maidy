@@ -227,3 +227,75 @@ fn unsupported_platforms_cannot_bind_a_voice_target() {
     assert!(tool.scoped_for_request(&request).is_none());
     assert!(!SendVoiceTool::supports_request(&request));
 }
+
+#[tokio::test]
+async fn private_voice_uses_configured_pacing_delay() {
+    use crate::config::ChatSendPacingConfig;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::success());
+    let pacing = ChatSendPacingConfig {
+        delay_min: Duration::from_millis(1500),
+        delay_max: Duration::from_millis(1500),
+        gap: Duration::ZERO,
+    };
+    let tool = SendVoiceTool::new(sink.clone(), 600)
+        .with_pacing(pacing)
+        .scoped_for_request(&private_request())
+        .expect("request should provide a voice target");
+
+    tool.execute(context(), json!({"text": "晚安"}))
+        .await
+        .unwrap();
+
+    let calls = sink.calls();
+    assert_eq!(calls[0].target_delay, Some(Duration::from_millis(1500)));
+}
+
+#[tokio::test]
+async fn group_voice_never_requests_pacing_delay() {
+    use crate::config::ChatSendPacingConfig;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::success());
+    let pacing = ChatSendPacingConfig {
+        delay_min: Duration::from_millis(1500),
+        delay_max: Duration::from_millis(1500),
+        gap: Duration::ZERO,
+    };
+    // 群聊没有“正在输入”，延迟只会让语音无故变慢。
+    let tool = SendVoiceTool::new(sink.clone(), 600)
+        .with_pacing(pacing)
+        .scoped_for_request(&group_request())
+        .expect("request should provide a voice target");
+
+    tool.execute(context(), json!({"text": "群里晚安"}))
+        .await
+        .unwrap();
+
+    assert_eq!(sink.calls()[0].target_delay, None);
+}
+
+#[tokio::test]
+async fn voice_pacing_is_dropped_when_tool_budget_is_short() {
+    use crate::config::ChatSendPacingConfig;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::success());
+    let pacing = ChatSendPacingConfig {
+        delay_min: Duration::from_secs(20),
+        delay_max: Duration::from_secs(20),
+        gap: Duration::ZERO,
+    };
+    let tool = SendVoiceTool::new(sink.clone(), 600)
+        .with_pacing(pacing)
+        .scoped_for_request(&private_request())
+        .expect("request should provide a voice target");
+    let mut ctx = context();
+    // 语音链路要留 8 秒真实发送预算；剩余 5 秒时直接放弃拟人停顿。
+    ctx.execution_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(5));
+
+    tool.execute(ctx, json!({"text": "晚安"})).await.unwrap();
+
+    assert_eq!(sink.calls()[0].target_delay, None);
+}

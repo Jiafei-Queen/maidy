@@ -4,6 +4,7 @@
 //! 音频 URL 或平台 token；TTS 协议、音频上传和实际发送仍由 Gateway 实现。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -19,6 +20,11 @@ pub struct VoiceSendIntent {
     pub reply_to_message_id: Option<String>,
     /// 已完成本地清洗和长度校验的朗读文本。
     pub text: String,
+    /// 私聊语音的总停顿目标，包含 TTS 合成耗时。
+    ///
+    /// Gateway 在合成完成后只等待剩余差值，用户感知的总停顿接近该值；群聊
+    /// 不设置该字段，保持即时发送。
+    pub target_delay: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

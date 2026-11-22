@@ -284,6 +284,7 @@ async fn onebot_voice_tool_sends_record_segment_for_private_and_group_targets() 
             target: PushTarget::onebot11("bot-1", PushTargetType::Private, "20002"),
             reply_to_message_id: None,
             text: "晚安".to_owned(),
+            target_delay: None,
         })
         .await
         .unwrap();
@@ -294,6 +295,7 @@ async fn onebot_voice_tool_sends_record_segment_for_private_and_group_targets() 
             target: PushTarget::onebot11("bot-1", PushTargetType::Group, "30003"),
             reply_to_message_id: None,
             text: "群里晚安".to_owned(),
+            target_delay: None,
         })
         .await
         .unwrap();
@@ -400,4 +402,136 @@ async fn slow_typing_does_not_extend_send_delay() {
     let result = task.await.expect("delay task should not panic").unwrap();
     assert_eq!(result.sent.len(), 1);
     assert!(sender.calls().contains(&"private:user-1:回复".to_owned()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn onebot_private_voice_delay_shows_typing_and_waits_target_delay() {
+    use qq_maid_core::runtime::tools::voice::{VoiceSendIntent, VoiceSendSink};
+    use std::time::Duration;
+
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    sink.set_voice_provider(Some(Arc::new(StaticTtsProvider)));
+    let sink = Arc::new(sink);
+    let sender_for_task = sink.clone();
+    let task = tokio::spawn(async move {
+        sender_for_task
+            .send_voice(VoiceSendIntent {
+                target: PushTarget::onebot11("bot-1", PushTargetType::Private, "20002"),
+                reply_to_message_id: None,
+                text: "晚安".to_owned(),
+                target_delay: Some(Duration::from_millis(1000)),
+            })
+            .await
+    });
+
+    tokio::task::yield_now().await;
+    assert_eq!(sender.calls(), vec!["typing:20002"]);
+    tokio::time::advance(Duration::from_millis(999)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(sender.calls(), vec!["typing:20002"]);
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let result = task.await.expect("delay task should not panic").unwrap();
+    assert_eq!(result.message_id.as_deref(), Some("ob-private-voice-1"));
+    assert_eq!(
+        sender.calls(),
+        vec![
+            "typing:20002",
+            "private-voice:20002:https://audio.example.test/voice.wav"
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn onebot_voice_delay_subtracts_tts_elapsed_time() {
+    use qq_maid_core::runtime::tools::voice::{VoiceSendIntent, VoiceSendSink};
+    use std::time::Duration;
+
+    // TTS 已经花掉 700ms，目标停顿 1000ms 时只应再等 300ms。
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    sink.set_voice_provider(Some(Arc::new(SlowTtsProvider {
+        delay: Duration::from_millis(700),
+    })));
+    let sink = Arc::new(sink);
+    let sender_for_task = sink.clone();
+    let task = tokio::spawn(async move {
+        sender_for_task
+            .send_voice(VoiceSendIntent {
+                target: PushTarget::onebot11("bot-1", PushTargetType::Private, "20002"),
+                reply_to_message_id: None,
+                text: "晚安".to_owned(),
+                target_delay: Some(Duration::from_millis(1000)),
+            })
+            .await
+    });
+
+    tokio::time::advance(Duration::from_millis(999)).await;
+    tokio::task::yield_now().await;
+    // 700ms 合成 + 299ms 等待：语音还没发出。
+    assert_eq!(sender.calls(), vec!["typing:20002"]);
+
+    tokio::time::advance(Duration::from_millis(1)).await;
+    let result = task.await.expect("delay task should not panic").unwrap();
+    assert_eq!(result.message_id.as_deref(), Some("ob-private-voice-1"));
+    assert!(
+        sender
+            .calls()
+            .contains(&"private-voice:20002:https://audio.example.test/voice.wav".to_owned())
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn onebot_voice_without_target_delay_sends_immediately() {
+    use qq_maid_core::runtime::tools::voice::{VoiceSendIntent, VoiceSendSink};
+
+    // 群聊或未注入节奏时不应有 typing，也不应等待。
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    sink.set_voice_provider(Some(Arc::new(StaticTtsProvider)));
+
+    let result = sink
+        .send_voice(VoiceSendIntent {
+            target: PushTarget::onebot11("bot-1", PushTargetType::Group, "30003"),
+            reply_to_message_id: None,
+            text: "群里晚安".to_owned(),
+            target_delay: None,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result.message_id.as_deref(), Some("ob-group-voice-1"));
+    assert_eq!(
+        sender.calls(),
+        vec!["group-voice:30003:https://audio.example.test/voice.wav"]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn onebot_private_voice_without_delay_skips_typing() {
+    use qq_maid_core::runtime::tools::voice::{VoiceSendIntent, VoiceSendSink};
+
+    let sink = GatewayPushSink::unbound();
+    let sender = Arc::new(MockOneBotSender::connected("bot-1"));
+    sink.bind_onebot_sender(sender.clone(), crate::gateway::ref_index::ref_index());
+    sink.set_voice_provider(Some(Arc::new(StaticTtsProvider)));
+
+    sink.send_voice(VoiceSendIntent {
+        target: PushTarget::onebot11("bot-1", PushTargetType::Private, "20002"),
+        reply_to_message_id: None,
+        text: "晚安".to_owned(),
+        target_delay: None,
+    })
+    .await
+    .unwrap();
+
+    // 没有拟人停顿时不额外发输入状态，避免空 delay 也触发 typing。
+    assert_eq!(
+        sender.calls(),
+        vec!["private-voice:20002:https://audio.example.test/voice.wav"]
+    );
 }

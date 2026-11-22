@@ -14,6 +14,7 @@ use tokio::time::{Instant, timeout_at};
 use tracing::warn;
 
 use crate::{
+    config::ChatSendPacingConfig,
     error::LlmError,
     runtime::{
         push::{ONEBOT11_PLATFORM, PushTarget, PushTargetType, QQ_OFFICIAL_PLATFORM},
@@ -33,6 +34,8 @@ pub struct SendVoiceTool {
     sink: DynVoiceSendSink,
     max_text_chars: usize,
     target: Option<VoiceSendTarget>,
+    /// 语音复用 `send_message` 的拟人延迟区间；群聊不使用。
+    pacing: ChatSendPacingConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +51,14 @@ impl SendVoiceTool {
             sink,
             max_text_chars,
             target: None,
+            pacing: ChatSendPacingConfig::disabled(),
         }
+    }
+
+    /// 注入服务端采样配置；模型不能控制语音停顿区间。
+    pub fn with_pacing(mut self, pacing: ChatSendPacingConfig) -> Self {
+        self.pacing = pacing;
+        self
     }
 
     /// 当前请求是否可以绑定语音发送目标。
@@ -68,6 +78,7 @@ impl SendVoiceTool {
             sink: self.sink.clone(),
             max_text_chars: self.max_text_chars,
             target: Some(target),
+            pacing: self.pacing.clone(),
         })
     }
 }
@@ -144,14 +155,23 @@ impl Tool for SendVoiceTool {
             ));
         };
 
+        let deadline = context
+            .execution_deadline
+            .unwrap_or_else(|| Instant::now() + SEND_VOICE_TIMEOUT);
+        // 只有私聊有“正在输入”配合，群聊语音保持即时发送；语音链路还要预留
+        // TTS 合成和上传时间，预算不足时直接放弃停顿。
+        let target_delay = (target.target.target_type == PushTargetType::Private)
+            .then(|| {
+                self.pacing
+                    .effective_voice_delay(deadline.saturating_duration_since(Instant::now()))
+            })
+            .filter(|delay| !delay.is_zero());
         let intent = VoiceSendIntent {
             target: target.target.clone(),
             reply_to_message_id: target.reply_to_message_id.clone(),
             text: text.to_owned(),
+            target_delay,
         };
-        let deadline = context
-            .execution_deadline
-            .unwrap_or_else(|| Instant::now() + SEND_VOICE_TIMEOUT);
         let result = match timeout_at(deadline, self.sink.send_voice(intent)).await {
             Ok(result) => result,
             Err(_) => Err(VoiceSendError::Timeout),

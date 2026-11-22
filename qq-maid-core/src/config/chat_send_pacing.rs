@@ -18,6 +18,9 @@ const MAX_CHAT_SEND_GAP_MS: u64 = 10_000;
 /// 工具截止时间前至少保留的真实发送预算；不足时放弃本次拟人延迟。
 const SEND_DELAY_SAFETY_MARGIN: Duration = Duration::from_secs(3);
 
+/// 语音链路包含 TTS 合成、上传和发送，需要比纯文本更长的真实发送预算。
+const VOICE_SEND_SAFETY_MARGIN: Duration = Duration::from_secs(8);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatSendPacingConfig {
     pub delay_min: Duration,
@@ -100,6 +103,15 @@ impl ChatSendPacingConfig {
         self.sample_delay()
             .min(remaining.saturating_sub(SEND_DELAY_SAFETY_MARGIN))
     }
+
+    /// 语音的目标停顿上限。
+    ///
+    /// 语音先合成再发送，采样值只是总停顿目标；Gateway 会扣除 TTS 合成耗时，
+    /// 只等待剩余部分。这里按语音链路预算裁剪，避免把 TTS 和上传挤超时。
+    pub fn effective_voice_delay(&self, remaining: Duration) -> Duration {
+        self.sample_delay()
+            .min(remaining.saturating_sub(VOICE_SEND_SAFETY_MARGIN))
+    }
 }
 
 fn ranged_u64(
@@ -174,6 +186,30 @@ mod tests {
         // 剩余预算不足安全边际时直接放弃延迟。
         assert_eq!(
             config.effective_delay(Duration::from_secs(2)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn voice_delay_reserves_tts_and_upload_budget() {
+        let config = ChatSendPacingConfig {
+            delay_min: Duration::from_secs(2),
+            delay_max: Duration::from_secs(2),
+            gap: Duration::ZERO,
+        };
+        // 语音链路要留 8 秒：剩余 10 秒最多等 2 秒。
+        assert_eq!(
+            config.effective_voice_delay(Duration::from_secs(10)),
+            Duration::from_secs(2)
+        );
+        // 剩余 9 秒时只剩 1 秒可等。
+        assert_eq!(
+            config.effective_voice_delay(Duration::from_secs(9)),
+            Duration::from_secs(1)
+        );
+        // 不足 8 秒安全边际时放弃停顿。
+        assert_eq!(
+            config.effective_voice_delay(Duration::from_secs(8)),
             Duration::ZERO
         );
     }
