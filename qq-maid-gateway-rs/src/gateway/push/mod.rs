@@ -124,6 +124,8 @@ struct GatewayPushRuntime {
 #[async_trait]
 trait PushOneBotSender: Send + Sync {
     fn connected_account_id(&self) -> Option<String>;
+    /// 尽力显示私聊“正在输入”；失败不能影响真实发送。
+    async fn send_typing(&self, target_id: &str);
     async fn send_private_text(
         &self,
         target_id: &str,
@@ -156,6 +158,10 @@ trait PushOneBotSender: Send + Sync {
 impl PushOneBotSender for OneBotSender {
     fn connected_account_id(&self) -> Option<String> {
         OneBotSender::connected_account_id(self)
+    }
+
+    async fn send_typing(&self, target_id: &str) {
+        OneBotSender::send_typing(self, target_id).await;
     }
 
     async fn send_private_text(
@@ -423,10 +429,35 @@ impl OneBotPushRuntime {
         if text.is_empty() {
             return Err(VoiceSendError::EmptyText);
         }
-        let audio = provider
-            .synthesize(text)
-            .await
-            .map_err(|error| VoiceSendError::Tts { code: error.code() })?;
+        // 私聊且存在停顿时才显示“正在输入”；typing 是独立 best-effort 请求，
+        // 适配器不支持或响应慢都不能阻塞语音发送。
+        let typing = (intent.target.target_type == PushTargetType::Private
+            && intent
+                .target_delay
+                .is_some_and(|target_delay| !target_delay.is_zero()))
+        .then(|| {
+            let sender = self.sender.clone();
+            let target_id = target_id.to_owned();
+            tokio::spawn(async move { sender.send_typing(&target_id).await })
+        });
+        let started_at = Instant::now();
+        let audio = match provider.synthesize(text).await {
+            Ok(audio) => audio,
+            Err(error) => {
+                // 合成失败时不再等待，直接返回真实错误。
+                if let Some(typing) = typing {
+                    typing.abort();
+                }
+                return Err(VoiceSendError::Tts { code: error.code() });
+            }
+        };
+        // 目标停顿包含 TTS 耗时：合成慢时只补齐剩余差值，合成快时才补停顿。
+        if let Some(target_delay) = intent.target_delay {
+            let remaining = target_delay.saturating_sub(started_at.elapsed());
+            if !remaining.is_zero() {
+                tokio::time::sleep(remaining).await;
+            }
+        }
         let file = onebot_voice_file(audio)?;
         let result = match intent.target.target_type {
             PushTargetType::Private => self.sender.send_private_voice(target_id, &file).await,
@@ -618,10 +649,19 @@ impl GatewayPushRuntime {
         if text.is_empty() {
             return Err(VoiceSendError::EmptyText);
         }
+        // 与 OneBot 保持同一语义：目标停顿包含 TTS 耗时，只补齐剩余差值。
+        // QQ 官方的“正在输入”由回合级 typing guard 负责，这里不重复发送。
+        let started_at = Instant::now();
         let audio = provider
             .synthesize(text)
             .await
             .map_err(|error| VoiceSendError::Tts { code: error.code() })?;
+        if let Some(target_delay) = intent.target_delay {
+            let remaining = target_delay.saturating_sub(started_at.elapsed());
+            if !remaining.is_zero() {
+                tokio::time::sleep(remaining).await;
+            }
+        }
         let reply_to = intent.reply_to_message_id.as_deref();
         let result = match (intent.target.target_type, audio) {
             (PushTargetType::Private, TtsAudio::Url(url)) => {

@@ -22,13 +22,30 @@ struct MockOneBotSender {
     account_id: Option<String>,
     calls: Mutex<Vec<String>>,
     fail: bool,
+    typing_delay: Option<Duration>,
 }
 
 struct StaticTtsProvider;
 
+/// 合成耗时可控的 TTS stub，用于验证语音停顿是否扣除 TTS 时间。
+struct SlowTtsProvider {
+    delay: Duration,
+}
+
 impl TtsProvider for StaticTtsProvider {
     fn synthesize<'a>(&'a self, _text: &'a str) -> crate::tts::TtsFuture<'a> {
         Box::pin(async {
+            Ok(crate::tts::TtsAudio::Url(
+                "https://audio.example.test/voice.wav".to_owned(),
+            ))
+        })
+    }
+}
+
+impl TtsProvider for SlowTtsProvider {
+    fn synthesize<'a>(&'a self, _text: &'a str) -> crate::tts::TtsFuture<'a> {
+        Box::pin(async move {
+            tokio::time::sleep(self.delay).await;
             Ok(crate::tts::TtsAudio::Url(
                 "https://audio.example.test/voice.wav".to_owned(),
             ))
@@ -42,7 +59,13 @@ impl MockOneBotSender {
             account_id: Some(account_id.to_owned()),
             calls: Mutex::new(Vec::new()),
             fail: false,
+            typing_delay: None,
         }
+    }
+
+    fn with_typing_delay(mut self, delay: Duration) -> Self {
+        self.typing_delay = Some(delay);
+        self
     }
 
     fn calls(&self) -> Vec<String> {
@@ -54,6 +77,16 @@ impl MockOneBotSender {
 impl PushOneBotSender for MockOneBotSender {
     fn connected_account_id(&self) -> Option<String> {
         self.account_id.clone()
+    }
+
+    async fn send_typing(&self, target_id: &str) {
+        if let Some(delay) = self.typing_delay {
+            tokio::time::sleep(delay).await;
+        }
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("typing:{target_id}"));
     }
 
     async fn send_private_text(
@@ -321,6 +354,7 @@ async fn voice_sink_rejects_unsupported_platform_and_missing_provider() {
         ),
         reply_to_message_id: Some("message-1".to_owned()),
         text: "晚安".to_owned(),
+        target_delay: None,
     };
 
     assert!(matches!(

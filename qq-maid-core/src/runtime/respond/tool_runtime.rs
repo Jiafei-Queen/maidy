@@ -57,6 +57,7 @@ impl ToolRuntime {
         web_search_timeouts: WebSearchTimeouts,
         knowledge_index: crate::runtime::tools::knowledge::KnowledgeIndex,
         voice_config: &crate::config::VoiceFeatureConfig,
+        chat_send_pacing: crate::config::ChatSendPacingConfig,
     ) -> Self {
         let mut registry =
             ToolRegistry::new().with_limits(DEFAULT_TOOL_TIMEOUT, tool_result_max_chars);
@@ -72,10 +73,16 @@ impl ToolRuntime {
             .is_available()
             .then(|| executors.voice_sink.clone())
             .flatten()
-            .map(|sink| SendVoiceTool::new(sink, voice_config.max_text_chars));
+            .map(|sink| {
+                SendVoiceTool::new(sink, voice_config.max_text_chars)
+                    .with_pacing(chat_send_pacing.clone())
+            });
         // 发言是 Agent 的基础设施：只要 Gateway 注入发送能力就注册，不受场景
         // 白名单、群聊受限模式和业务 Tool 开关影响。
-        let message_tool = executors.chat_send_sink.clone().map(SendMessageTool::new);
+        let message_tool = executors
+            .chat_send_sink
+            .clone()
+            .map(|sink| SendMessageTool::new(sink).with_pacing(chat_send_pacing));
         // Tool 只通过服务端白名单注册；Todo Tool 复用现有 store、session 快照和 pending。
         let mut tools: Vec<qq_maid_llm::tool::DynTool> = vec![
             Arc::new(TrainScheduleTool::new(executors.train_executor.clone())),

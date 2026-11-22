@@ -160,7 +160,8 @@ pub async fn run_with_application_version(
                 // sender 与反向 WebSocket 复用同一个 connection context；离线、替换和断线
                 // 都由该上下文返回真实错误，不能另建连接或伪造推送成功。
                 push_sink.bind_onebot11(
-                    onebot11::OneBotSender::new(server.connection.clone()),
+                    onebot11::OneBotSender::new(server.connection.clone())
+                        .with_typing_enabled(config.onebot11.agent_typing_enabled),
                     ref_index.clone(),
                 );
                 Some(server.task)

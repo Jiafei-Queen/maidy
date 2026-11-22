@@ -16,8 +16,9 @@ pub const DEFAULT_GROUP_ACTIVE_KEYWORDS: &[&str] = &["小女仆"];
 pub const DEFAULT_CONVERSATION_QUEUE_CAPACITY: usize = 16;
 pub const DEFAULT_MAX_ACTIVE_CONVERSATION_WORKERS: usize = 64;
 pub const DEFAULT_CONVERSATION_WORKER_IDLE_TIMEOUT_SECS: u64 = 300;
-pub const DEFAULT_MESSAGE_AGGREGATION_QUIET_MS: u64 = 1200;
-pub const DEFAULT_MESSAGE_AGGREGATION_MAX_WAIT_MS: u64 = 3000;
+pub const DEFAULT_MESSAGE_AGGREGATION_QUIET_MS: u64 = 2000;
+/// `0` 表示只按静默窗口封口，不设硬上限。
+pub const DEFAULT_MESSAGE_AGGREGATION_MAX_WAIT_MS: u64 = 0;
 pub const DEFAULT_MESSAGE_AGGREGATION_MAX_MESSAGES: usize = 10;
 pub const DEFAULT_MESSAGE_AGGREGATION_MAX_CHARS: usize = 12000;
 pub const DEFAULT_MESSAGE_AGGREGATION_MAX_ACTIVE_KEYS: usize = 1024;
@@ -42,6 +43,7 @@ pub const DEFAULT_ONEBOT11_BIND_HOST: &str = "127.0.0.1";
 pub const DEFAULT_ONEBOT11_BIND_PORT: u16 = 8789;
 pub const DEFAULT_ONEBOT11_WEBSOCKET_PATH: &str = "/onebot/v11/ws";
 pub const DEFAULT_ONEBOT11_REQUEST_TIMEOUT_MS: u64 = 10_000;
+pub const DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED: bool = true;
 pub const DEFAULT_ONEBOT11_MAX_MESSAGE_BYTES: u64 = 1024 * 1024;
 pub const MIN_ONEBOT11_MAX_MESSAGE_BYTES: u64 = 1024;
 pub const MAX_ONEBOT11_MAX_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
@@ -121,6 +123,8 @@ pub struct OneBot11Config {
     pub access_token: Option<String>,
     pub request_timeout: Duration,
     pub max_message_bytes: usize,
+    /// 是否尝试用 NapCat `set_input_status` 显示私聊“正在输入”。
+    pub agent_typing_enabled: bool,
 }
 
 impl Default for OneBot11Config {
@@ -133,6 +137,7 @@ impl Default for OneBot11Config {
             access_token: None,
             request_timeout: Duration::from_millis(DEFAULT_ONEBOT11_REQUEST_TIMEOUT_MS),
             max_message_bytes: DEFAULT_ONEBOT11_MAX_MESSAGE_BYTES as usize,
+            agent_typing_enabled: DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED,
         }
     }
 }
@@ -514,6 +519,8 @@ fn parse_onebot11_config(env: &HashMap<String, String>) -> Result<OneBot11Config
         MIN_ONEBOT11_MAX_MESSAGE_BYTES,
         MAX_ONEBOT11_MAX_MESSAGE_BYTES,
     )?;
+    let agent_typing_enabled = parse_bool(env, "ONEBOT11_AGENT_TYPING_ENABLED")?
+        .unwrap_or(DEFAULT_ONEBOT11_AGENT_TYPING_ENABLED);
 
     Ok(OneBot11Config {
         enabled,
@@ -524,6 +531,7 @@ fn parse_onebot11_config(env: &HashMap<String, String>) -> Result<OneBot11Config
         access_token,
         request_timeout: Duration::from_millis(request_timeout_ms),
         max_message_bytes: max_message_bytes as usize,
+        agent_typing_enabled,
     })
 }
 
@@ -660,10 +668,11 @@ fn parse_message_aggregation_config(
         env,
         "MESSAGE_AGGREGATION_MAX_WAIT_MS",
         DEFAULT_MESSAGE_AGGREGATION_MAX_WAIT_MS,
-        1,
+        0,
         300_000,
     )?;
-    if quiet_ms > max_wait_ms {
+    // 0 表示不设硬上限，此时只由 quiet 窗口决定封口时间。
+    if max_wait_ms > 0 && quiet_ms > max_wait_ms {
         return Err(ConfigError::InvalidAggregationWindow);
     }
     Ok(MessageAggregationConfig {

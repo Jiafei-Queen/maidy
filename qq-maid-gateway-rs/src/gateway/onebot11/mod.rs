@@ -3,6 +3,7 @@
 //! 当前模块管理协议、鉴权、连接、API request/response 关联、Core 闭环、一期文本 sender、
 //! reply/ref_index 和安全媒体入站；平台流式输出仍不启用。
 
+mod aggregator;
 mod connection;
 mod dispatch;
 pub mod protocol;

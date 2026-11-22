@@ -499,6 +499,7 @@ pub(crate) fn test_service_with_provider_base_title_query_weather_train_models_a
             } else {
                 crate::config::VoiceFeatureConfig::default()
             },
+            chat_send_pacing: crate::config::ChatSendPacingConfig::disabled(),
         },
     );
     (service, base)

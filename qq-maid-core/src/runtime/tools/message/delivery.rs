@@ -34,6 +34,8 @@ pub struct ChatSendIntent {
     pub reply_to_message_id: Option<String>,
     /// 已完成清洗和长度校验的文本，按模型给出的顺序发送。
     pub messages: Vec<String>,
+    /// 首条消息前的单次拟人延迟；由 Core 按配置采样并按工具预算裁剪。
+    pub initial_delay: Option<Duration>,
     /// 相邻两条消息之间的拟人停顿；由服务端决定，模型不能控制。
     pub gap: Option<Duration>,
     /// 每条逻辑消息真实落地后的增量回调。

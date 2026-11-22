@@ -816,6 +816,7 @@ fn test_state_with_group_tool_calling_and_query_executor(
             ops_config: crate::runtime::tools::ops::OpsConfig::default(),
             command_prefix: Default::default(),
             voice: crate::config::VoiceFeatureConfig::default(),
+            chat_send_pacing: crate::config::ChatSendPacingConfig::disabled(),
             openai_api_key: Some("test".to_owned()),
             openai_base_url: None,
             openai_api_mode: OpenAiApiMode::Auto,

@@ -18,6 +18,7 @@ use crate::{
 
 pub mod agent;
 pub mod center;
+mod chat_send_pacing;
 mod managed;
 mod model_management;
 mod provider_config;
@@ -29,6 +30,10 @@ pub use agent::{
     MAX_STT_TIMEOUT_SECONDS, MIN_STT_MAX_AUDIO_BYTES, PLATFORM_STT_PROVIDER,
     PLATFORM_STT_QQ_CANDIDATE, PLATFORM_STT_QQ_MODEL, ResolvedAgentPolicy, SttPlatformAsrMode,
     SttRouteChains, SttSettings, ensure_default_agent_config, is_platform_stt_model,
+};
+pub use chat_send_pacing::{
+    ChatSendPacingConfig, DEFAULT_CHAT_SEND_DELAY_MAX_MS, DEFAULT_CHAT_SEND_DELAY_MIN_MS,
+    DEFAULT_CHAT_SEND_GAP_MS,
 };
 pub use managed::managed_config_fields;
 pub use stt::{SttCandidate, SttRouteSet, SttRuntimeConfig, SttRuntimeStatus, SttStep};
@@ -173,6 +178,8 @@ pub struct AppConfig {
     pub command_prefix: CommandPrefix,
     /// 语音工具与 TTS 试听配置；无效配置只关闭语音，不阻断现有文本机器人启动。
     pub voice: VoiceFeatureConfig,
+    /// `send_message` 首条延迟和条间停顿；由 Core 采样并受工具剩余预算裁剪。
+    pub chat_send_pacing: ChatSendPacingConfig,
     /// OpenAI API 密钥
     pub openai_api_key: Option<String>,
     /// OpenAI API 基础地址
@@ -348,6 +355,7 @@ impl AppConfig {
         let command_prefix = CommandPrefix::parse(&env_string("CHAT_COMMAND_PREFIX", "/"))
             .map_err(|error| LlmError::config(format!("invalid CHAT_COMMAND_PREFIX: {error}")))?;
         let voice = VoiceFeatureConfig::from_environment(&effective_environment);
+        let chat_send_pacing = ChatSendPacingConfig::from_environment()?;
         let models_config_file = env_optional("MODELS_CONFIG_FILE")
             .unwrap_or_else(|| DEFAULT_MODELS_CONFIG_FILE.to_owned());
         let local_overrides =
@@ -360,6 +368,7 @@ impl AppConfig {
             ops_config,
             command_prefix,
             voice,
+            chat_send_pacing,
             openai_api_key: provider_config::builtin_api_key("OPENAI")?,
             openai_base_url: openai_base_url_from_env(),
             openai_api_mode: parse_openai_api_mode(&env_string("OPENAI_API_MODE", "auto"))?,

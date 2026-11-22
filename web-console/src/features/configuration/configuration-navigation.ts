@@ -7,6 +7,15 @@ export const FIELD_LABELS: Record<string, string> = {
   "provider.bigmodel.enabled": "启用 BigModel",
   "provider.gemini.enabled": "启用 Gemini",
   "command.prefix": "聊天命令前缀",
+  "chat.send.delay_min_ms": "回复前最短延迟（毫秒）",
+  "chat.send.delay_max_ms": "回复前最长延迟（毫秒）",
+  "chat.send.gap_ms": "多条回复间隔（毫秒）",
+  "chat.aggregation.private_enabled": "私聊连续消息合并",
+  "chat.aggregation.quiet_ms": "停止输入等待（毫秒）",
+  "chat.aggregation.max_wait_ms": "最长等待（毫秒，0 不限）",
+  "chat.aggregation.max_messages": "单批最大消息数",
+  "chat.aggregation.max_chars": "单批最大字符数",
+  "chat.aggregation.max_active_keys": "同时合并会话上限",
   "delivery.tts.provider": "语音 Provider",
   "delivery.tts.qwen_api_key": "千问 TTS API Key",
   "delivery.tts.qwen_base_url": "千问 TTS Base URL",
@@ -43,6 +52,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "platform.onebot11.bind_port": "OneBot 绑定端口",
   "platform.onebot11.websocket_path": "OneBot WebSocket 路径",
   "platform.onebot11.access_token": "OneBot Access Token",
+  "platform.onebot11.agent_typing_enabled": "OneBot 正在输入",
   "platform.wechat_service.enabled": "微信服务号入口",
   "platform.wechat_service.token": "微信 Token",
   "platform.wechat_service.app_id": "微信 AppID",
@@ -104,6 +114,12 @@ export const FIELD_SECTIONS: ReadonlyArray<{
   description?: string;
 }> = [
   { business: "replies-voice", label: "命令交互", prefix: "command." },
+  {
+    business: "replies-voice",
+    label: "消息节奏",
+    prefix: "chat.",
+    description: "控制连续消息合并与 send_message / send_voice 的拟人发送延迟；保存后需要重启。",
+  },
   {
     business: "replies-voice",
     label: "语音回复",

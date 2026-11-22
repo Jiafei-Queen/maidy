@@ -4,6 +4,7 @@
 //! 音频 URL 或平台 token；TTS 协议、音频上传和实际发送仍由 Gateway 实现。
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -19,6 +20,11 @@ pub struct VoiceSendIntent {
     pub reply_to_message_id: Option<String>,
     /// 已完成本地清洗和长度校验的朗读文本。
     pub text: String,
+    /// 私聊语音的总停顿目标，包含 TTS 合成耗时。
+    ///
+    /// Gateway 在合成完成后只等待剩余差值，用户感知的总停顿接近该值；群聊
+    /// 不设置该字段，保持即时发送。
+    pub target_delay: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +48,8 @@ pub enum VoiceSendError {
     EmptyText,
     #[error("voice text exceeds {max_chars} characters")]
     TextTooLong { max_chars: usize },
+    #[error("voice text is longer than the platform voice limit")]
+    TextTooLongForVoice,
     #[error("voice send timed out")]
     Timeout,
     #[error("voice synthesis failed: {code}")]
@@ -60,6 +68,7 @@ impl VoiceSendError {
             Self::TargetMissing => "target_missing",
             Self::EmptyText => "empty_text",
             Self::TextTooLong { .. } => "text_too_long",
+            Self::TextTooLongForVoice => "text_too_long_for_voice",
             Self::Timeout => "timeout",
             Self::Tts { .. } => "tts_error",
             Self::Upload => "upload_failed",
@@ -75,6 +84,9 @@ impl VoiceSendError {
             Self::EmptyText => "语音内容为空，本次未发送。".to_owned(),
             Self::TextTooLong { max_chars } => {
                 format!("语音内容过长，最多 {max_chars} 个字符，本次未发送。")
+            }
+            Self::TextTooLongForVoice => {
+                "语音内容超过平台单条语音时长上限，请缩短后再发送。".to_owned()
             }
             Self::Timeout => "语音发送超时，本次是否送达无法确认。".to_owned(),
             Self::Tts { .. } => "语音合成失败，本次未发送。".to_owned(),

@@ -34,6 +34,7 @@ use crate::{
 };
 
 use super::{
+    aggregator::{OneBotMessageAggregator, OneBotMessageAggregatorHandle},
     connection::{OneBotConnectionContext, Registration, RegistrationError},
     dispatch::OneBotInboundDispatcher,
     protocol::{ActionResponse, OneBotEvent, OneBotId},
@@ -63,7 +64,8 @@ struct ServerState {
     connection: OneBotConnectionContext,
     runtime: GatewayRuntimeStatus,
     shutdown: CancellationToken,
-    dispatcher: OneBotScopeDispatcher,
+    /// 私聊消息先经过聚合器；命令和媒体消息由聚合器判定后立即转发给 scope dispatcher。
+    dispatcher: OneBotMessageAggregatorHandle,
     /// action response 的传输层上限；未启用 STT 时与事件上限一致。
     action_response_max_bytes: usize,
 }
@@ -136,20 +138,31 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
             "OneBot 11 语音转写已启用，单独放宽 action response 传输上限"
         );
     }
+    let sender =
+        OneBotSender::new(connection.clone()).with_typing_enabled(config.agent_typing_enabled);
     let dispatcher = OneBotScopeDispatcher::new(
         &app_config,
         OneBotInboundDispatcher::new(
-            respond,
-            OneBotSender::new(connection.clone()),
+            respond.clone(),
+            sender.clone(),
             app_config.bot_display_name().to_owned(),
             ref_index,
             commands,
             command_prefix,
             voice,
         ),
-        dedupe,
+        dedupe.clone(),
         &shutdown,
     );
+    let aggregator = OneBotMessageAggregator::new(
+        app_config.message_aggregation.clone(),
+        respond,
+        Arc::new(dispatcher.clone()),
+        dedupe,
+        sender,
+        shutdown.clone(),
+    );
+    let aggregator_handle = aggregator.handle();
     let dispatcher_shutdown = dispatcher.clone();
     let state = ServerState {
         config,
@@ -158,7 +171,7 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
         connection: connection.clone(),
         runtime: runtime.clone(),
         shutdown: shutdown.clone(),
-        dispatcher,
+        dispatcher: aggregator_handle,
         action_response_max_bytes,
     };
     let app = Router::new()
@@ -174,6 +187,8 @@ pub(crate) async fn spawn_reverse_websocket_server_with_ref_index(
             })
             .await
             .context("serve OneBot 11 reverse WebSocket");
+        // 先封口聚合器，再停止 scope dispatcher，保证已接收消息按顺序投递。
+        aggregator.shutdown().await;
         dispatcher_shutdown.shutdown().await;
         runtime.record_onebot_stopped();
         result

@@ -6,6 +6,7 @@
 
 mod agent_turn;
 mod delivery;
+mod estimate;
 mod legacy;
 mod tool;
 
@@ -13,6 +14,8 @@ mod tool;
 mod tests;
 
 pub(crate) use agent_turn::tool_outcome_from_result;
+pub use estimate::MAX_QQ_VOICE_DURATION;
+pub(crate) use estimate::exceeds_qq_voice_limit;
 
 pub use delivery::{
     DynVoiceSendSink, VoiceSendError, VoiceSendIntent, VoiceSendResult, VoiceSendSink,

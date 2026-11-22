@@ -152,6 +152,8 @@ pub struct RespondServiceOptions {
     pub command_prefix: CommandPrefix,
     /// TTS 能力预检快照；只用于决定是否向模型注册语音工具。
     pub voice: crate::config::VoiceFeatureConfig,
+    /// `send_message` 首条延迟和条间停顿；只影响模型主动发言。
+    pub chat_send_pacing: crate::config::ChatSendPacingConfig,
 }
 
 /// Core 运行态到 Respond 服务的一次性装配依赖。
@@ -406,6 +408,7 @@ impl RustRespondService {
             options.web_search_timeouts,
             knowledge_index.clone(),
             &options.voice,
+            options.chat_send_pacing,
         );
         let ops_service = OpsService::new_with_runtime(
             options.ops_config,

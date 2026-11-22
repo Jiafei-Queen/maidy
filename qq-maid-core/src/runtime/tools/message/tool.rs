@@ -19,6 +19,7 @@ use tokio::time::{Instant, timeout_at};
 use tracing::warn;
 
 use crate::{
+    config::ChatSendPacingConfig,
     error::LlmError,
     runtime::{
         push::{ONEBOT11_PLATFORM, PushTarget, PushTargetType, QQ_OFFICIAL_PLATFORM},
@@ -42,14 +43,12 @@ const SEND_MESSAGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// 微信服务号在 Core 中的稳定平台名。
 const WECHAT_SERVICE_PLATFORM: &str = "wechat_service";
 
-/// 相邻两条消息之间的拟人停顿范围。
-const DEFAULT_GAP: Duration = Duration::from_millis(900);
-
 #[derive(Clone)]
 pub struct SendMessageTool {
     sink: DynChatSendSink,
     delivery: Option<std::sync::Arc<TurnDelivery>>,
     target: Option<ChatSendTarget>,
+    pacing: ChatSendPacingConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +65,14 @@ impl SendMessageTool {
             sink,
             delivery: None,
             target: None,
+            pacing: ChatSendPacingConfig::disabled(),
         }
+    }
+
+    /// 注入服务端采样配置；模型不能控制延迟区间。
+    pub fn with_pacing(mut self, pacing: ChatSendPacingConfig) -> Self {
+        self.pacing = pacing;
+        self
     }
 
     /// 当前请求是否可以绑定会话发送目标。
@@ -94,6 +100,7 @@ impl SendMessageTool {
             sink: self.sink.clone(),
             delivery: Some(delivery),
             target: Some(target),
+            pacing: self.pacing.clone(),
         })
     }
 }
@@ -177,20 +184,25 @@ impl Tool for SendMessageTool {
         // 即使 execute 中途被取消，账本也不会少计。
         let sent_before = delivery.sent_count();
         let progress_delivery = delivery.clone();
+        let deadline = context
+            .execution_deadline
+            .unwrap_or_else(|| Instant::now() + SEND_MESSAGE_TIMEOUT);
+        // 拟人延迟只消耗工具剩余预算；预算不足时直接放弃，优先保证消息送达。
+        let initial_delay = self
+            .pacing
+            .effective_delay(deadline.saturating_duration_since(Instant::now()));
         let intent = ChatSendIntent {
             target: target.target.clone(),
             reply_to_message_id: delivery
                 .latest_reply_to_message_id()
                 .or_else(|| target.reply_to_message_id.clone()),
             messages: messages.clone(),
-            gap: Some(DEFAULT_GAP),
+            initial_delay: (!initial_delay.is_zero()).then_some(initial_delay),
+            gap: (!self.pacing.gap.is_zero()).then_some(self.pacing.gap),
             on_sent: Some(ChatSendProgress::new(move |message| {
                 progress_delivery.record_sent(vec![message]);
             })),
         };
-        let deadline = context
-            .execution_deadline
-            .unwrap_or_else(|| Instant::now() + SEND_MESSAGE_TIMEOUT);
         let result = match timeout_at(deadline, self.sink.send_messages(intent)).await {
             Ok(result) => result,
             Err(_) => Err(ChatSendError::Timeout),

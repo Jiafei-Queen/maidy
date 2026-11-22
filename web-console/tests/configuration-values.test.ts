@@ -47,6 +47,7 @@ describe("配置分组", () => {
   it("按前缀归入业务域，未知字段进入高级兼容区", () => {
     expect(businessGroupOf("provider.openai.base_url")).toBe("models-providers");
     expect(businessGroupOf("platform.onebot11.bind_port")).toBe("platforms");
+    expect(businessGroupOf("chat.aggregation.quiet_ms")).toBe("replies-voice");
     expect(businessGroupOf("unknown.key")).toBe("advanced");
   });
 
@@ -54,10 +55,12 @@ describe("配置分组", () => {
     const grouped = groupFieldsBySection([
       field({ key: "platform.qq_official.app_id" }),
       field({ key: "platform.onebot11.bind_port" }),
+      field({ key: "chat.send.delay_min_ms" }),
     ]);
-    expect(grouped).toHaveLength(2);
+    expect(grouped).toHaveLength(3);
     expect(grouped[0]?.label).toBe("QQ 官方入口");
     expect(grouped[1]?.label).toBe("OneBot 11 入口");
+    expect(grouped[2]?.label).toBe("消息节奏");
   });
 });
 
