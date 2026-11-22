@@ -33,7 +33,7 @@
 - 会话、账号和被动回复锚点只来自服务端 `RespondRequest`，模型参数不能指定平台 ID。
 - 模型最终文本不再自动视为用户可见回复。一次 Tool 调用成功发送后，Core 清空最终文本并标记 `suppressed=true`；没有发送时保留最终文本作为兼容兜底。
 - 同一轮消息条数受平台被动回复预算约束，账本同时负责去重、剩余额度与失败记录。
-- 首条消息前会按 `CHAT_SEND_DELAY_MIN_MS` / `MAX_MS` 随机等待，多条之间保留 `CHAT_SEND_GAP_MS`；延迟受工具剩余预算裁剪，并在 OneBot 私聊中显示“正在输入”。`send_voice` 复用同一区间，但仅在私聊生效，且停顿目标包含 TTS 合成耗时。详见 [消息延迟收发](./message-pacing.md)。
+- 首条消息前会按 `CHAT_SEND_DELAY_MIN_MS` / `MAX_MS` 随机等待，多条之间保留 `CHAT_SEND_GAP_MS`；延迟受工具剩余预算裁剪，并在 OneBot 私聊中显示“正在输入”。`send_voice` 复用同一区间，但仅在私聊生效，停顿目标还会叠加估算语音时长并扣除 TTS 合成耗时。详见 [消息延迟收发](./message-pacing.md)。
 - 回合运行期间到达的普通纯文本消息可由 Gateway dispatcher 通过 `CoreService::try_steer` 注入当前 Agent Loop；插话只在工具结果形成后、下一次模型调用前进入上下文，不额外发起即时回答。
 - Agent Runtime 关闭逐字流式，最终正文只通过 `Completed` 或 `send_message` 交付，避免工具发言与模型草稿重复。
 

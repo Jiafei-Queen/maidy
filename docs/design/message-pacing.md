@@ -57,7 +57,7 @@ OneBot 11 的聚合发生在 `OneBotScopeDispatcher` 之前，等待期间不占
 | 工具 | 生效范围 | 延迟语义 |
 | --- | --- | --- |
 | `send_message` | 私聊 + 群聊 | 首条消息发送前等待；多条之间保留 `CHAT_SEND_GAP_MS` |
-| `send_voice` | 仅私聊 | 整段停顿目标，包含 TTS 合成耗时 |
+| `send_voice` | 仅私聊 | `配置延迟 + 估算语音时长` 的总停顿，包含 TTS 合成耗时 |
 
 语音只在私聊生效：群聊没有“正在输入”配合，单纯等待只会让语音无故变慢。
 
@@ -77,20 +77,23 @@ OneBot 11 的聚合发生在 `OneBotScopeDispatcher` 之前，等待期间不占
 
 ```text
 send_message: effective_delay = min(sampled_delay, remaining_budget - 3s)
-send_voice:   effective_delay = min(sampled_delay, remaining_budget - 8s)
+send_voice:   effective_delay = min(sampled_delay + speech, remaining_budget - 8s)
 ```
 
 语音链路包含 TTS 合成、上传和发送，所以预留 8 秒；剩余预算不足对应边际时直接放弃本次延迟，优先保证消息送达。工具超时、取消和真实发送结果语义保持不变。
 
 ### 语音停顿
 
-`send_voice` 的延迟是**总停顿目标**，不是额外等待：
+`send_voice` 的延迟是**总停顿目标**，不是额外等待，且包含估算语音时长：
 
 ```text
-实际等待 = max(0, target_delay - TTS 合成耗时)
+target_delay = sampled_delay + estimated_speech_duration(text)
+实际等待     = max(0, target_delay - TTS 合成耗时)
 ```
 
-TTS 本身通常要 1–3 秒，如果把配置延迟直接叠加在合成之后，用户会明显感到拖沓。所以合成慢时不再补等，合成快时才补齐差值，用户感知的总停顿稳定在配置区间内。
+`estimated_speech_duration` 由 Core 按朗读速度估算（约 4.5 字/秒），用于让语音整体晚于文本回复一个“朗读周期”，而不是在合成完成后额外等待。TTS 本身通常要 1–3 秒，如果把配置延迟直接叠加在合成之后，用户会明显感到拖沓；所以合成慢时不再补等，合成快时才补齐差值。
+
+这两个 Provider 都不返回音频时长，仓库也不为这段停顿引入音频解析依赖，因此估算只服务于时序，不参与 TTS、上传或平台发送判定，不封顶。
 
 ### 正在输入
 
