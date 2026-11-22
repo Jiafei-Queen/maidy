@@ -1,121 +1,135 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useAtomValue, useSetAtom } from "jotai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useAtom, useAtomValue } from "jotai";
+import { useEffect, useState } from "react";
 import { requestRestart } from "../../api.js";
-import { backgroundController } from "../../stores/background.js";
 import { hydrateUserData } from "../../stores/user-data.js";
 import { autoRefreshAtom, useConsoleStatusQuery } from "../../queries/console-status.js";
 import { logout, sessionAtom } from "../../stores/auth.js";
+import { themeModeAtom, toggleThemeMode } from "../../stores/theme.js";
 import { showToast } from "../../stores/toast.js";
 import { cn } from "../../lib/utils.js";
-import type { TransitionImage } from "../../background.js";
 import { Button } from "../ui/button.js";
 import { ConfirmDialog } from "../ui/dialog.js";
 import { ConsoleIcon, type ConsoleIconName } from "../ui/icons.js";
+import { StatusBadge } from "../ui/status-badge.js";
 
-/** 控制台信息架构：导航顺序与旧版 CONSOLE_PAGES 保持一致。 */
-const CONSOLE_PAGES: ReadonlyArray<{ id: string; label: string; icon: ConsoleIconName; to: string }> = [
+type NavPage = {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: ConsoleIconName;
+  readonly to: string;
+};
+
+/** 系统运维分组：运行态势与部署设置。 */
+const OPS_PAGES: readonly NavPage[] = [
   { id: "overview", label: "总览", icon: "overview", to: "/" },
   { id: "platforms", label: "平台", icon: "platforms", to: "/platforms" },
   { id: "configuration", label: "配置", icon: "configuration", to: "/configuration" },
   { id: "storage", label: "存储", icon: "storage", to: "/storage" },
+];
+
+/** 核心能力分组：记忆、待办、知识库与本地工具。 */
+const CAPABILITY_PAGES: readonly NavPage[] = [
   { id: "memory", label: "Memory", icon: "memory", to: "/memory" },
   { id: "todo", label: "Todo", icon: "todo", to: "/todo" },
   { id: "knowledge", label: "知识库", icon: "knowledge", to: "/knowledge" },
   { id: "tools", label: "工具", icon: "tools", to: "/tools" },
 ];
 
-const COVER_DURATION_MS = 784;
-const WASHOUT_DURATION_MS = 896;
-
-function wait(duration: number): Promise<void> {
-  return new Promise((resolve) => window.setTimeout(resolve, duration));
-}
-
-/** 已认证的应用壳：全宽状态栏 + 滚动内容区 + 悬浮底部导航。
- * 页面切换沿用旧版中心扩散过渡：784ms 遮蔽后换页，再 896ms 清洗淡出；
- * prefers-reduced-motion 下直接切换。转换中到达的请求只保留最新一个。 */
+/**
+ * 已认证的应用壳（Atelier Glass 工作台骨架）：
+ * - 桌面端（>=1024px）：左侧固定 220px L1 通透玻璃侧边栏；
+ * - 平板端（768px–1023px）：折叠为 60px 图标轨；
+ * - 移动端（<768px）：顶部菜单按钮唤起玻璃抽屉；
+ * - 路由切换零阻塞，内容区按路由 key 执行 120ms 静默淡入。
+ */
 export function AppShell() {
   const [restartOpen, setRestartOpen] = useState(false);
-
-  // 页面切换状态只有这一个实例：navigateTo 交给 NavList，overlay 由本组件渲染，
-  // 保证动画状态与过渡层来自同一份 hook state。
-  const navigate = useNavigate();
-  const navigateByPath = useCallback((to: string) => navigate({ to }), [navigate]);
-  const { navigateTo, transitionOverlay } = usePageTransition(navigateByPath);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
 
   // 认证完成后加载用户界面偏好：主题自定义色、背景状态与旧 cookie 迁移以服务端为权威。
   useEffect(() => {
     void hydrateUserData();
   }, []);
 
+  // 移动端抽屉打开时支持 Esc 关闭。
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [drawerOpen]);
+
   return (
-    <>
-      <header className="relative z-40 flex flex-wrap items-center justify-between gap-3 border-b border-line bg-glass px-4 py-2.5">
-        <div className="min-w-0">
-          <p className="console-mono-tag m-0">QQ MAID BOT · LOCAL OPS</p>
-          <p className="m-0 hidden text-xs leading-relaxed text-muted sm:block">
-            默认同源并受部署管理员会话与 CSRF 保护；公网访问仍必须使用受信 TLS 反向代理。
-          </p>
-        </div>
-        <StatusBarActions onRequestRestart={() => setRestartOpen(true)} />
-      </header>
-
-      <main className="relative z-1 mx-auto w-full max-w-6xl px-4 pt-4 pb-32">
-        <Outlet />
-      </main>
-
-      <nav
-        aria-label="控制台页面"
-        className="fixed bottom-3 left-1/2 z-50 w-[min(430px,calc(100vw-1.5rem))] -translate-x-1/2 rounded-console-lg border border-line bg-glass-raised p-1.5 shadow-console backdrop-blur"
+    <div className="relative z-1 flex min-h-dvh">
+      {/* 桌面端 220px / 平板端 60px 图标轨：固定 L1 通透玻璃侧边栏 */}
+      <aside
+        aria-label="主导航栏"
+        className="console-shell fixed inset-y-0 left-0 z-30 hidden border-r border-line md:flex md:w-[60px] md:flex-col lg:w-[220px]"
       >
-        <NavList navigateTo={navigateTo} />
-      </nav>
+        <SidebarContent pathname={pathname} collapsedTablet />
+      </aside>
+
+      {/* 移动端玻璃抽屉 */}
+      {drawerOpen ? (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <div
+            aria-hidden="true"
+            onClick={() => setDrawerOpen(false)}
+            className="fixed inset-0 bg-scrim backdrop-blur-[2px] animate-fade-in"
+          />
+          <aside
+            aria-label="主导航抽屉"
+            className="console-shell relative z-1 flex h-full w-[240px] flex-col border-r border-line shadow-console animate-page-in"
+          >
+            <div className="flex h-12 items-center justify-end border-b border-line-inner px-3">
+              <button
+                type="button"
+                aria-label="关闭导航菜单"
+                onClick={() => setDrawerOpen(false)}
+                className="inline-flex size-8 cursor-pointer items-center justify-center rounded-console-sm text-muted transition-colors duration-[120ms] hover:bg-accent-soft hover:text-ink"
+              >
+                <ConsoleIcon name="close" className="size-4" />
+              </button>
+            </div>
+            <SidebarContent pathname={pathname} onNavigate={() => setDrawerOpen(false)} />
+          </aside>
+        </div>
+      ) : null}
+
+      {/* 右侧主工作区：顶部 48px 状态操作条 + 独立内容区 */}
+      <div className="flex min-w-0 flex-1 flex-col md:pl-[60px] lg:pl-[220px]">
+        <TopUtilityBar
+          onOpenMenu={() => setDrawerOpen(true)}
+          onRequestRestart={() => setRestartOpen(true)}
+        />
+        <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
+          <div key={pathname} className="animate-page-in">
+            <Outlet />
+          </div>
+        </main>
+      </div>
 
       <RestartConfirmDialog open={restartOpen} onOpenChange={setRestartOpen} />
-      {transitionOverlay}
-    </>
+    </div>
   );
 }
 
-function NavList({ navigateTo }: { navigateTo: (to: string) => Promise<void> }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  return (
-    <ul className="m-0 flex list-none justify-between gap-1 p-0">
-      {CONSOLE_PAGES.map((page) => {
-        const active = page.to === "/" ? pathname === "/" : pathname.startsWith(page.to);
-        return (
-          <li key={page.id} className="flex-1">
-            <Link
-              to={page.to}
-              aria-current={active ? "page" : undefined}
-              aria-label={page.label}
-              onClick={(event) => {
-                event.preventDefault();
-                if (active) return;
-                void navigateTo(page.to);
-              }}
-              className={cn(
-                "flex flex-col items-center gap-0.5 rounded-console px-0.5 py-2 text-[0.66rem] font-bold no-underline transition-colors sm:px-1 sm:text-[0.68rem]",
-                active ? "bg-accent-soft text-accent" : "text-muted hover:bg-accent-soft hover:text-ink",
-              )}
-            >
-              <ConsoleIcon name={page.icon} className="h-5 w-5" />
-              <span>{page.label}</span>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-/** 状态栏右侧操作区：重启、自动刷新、管理员标识、退出登录、最后刷新时间。 */
-function StatusBarActions({ onRequestRestart }: { onRequestRestart: () => void }) {
-  const session = useAtomValue(sessionAtom);
-  const setAutoRefresh = useSetAtom(autoRefreshAtom);
+function SidebarContent({
+  pathname,
+  collapsedTablet = false,
+  onNavigate,
+}: {
+  pathname: string;
+  collapsedTablet?: boolean;
+  onNavigate?: () => void;
+}) {
   const statusQuery = useConsoleStatusQuery();
+  const mode = useAtomValue(themeModeAtom);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -131,36 +145,180 @@ function StatusBarActions({ onRequestRestart }: { onRequestRestart: () => void }
     },
   });
 
+  const version = statusQuery.data?.runtime.version;
+  const labelHideClass = collapsedTablet ? "md:hidden lg:inline" : "";
+
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
-      <Button variant="danger" onClick={onRequestRestart} className="px-3 py-1.5 text-xs">
-        重启服务
-      </Button>
-      <label className="flex items-center gap-1.5 font-semibold">
-        <input
-          type="checkbox"
-          defaultChecked
-          onChange={(event) => setAutoRefresh(event.target.checked)}
-          className="size-3.5 accent-[var(--console-accent)]"
-        />
-        自动刷新
-      </label>
-      <span>
-        管理员：<strong className="font-mono text-ink">{session?.username ?? "—"}</strong>
-      </span>
-      <Button
-        variant="secondary"
-        disabled={logoutMutation.isPending}
-        onClick={() => logoutMutation.mutate()}
-        className="px-3 py-1.5 text-xs"
-      >
-        退出登录
-      </Button>
-      <span className="font-mono">
-        最后刷新：
-        {statusQuery.dataUpdatedAt ? new Date(statusQuery.dataUpdatedAt).toLocaleString() : "尚未刷新"}
-      </span>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* 品牌区 */}
+      <div className={cn("flex h-12 shrink-0 items-center border-b border-line px-4", collapsedTablet && "md:justify-center md:px-0 lg:justify-start lg:px-4")}>
+        <div className={cn("min-w-0", collapsedTablet && "md:hidden lg:block")}>
+          <p className="m-0 font-display text-[17px] leading-tight font-semibold text-ink">QQ Maid Console</p>
+          <p className="m-0 font-mono text-[11px] leading-tight text-muted">
+            {version ? `v${version} · Local` : "Local Ops"}
+          </p>
+        </div>
+        {collapsedTablet ? (
+          <span className="hidden font-display text-lg font-semibold text-ink md:inline lg:hidden" title="QQ Maid Console">
+            M
+          </span>
+        ) : null}
+      </div>
+
+      {/* 导航分组 */}
+      <nav aria-label="控制台页面" className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 py-3">
+        <NavGroup pages={OPS_PAGES} pathname={pathname} collapsedTablet={collapsedTablet} onNavigate={onNavigate} />
+        <div className="mx-2 border-t border-line" role="separator" />
+        <NavGroup pages={CAPABILITY_PAGES} pathname={pathname} collapsedTablet={collapsedTablet} onNavigate={onNavigate} />
+      </nav>
+
+      {/* 底部常驻：昼夜模式切换 + 退出登录 */}
+      <div className="shrink-0 border-t border-line p-2">
+        <div className={cn("flex gap-1.5", collapsedTablet ? "md:flex-col lg:flex-row" : "flex-row")}>
+          <button
+            type="button"
+            onClick={toggleThemeMode}
+            title={mode === "dark" ? "切换到晨雾浅色态" : "切换到暮色深色态"}
+            aria-label={mode === "dark" ? "切换到晨雾浅色态" : "切换到暮色深色态"}
+            className={cn(
+              "inline-flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-console-sm border border-line bg-card/70 px-2 text-xs font-medium text-ink transition-colors duration-[120ms] ease-out hover:border-accent/40 hover:bg-accent-soft",
+              collapsedTablet && "md:px-0 lg:px-2",
+            )}
+          >
+            <ConsoleIcon name={mode === "dark" ? "sun" : "moon"} className="size-3.5 shrink-0" />
+            <span className={labelHideClass}>{mode === "dark" ? "暮色" : "晨雾"}</span>
+          </button>
+          <button
+            type="button"
+            disabled={logoutMutation.isPending}
+            onClick={() => logoutMutation.mutate()}
+            title="退出登录"
+            aria-label="退出登录"
+            className={cn(
+              "inline-flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-console-sm border border-line bg-transparent px-2 text-xs font-medium text-muted transition-colors duration-[120ms] ease-out hover:bg-accent-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-50",
+              collapsedTablet && "md:px-0 lg:px-2",
+            )}
+          >
+            <ConsoleIcon name="logout" className="size-3.5 shrink-0" />
+            <span className={labelHideClass}>退出</span>
+          </button>
+        </div>
+      </div>
     </div>
+  );
+}
+
+function NavGroup({
+  pages,
+  pathname,
+  collapsedTablet,
+  onNavigate,
+}: {
+  pages: readonly NavPage[];
+  pathname: string;
+  collapsedTablet: boolean;
+  onNavigate?: (() => void) | undefined;
+}) {
+  return (
+    <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+      {pages.map((page) => {
+        const active = page.to === "/" ? pathname === "/" : pathname.startsWith(page.to);
+        return (
+          <li key={page.id}>
+            <Link
+              to={page.to}
+              aria-current={active ? "page" : undefined}
+              aria-label={page.label}
+              title={page.label}
+              onClick={() => onNavigate?.()}
+              className={cn(
+                "relative flex items-center gap-2.5 rounded-console-sm px-2.5 py-2 text-[13px] font-semibold no-underline transition-colors duration-[120ms] ease-out",
+                collapsedTablet && "md:justify-center md:px-0 lg:justify-start lg:px-2.5",
+                active
+                  ? "bg-accent-soft text-ink"
+                  : "text-muted hover:bg-accent-soft/60 hover:text-ink",
+              )}
+            >
+              {active ? (
+                <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-[2px] rounded-full bg-accent" />
+              ) : null}
+              <ConsoleIcon name={page.icon} className={cn("size-4 shrink-0", active ? "text-accent" : "text-muted")} />
+              <span className={cn("truncate", collapsedTablet && "md:hidden lg:inline")}>{page.label}</span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** 顶部 48px L1 玻璃态状态操作条：环境状态、自动/手动刷新、管理员标识与受控重启。 */
+function TopUtilityBar({
+  onOpenMenu,
+  onRequestRestart,
+}: {
+  onOpenMenu: () => void;
+  onRequestRestart: () => void;
+}) {
+  const session = useAtomValue(sessionAtom);
+  const [autoRefresh, setAutoRefresh] = useAtom(autoRefreshAtom);
+  const statusQuery = useConsoleStatusQuery();
+
+  const runtime = statusQuery.data?.runtime;
+  const setupRequired = runtime?.state === "setup_required";
+  const statusTone = !runtime ? "neutral" : setupRequired ? "warning" : runtime.ok ? "success" : "error";
+  const statusLabel = !runtime ? "同步中" : setupRequired ? "等待配置" : runtime.ok ? "在线" : "异常";
+
+  const updatedLabel = statusQuery.dataUpdatedAt
+    ? new Date(statusQuery.dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "—";
+
+  return (
+    <header className="console-shell sticky top-0 z-20 flex h-12 shrink-0 items-center justify-between gap-3 border-b border-line px-4 sm:px-6 lg:px-8">
+      <div className="flex min-w-0 items-center gap-3">
+        <button
+          type="button"
+          aria-label="打开导航菜单"
+          onClick={onOpenMenu}
+          className="inline-flex size-8 cursor-pointer items-center justify-center rounded-console-sm border border-line bg-card/70 text-ink transition-colors duration-[120ms] hover:bg-accent-soft md:hidden"
+        >
+          <ConsoleIcon name="menu" className="size-4" />
+        </button>
+        <StatusBadge tone={statusTone} label={statusLabel} />
+        <span className="hidden truncate font-mono text-xs text-muted sm:inline">
+          管理员 <strong className="font-medium text-ink">{session?.username ?? "—"}</strong>
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 sm:gap-3">
+        <span className="hidden font-mono text-xs text-muted md:inline" title="最近状态刷新时间">
+          刷新于 {updatedLabel}
+        </span>
+        <label className="hidden cursor-pointer items-center gap-1.5 text-xs text-muted select-none sm:inline-flex">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={(event) => setAutoRefresh(event.target.checked)}
+            className="size-3.5 accent-[var(--console-accent)]"
+          />
+          自动刷新
+        </label>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={statusQuery.isFetching}
+          onClick={() => void statusQuery.refetch()}
+          title="立即刷新运行状态"
+        >
+          <ConsoleIcon name="refresh" className="size-3.5" />
+          <span className="hidden sm:inline">刷新</span>
+        </Button>
+        <Button variant="danger" size="sm" onClick={onRequestRestart}>
+          <ConsoleIcon name="restart" className="size-3.5" />
+          <span>重启服务</span>
+        </Button>
+      </div>
+    </header>
   );
 }
 
@@ -188,63 +346,4 @@ function RestartConfirmDialog({ open, onOpenChange }: { open: boolean; onOpenCha
       onConfirm={() => restartMutation.mutate()}
     />
   );
-}
-
-/**
- * 页面切换过渡：只在点击导航时播放；中心切片由背景 controller 提供（无背景时为主题清洗过渡）。
- *
- * 路由跳转通过参数注入（AppShell 传 useNavigate 包装），使动画时序与路由库解耦、可独立测试。
- * 整个应用只在 AppShell 调用一次本 hook：navigateTo 与 transitionOverlay 必须来自同一份
- * running state，否则触发切换的实例不渲染 overlay、渲染 overlay 的实例收不到触发。
- */
-/** 页面切换过渡：只在点击导航时播放；中心切片由背景 controller 提供（无背景时为主题清洗过渡）。
- * 整个应用只在 AppShell 调用一次本 hook；navigateTo 与 transitionOverlay 共享同一份 running state。 */
-export function usePageTransition(navigate: (to: string) => Promise<void> | void) {
-  const [running, setRunning] = useState(false);
-  const [transitionImage, setTransitionImage] = useState<TransitionImage>(null);
-  const busyRef = useRef(false);
-  const pendingRef = useRef<string | null>(null);
-
-  const navigateTo = useCallback(
-    async (to: string) => {
-      if (busyRef.current) {
-        pendingRef.current = to;
-        return;
-      }
-      busyRef.current = true;
-      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (!reducedMotion) {
-        setTransitionImage(backgroundController.nextTransitionImage());
-        setRunning(true);
-        await wait(COVER_DURATION_MS);
-      }
-      await navigate(to);
-      if (!reducedMotion) {
-        await wait(WASHOUT_DURATION_MS);
-        setRunning(false);
-      }
-      busyRef.current = false;
-      const next = pendingRef.current;
-      if (next !== null) {
-        pendingRef.current = null;
-        void navigateTo(next);
-      }
-    },
-    [navigate],
-  );
-
-  const transitionOverlay = (
-    <div className={cn("console-transition", running && "is-running")} aria-hidden="true" hidden={!running}>
-      <div className="console-transition-wash" />
-      <div
-        className="console-transition-image"
-        style={{
-          backgroundImage: transitionImage ? `url("${transitionImage.url}")` : "none",
-          backgroundPosition: transitionImage?.position ?? "",
-        }}
-      />
-    </div>
-  );
-
-  return { navigateTo, transitionOverlay };
 }

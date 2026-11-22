@@ -74,14 +74,14 @@ export function MemoryCreateForm({ targets, targetsLoading, disabled }: Props) {
   return (
     <form
       aria-label="创建 Memory"
-      className="mt-6 flex flex-col gap-3 rounded-console-lg border border-line bg-glass-muted p-4"
+      className="console-panel flex flex-col gap-3 p-4 sm:p-5"
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
         void form.handleSubmit();
       }}
     >
-      <p className="console-mono-tag m-0">CREATE / CONTROLLED WRITE</p>
+      <h3 className="m-0 text-sm font-semibold text-ink">新增 Memory</h3>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <Field label="已授权范围" id="memory-create-target" hint={targetsLoading ? "加载范围中…" : undefined}>
           {(props) => (

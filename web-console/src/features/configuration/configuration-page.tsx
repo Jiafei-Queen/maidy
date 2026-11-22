@@ -10,12 +10,13 @@ import {
 } from "../../api.js";
 import { Button } from "../../components/ui/button.js";
 import { ConfirmDialog } from "../../components/ui/dialog.js";
-import { Frame, SectionHeader } from "../../components/ui/frame.js";
+import { Frame, PageHeader, SectionHeading } from "../../components/ui/frame.js";
 import { Field, Input } from "../../components/ui/field.js";
 import { QueryState } from "../../components/ui/query-state.js";
 import { StatusBadge } from "../../components/ui/status-badge.js";
 import { showToast } from "../../stores/toast.js";
-import type { ConfigFieldSnapshot, ConfigurationSnapshot } from "../../types.js";
+import { cn } from "../../lib/utils.js";
+import type { ConfigurationSnapshot } from "../../types.js";
 import {
   BUSINESS_GROUPS,
   businessGroupOf,
@@ -23,22 +24,26 @@ import {
   groupFieldsBySection,
   type ConfigurationBusinessGroup,
 } from "./configuration-navigation.js";
-import { configInputValue, configurationSummary, isEmptyInputValue, parseConfigInputValue } from "./configuration-values.js";
+import { configurationSummary, isEmptyInputValue, parseConfigInputValue } from "./configuration-values.js";
 import { FirstRunChecklist } from "./first-run-checklist.js";
 import { PublicFieldRow } from "./configuration-field-row.js";
 import { ProviderConnections } from "./provider-connections.js";
 import { AgentEditor } from "./agent-editor.js";
 import { ThemePreferencesSection } from "./theme-preferences.js";
 import { BackgroundPreferencesSection } from "./background-preferences.js";
-import { TTS_PROVIDER_KEY, ttsNumberRange, ttsProviderOptions } from "./tts-config.js";
 import { VoicePreviewCard } from "./voice-preview-card.js";
 
-/** Agent 编辑器覆盖的业务域：这些 Tab 由 snapshot.agent 驱动，不依赖 runtime 字段存在。 */
-const AGENT_GROUPS: ReadonlySet<ConfigurationBusinessGroup> = new Set(["model-routing", "stt-routing", "online-tools", "memory-knowledge"]);
+/** Agent 编辑器覆盖的业务域：这些分组由 snapshot.agent 驱动，不依赖 runtime 字段存在。 */
+const AGENT_GROUPS: ReadonlySet<ConfigurationBusinessGroup> = new Set([
+  "model-routing",
+  "stt-routing",
+  "online-tools",
+  "memory-knowledge",
+]);
 
-/** 配置中心：runtime 公开字段、secret 凭据与 Agent 策略状态。
- * 契约见 docs/INTERACTION_CONTRACTS.md：只提交真实变更、secret 留空不修改、
- * 清除必须显式确认、revision 冲突时保留本地草稿并提示比较。 */
+/** 配置中心（§7.3 左右分栏重构）：
+ * 左侧 196px L1 通透玻璃粘性目录 + 右侧 max-w-[760px] 单列表单工作区 + 仅在有脏数据时浮出的保存条。
+ * 契约：只提交真实变更、secret 留空不修改、清除必须显式确认、revision 冲突时保留本地草稿并提示比较。 */
 export function ConfigurationPage() {
   const queryClient = useQueryClient();
   const snapshotQuery = useQuery({ queryKey: ["configuration"], queryFn: fetchConfiguration, staleTime: 0 });
@@ -51,7 +56,7 @@ export function ConfigurationPage() {
 
   const snapshot = snapshotQuery.data;
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["configuration"] });
-  // 切换业务域时清空上一次保存的结果提示，避免“供应商已删除”等信息串到无关标签页。
+  // 切换业务域时清空上一次保存的结果提示，避免跨分组误导。
   const changeGroup = (group: ConfigurationBusinessGroup) => {
     setActiveGroup(group);
     setResult(null);
@@ -61,6 +66,7 @@ export function ConfigurationPage() {
     mutationFn: ({ revision, changes }: { revision: string; changes: unknown[] }) => updateRuntimeConfiguration(revision, changes),
     onSuccess: (next) => {
       const pending = next.fields.filter((field) => field.pendingRestart).length;
+      setPublicDraft({});
       setResult({
         error: false,
         text: pending > 0 ? `配置已真实持久化，${pending} 项需重启后生效` : "配置已保存并立即生效",
@@ -83,9 +89,9 @@ export function ConfigurationPage() {
 
   const validateMutation = useMutation({
     mutationFn: validateConfiguration,
-    onSuccess: (result) => setResult({
-      error: !result.valid,
-      text: result.valid ? "配置校验通过，未执行外部网络请求" : result.message || "配置未通过启动预检，未保存任何变更",
+    onSuccess: (res) => setResult({
+      error: !res.valid,
+      text: res.valid ? "配置校验通过，未执行外部网络请求" : res.message || "配置未通过启动预检，未保存任何变更",
     }),
     onError: (cause) => setResult({ error: true, text: cause instanceof Error ? cause.message : "配置校验失败" }),
   });
@@ -101,7 +107,7 @@ export function ConfigurationPage() {
 
   const availableGroups = useMemo(() => {
     const present = new Set((snapshot?.fields ?? []).map((field) => businessGroupOf(field.key)));
-    // “模型路由”等 Tab 承载 agent.toml 编辑器而非 runtime 字段；agent 可用时必须始终出现。
+    // “模型路由”等分组承载 agent.toml 编辑器而非 runtime 字段；agent 可用时必须始终出现。
     if (snapshot?.agent?.fileExists) {
       for (const group of AGENT_GROUPS) present.add(group);
     }
@@ -127,33 +133,61 @@ export function ConfigurationPage() {
     [secretFields],
   );
 
+  // 统计当前已修改的普通字段与密钥草稿数，驱动底部未保存确认条显隐。
+  const dirtyPublicCount = useMemo(() => {
+    if (!snapshot) return 0;
+    let count = 0;
+    for (const field of publicFields) {
+      if (field.sensitivity !== "public" || !field.editable || !(field.key in publicDraft)) continue;
+      const raw = publicDraft[field.key] ?? "";
+      const baseline = field.savedValue ?? field.effectiveValue;
+      if ((baseline === null || baseline === undefined) && isEmptyInputValue(raw)) continue;
+      try {
+        if (JSON.stringify(parseConfigInputValue(field, raw)) !== JSON.stringify(baseline)) count += 1;
+      } catch {
+        count += 1;
+      }
+    }
+    return count;
+  }, [publicDraft, publicFields, snapshot]);
+
+  const dirtySecretCount = useMemo(
+    () => Object.values(secretDraft).filter((draft) => draft.clear || draft.value.length > 0).length,
+    [secretDraft],
+  );
+
+  const totalDirtyCount = dirtyPublicCount + dirtySecretCount;
+
   if (!snapshot) {
     return (
-      <Frame variant="panel" className="animate-page-in">
-        <SectionHeader eyebrow="CONFIGURATION" title="配置中心" />
+      <div className="flex flex-col gap-6">
+        <PageHeader title="配置中心" subtitle="按业务域查看与修改运行配置与凭据" />
         <QueryState query={snapshotQuery}>{null}</QueryState>
-      </Frame>
+      </div>
     );
   }
 
   const summary = configurationSummary(snapshot);
+  const activeGroupMeta = BUSINESS_GROUPS.find((group) => group.id === activeGroup);
   const activePublic = publicFields.filter(
     (field) => businessGroupOf(field.key) === activeGroup && !(activeGroup === "models-providers" && field.key.startsWith("provider.")),
   );
   const activeSecret = secretFields.filter(
-    (field) => businessGroupOf(field.key) === activeGroup
-      && !(activeGroup === "models-providers" && field.key.startsWith("provider.")),
+    (field) => businessGroupOf(field.key) === activeGroup && !(activeGroup === "models-providers" && field.key.startsWith("provider.")),
   );
-  const activeAgent = activeGroup === "models-providers" || activeGroup === "online-tools" || activeGroup === "memory-knowledge" || activeGroup === "model-routing" || activeGroup === "stt-routing";
+  const activeAgent =
+    activeGroup === "models-providers"
+    || activeGroup === "online-tools"
+    || activeGroup === "memory-knowledge"
+    || activeGroup === "model-routing"
+    || activeGroup === "stt-routing";
 
   const savePublic = () => {
-    if (!snapshot) return;
     const changes: Array<Record<string, unknown>> = [];
     for (const field of publicFields.filter((candidate) => candidate.sensitivity === "public" && candidate.editable)) {
       if (!(field.key in publicDraft)) continue;
       const raw = publicDraft[field.key] ?? "";
       const baseline = field.savedValue ?? field.effectiveValue;
-      // 未配置的可选字段：空输入仍是“未修改”，不把空字符串误当新配置提交。
       if ((baseline === null || baseline === undefined) && isEmptyInputValue(raw)) continue;
       let value: unknown;
       try {
@@ -174,7 +208,6 @@ export function ConfigurationPage() {
   };
 
   const saveSecrets = () => {
-    if (!snapshot) return;
     const changes: Array<Record<string, unknown>> = [];
     for (const field of secretFields.filter((candidate) => candidate.sensitivity === "secret" && candidate.editable)) {
       const draft = secretDraft[field.key];
@@ -192,192 +225,259 @@ export function ConfigurationPage() {
     secretSave.mutate({ changes });
   };
 
+  const resetDrafts = () => {
+    setPublicDraft({});
+    setSecretDraft({});
+    setResult(null);
+  };
+
   return (
-    <Frame variant="panel" className="animate-page-in">
-      <SectionHeader
-        eyebrow="CONFIGURATION / CONTROL PLANE"
+    <div className="flex flex-col gap-6 pb-20">
+      <PageHeader
         title="配置中心"
-        lede="按业务域查看与修改运行配置；保存以服务端返回的 revision 与真实持久化结果为准。"
+        subtitle="按业务域查看与修改运行配置；保存以服务端返回的 revision 与真实持久化结果为准"
+        metrics={[{ label: "待重启项", value: summary.pendingCount, unit: "项" }]}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => validateMutation.mutate()} disabled={validateMutation.isPending}>
+              {validateMutation.isPending ? "校验中…" : "校验配置"}
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={!snapshot.restartAvailable || restartMutation.isPending}
+              title={snapshot.restartAvailable ? undefined : "当前运行目录没有可用的 botctl 重启脚本"}
+              onClick={() => restartMutation.mutate()}
+            >
+              {restartMutation.isPending ? "提交中…" : "重启服务"}
+            </Button>
+          </>
+        }
       />
 
-      <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="配置摘要">
+      {/* 配置摘要徽章 */}
+      <div className="flex flex-wrap items-center gap-2" aria-label="配置摘要">
         <StatusBadge tone={snapshot.fileExists ? "success" : "warning"} label={snapshot.fileExists ? "runtime.toml 已建立" : "runtime.toml 尚未建立"} />
         <StatusBadge tone={summary.invalidCount === 0 ? "success" : "warning"} label={summary.invalidCount === 0 ? "本地预检通过" : "需要完成配置"} />
         <StatusBadge tone={summary.pendingCount === 0 ? "neutral" : "warning"} label={summary.pendingCount === 0 ? "无待重启变更" : `${summary.pendingCount} 项重启后生效`} />
+        {!snapshot.restartAvailable ? (
+          <span className="text-xs text-muted">当前运行目录没有可用的 botctl 重启脚本</span>
+        ) : null}
       </div>
 
-      <FirstRunChecklist invalidCount={summary.invalidCount} onSelectGroup={changeGroup} />
-
       <QueryState query={snapshotQuery}>
-        {snapshot ? (
-          <>
-            <nav aria-label="配置业务域" className="mt-5 flex flex-wrap gap-1 border-b border-line pb-2">
-              {availableGroups.map((group) => (
-                <button
-                  key={group.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeGroup === group.id}
-                  title={group.description}
-                  onClick={() => changeGroup(group.id)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
-                    activeGroup === group.id ? "border-transparent bg-accent text-accent-contrast" : "border-line text-muted hover:bg-accent-soft hover:text-ink"
-                  }`}
-                >
-                  {group.label}
-                </button>
-              ))}
-            </nav>
-            <p className="m-0 mt-2 text-xs text-muted">
-              {BUSINESS_GROUPS.find((group) => group.id === activeGroup)?.description}
-            </p>
-
-            {result ? (
-              <p aria-live="polite" role={result.error ? "alert" : "status"} className={`m-0 mt-3 text-sm font-semibold ${result.error ? "text-error" : "text-success"}`}>
-                {result.text}
-              </p>
-            ) : null}
-
-            <div className="mt-4 flex flex-col gap-8">
-              {activeGroup === "models-providers" ? (
-                <ProviderConnections
-                  snapshot={snapshot}
-                  fields={providerFields}
-                  publicDraft={publicDraft}
-                  onDraftChange={(key, value) => setPublicDraft((current) => ({ ...current, [key]: value }))}
-                  onResult={setResult}
-                  secretFields={providerSecrets}
-                  secretDraft={secretDraft}
-                  onSecretDraftChange={(key, draft) => setSecretDraft((current) => ({ ...current, [key]: draft }))}
-                  onRequestSecretClear={setClearingKey}
-                />
-              ) : null}
-              {groupFieldsBySection(activePublic).map((section) => (
-                <section key={section.label} aria-label={section.label}>
-                  <h3 className="m-0 mb-1 text-base font-bold">{section.label}</h3>
-                  {section.description ? <p className="m-0 mb-3 text-xs leading-relaxed text-muted">{section.description}</p> : null}
-                  <div className="flex flex-col gap-3">
-                    {section.fields.map((field) => (
-                      <PublicFieldRow
-                        key={field.key}
-                        field={field}
-                        value={publicDraft[field.key]}
-                        onChange={(value) => setPublicDraft((current) => ({ ...current, [field.key]: value }))}
-                        onRemove={() => {
-                          if (!snapshot) return;
-                          runtimeSave.mutate({ revision: snapshot.revision, changes: [{ action: "remove", key: field.key }] });
-                        }}
-                        busy={runtimeSave.isPending}
-                      />
-                    ))}
-                    {section.label === "语音回复" ? (
-                      <VoicePreviewCard
-                        fields={snapshot.fields.filter((field) => field.key.startsWith("delivery.tts."))}
+        <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+          {/* 左侧 240px 通高粘性玻璃侧栏：撑满视口剩余高度，上方为配置目录，底部锚定首次配置检查单 */}
+          <aside className="console-shell flex flex-col overflow-hidden rounded-console-lg border border-line lg:sticky lg:top-16 lg:h-[calc(100dvh-5rem)]">
+            <nav
+              aria-label="配置业务域"
+              className="flex flex-row gap-1 overflow-x-auto p-2 lg:flex-1 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto"
+            >
+              {availableGroups.map((group) => {
+                const selected = activeGroup === group.id;
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selected}
+                    title={group.description}
+                    onClick={() => changeGroup(group.id)}
+                    className={cn(
+                      "relative shrink-0 cursor-pointer rounded-console-sm px-3 py-2 text-left text-[13px] font-semibold whitespace-nowrap transition-colors duration-[120ms] ease-out",
+                      selected
+                        ? "bg-accent-soft text-ink"
+                        : "text-muted hover:bg-accent-soft/60 hover:text-ink",
+                    )}
+                  >
+                    {selected ? (
+                      <span
+                        aria-hidden="true"
+                        className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-accent lg:inset-x-auto lg:inset-y-1.5 lg:left-0 lg:h-auto lg:w-[2px]"
                       />
                     ) : null}
-                  </div>
-                </section>
-              ))}
+                    {group.label}
+                  </button>
+                );
+              })}
+            </nav>
 
-              {activeSecret.length > 0 ? (
-                <section aria-label="密钥凭据">
-                  <h3 className="m-0 mb-3 text-base font-bold">密钥凭据</h3>
-                  <div className="flex flex-col gap-3">
-                    {activeSecret.map((field) => {
-                      const draft = secretDraft[field.key];
-                      return (
-                        <div key={field.key} className="flex flex-col gap-1 border-b border-line-inner pb-3 last:border-b-0">
-                          <Field
-                            label={configFieldLabel(field.key)}
-                            id={`secret-${field.key}`}
-                            hint={field.configured ? "已配置；留空表示不修改" : "尚未配置，输入后添加"}
-                          >
-                            {(props) => (
-                              <div className="flex">
-                                <Input
-                                  {...props}
-                                  type="password"
-                                  autoComplete="new-password"
-                                  placeholder={field.configured ? "已配置；留空表示不修改" : "尚未配置"}
-                                  disabled={!field.editable}
-                                  value={draft?.value ?? ""}
+            <div className="shrink-0 lg:max-h-[52%] lg:overflow-y-auto">
+              <FirstRunChecklist invalidCount={summary.invalidCount} onSelectGroup={changeGroup} embedded />
+            </div>
+          </aside>
+
+          {/* 右侧主表单工作区：完整利用剩余宽度，保持左右视觉平衡 */}
+          <div className="flex min-w-0 flex-col gap-6">
+            {activeGroupMeta ? (
+              <SectionHeading title={activeGroupMeta.label} description={activeGroupMeta.description} />
+            ) : null}
+
+            {result ? (
+              <div
+                aria-live="polite"
+                role={result.error ? "alert" : "status"}
+                className={cn(
+                  "rounded-console border px-3.5 py-2.5 text-[13px] font-medium",
+                  result.error
+                    ? "border-error/40 bg-error-soft text-error"
+                    : "border-success/40 bg-success-soft text-success",
+                )}
+              >
+                {result.text}
+              </div>
+            ) : null}
+
+            {activeGroup === "models-providers" ? (
+              <ProviderConnections
+                snapshot={snapshot}
+                fields={providerFields}
+                publicDraft={publicDraft}
+                onDraftChange={(key, value) => setPublicDraft((current) => ({ ...current, [key]: value }))}
+                onResult={setResult}
+                secretFields={providerSecrets}
+                secretDraft={secretDraft}
+                onSecretDraftChange={(key, draft) => setSecretDraft((current) => ({ ...current, [key]: draft }))}
+                onRequestSecretClear={setClearingKey}
+              />
+            ) : null}
+
+            {groupFieldsBySection(activePublic).map((section) => (
+              <section key={section.label} aria-label={section.label} className="flex flex-col gap-2.5">
+                <div>
+                  <h3 className="m-0 text-sm font-semibold text-ink">{section.label}</h3>
+                  {section.description ? (
+                    <p className="m-0 mt-0.5 text-xs leading-relaxed text-muted">{section.description}</p>
+                  ) : null}
+                </div>
+                <Frame variant="card" className="divide-y divide-line-inner py-0.5">
+                  {section.fields.map((field) => (
+                    <PublicFieldRow
+                      key={field.key}
+                      field={field}
+                      value={publicDraft[field.key]}
+                      onChange={(value) => setPublicDraft((current) => ({ ...current, [field.key]: value }))}
+                      onRemove={() => {
+                        runtimeSave.mutate({ revision: snapshot.revision, changes: [{ action: "remove", key: field.key }] });
+                      }}
+                      busy={runtimeSave.isPending}
+                    />
+                  ))}
+                </Frame>
+                {section.label === "语音回复" ? (
+                  <VoicePreviewCard fields={snapshot.fields.filter((field) => field.key.startsWith("delivery.tts."))} />
+                ) : null}
+              </section>
+            ))}
+
+            {activeSecret.length > 0 ? (
+              <section aria-label="密钥凭据" className="flex flex-col gap-2.5">
+                <h3 className="m-0 text-sm font-semibold text-ink">密钥凭据</h3>
+                <Frame variant="card" className="divide-y divide-line-inner py-0.5">
+                  {activeSecret.map((field) => {
+                    const draft = secretDraft[field.key];
+                    return (
+                      <div key={field.key} className="py-1">
+                        <Field
+                          layout="row"
+                          label={configFieldLabel(field.key)}
+                          id={`secret-${field.key}`}
+                          hint={field.configured ? "已配置；留空表示不修改" : "尚未配置，输入后添加"}
+                          aside={
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                              <label className="flex items-center gap-1.5 text-xs text-muted">
+                                <input
+                                  type="checkbox"
+                                  disabled={!field.editable || !field.configured}
+                                  checked={draft?.clear ?? false}
                                   onChange={(event) =>
                                     setSecretDraft((current) => ({
                                       ...current,
-                                      // replace 与 clear 互斥：重新输入时自动取消清除选择。
-                                      [field.key]: { value: event.target.value, clear: false },
+                                      [field.key]: {
+                                        value: event.target.checked ? "" : current[field.key]?.value ?? "",
+                                        clear: event.target.checked,
+                                      },
                                     }))
                                   }
-                                  className="flex-1"
+                                  className="size-3.5 accent-[var(--console-error)]"
                                 />
-                              </div>
-                            )}
-                          </Field>
-                          <div className="flex items-center justify-between gap-3">
-                            <label className="flex items-center gap-2 text-xs text-muted">
-                              <input
-                                type="checkbox"
-                                disabled={!field.editable || !field.configured}
-                                checked={draft?.clear ?? false}
-                                onChange={(event) =>
-                                  setSecretDraft((current) => ({
-                                    ...current,
-                                    [field.key]: { value: event.target.checked ? "" : current[field.key]?.value ?? "", clear: event.target.checked },
-                                  }))
-                                }
-                                className="size-3.5 accent-[var(--console-error)]"
-                              />
-                              显式清除密钥（清除后依赖它的功能可能无法使用）
-                            </label>
-                            {field.configured && field.editable ? (
-                              <Button variant="secondary" onClick={() => setClearingKey(field.key)} className="px-2.5 py-1 text-xs">
-                                清除…
-                              </Button>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-              ) : null}
+                                显式清除密钥
+                              </label>
+                              {field.configured && field.editable ? (
+                                <Button variant="ghost" size="sm" onClick={() => setClearingKey(field.key)}>
+                                  清除…
+                                </Button>
+                              ) : null}
+                            </div>
+                          }
+                        >
+                          {(props) => (
+                            <Input
+                              {...props}
+                              type="password"
+                              autoComplete="new-password"
+                              placeholder={field.configured ? "已配置；留空表示不修改" : "尚未配置"}
+                              disabled={!field.editable}
+                              value={draft?.value ?? ""}
+                              onChange={(event) =>
+                                setSecretDraft((current) => ({
+                                  ...current,
+                                  [field.key]: { value: event.target.value, clear: false },
+                                }))
+                              }
+                            />
+                          )}
+                        </Field>
+                      </div>
+                    );
+                  })}
+                </Frame>
+              </section>
+            ) : null}
 
-              {activeAgent && snapshot.agent ? (
-                <>
-                  <AgentStatusCard agent={snapshot.agent} />
-                  <AgentEditor snapshot={snapshot} group={activeGroup} />
-                </>
-              ) : null}
-
-              {activeGroup === "system-security" ? (
-                <>
-                  <ThemePreferencesSection />
-                  <BackgroundPreferencesSection />
-                </>
-              ) : null}
-
-              <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
-                <Button onClick={savePublic} disabled={runtimeSave.isPending}>
-                  {runtimeSave.isPending ? "保存中…" : "保存普通配置"}
-                </Button>
-                {activeSecret.length > 0 || (activeGroup === "models-providers" && providerSecrets.length > 0) ? (
-                  <Button onClick={saveSecrets} disabled={secretSave.isPending}>
-                    {secretSave.isPending ? "保存中…" : "保存密钥变更"}
-                  </Button>
-                ) : null}
-                <Button variant="secondary" onClick={() => validateMutation.mutate()} disabled={validateMutation.isPending}>
-                  {validateMutation.isPending ? "校验中…" : "校验配置"}
-                </Button>
-                <Button variant="danger" disabled={!snapshot.restartAvailable || restartMutation.isPending} onClick={() => restartMutation.mutate()}>
-                  {restartMutation.isPending ? "提交中…" : "重启服务"}
-                </Button>
-                {!snapshot.restartAvailable ? (
-                  <span className="text-xs text-muted">当前运行目录没有可用的 botctl 重启脚本</span>
-                ) : null}
+            {activeAgent && snapshot.agent ? (
+              <div className="flex flex-col gap-5">
+                <AgentStatusCard agent={snapshot.agent} />
+                <AgentEditor snapshot={snapshot} group={activeGroup} />
               </div>
-            </div>
-          </>
-        ) : null}
+            ) : null}
+
+            {activeGroup === "system-security" ? (
+              <div className="flex flex-col gap-5">
+                <ThemePreferencesSection />
+                <BackgroundPreferencesSection />
+              </div>
+            ) : null}
+
+            {/* 底部悬浮保存条：仅在存在未保存更改时滑出（L1 玻璃态确认条） */}
+            {totalDirtyCount > 0 ? (
+              <div
+                role="region"
+                aria-label="未保存的配置更改"
+                className="console-shell sticky bottom-4 z-20 flex flex-wrap items-center justify-between gap-3 rounded-console-lg border border-line px-4 py-3 shadow-console animate-fade-in"
+              >
+                <span className="text-[13px] font-medium text-ink">
+                  有 <strong className="font-mono text-warmth">{totalDirtyCount}</strong> 项未保存更改
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={resetDrafts} disabled={runtimeSave.isPending || secretSave.isPending}>
+                    重置
+                  </Button>
+                  {dirtyPublicCount > 0 ? (
+                    <Button size="sm" onClick={savePublic} disabled={runtimeSave.isPending}>
+                      {runtimeSave.isPending ? "保存中…" : "保存普通配置"}
+                    </Button>
+                  ) : null}
+                  {dirtySecretCount > 0 ? (
+                    <Button size="sm" onClick={saveSecrets} disabled={secretSave.isPending}>
+                      {secretSave.isPending ? "保存中…" : "保存密钥变更"}
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </QueryState>
 
       <ConfirmDialog
@@ -395,31 +495,32 @@ export function ConfigurationPage() {
           setClearingKey(null);
         }}
       />
-    </Frame>
+    </div>
   );
 }
-
 
 /** Agent 策略的保存状态摘要：revision、来源与待重启标记；编辑能力见 agent-editor.tsx。 */
 function AgentStatusCard({ agent }: { agent: NonNullable<ConfigurationSnapshot["agent"]> }) {
   return (
-    <section aria-label="Agent 策略状态" className="rounded-console-lg rounded-console-lg border border-line bg-glass-muted p-4">
-      <h3 className="m-0 mb-2 text-base font-bold">Agent 策略状态</h3>
+    <Frame variant="panel" aria-label="Agent 策略状态" className="py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="m-0 text-sm font-semibold text-ink">Agent 策略状态</h3>
+        {agent.pendingRestart ? <StatusBadge tone="warning" label="等待重启生效" /> : null}
+      </div>
       {!agent.fileExists ? (
-        <p className="m-0 text-sm text-warning">Agent 策略文件尚不可用；请检查默认 config/agent.toml 是否可写。</p>
+        <p className="m-0 mt-2 text-xs text-warning">Agent 策略文件尚不可用；请检查默认 config/agent.toml 是否可写。</p>
       ) : (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0 text-sm text-muted">
-          <li>
-            已保存 revision：<span className="font-mono text-ink">{agent.revision}</span>
-            {agent.pendingRestart ? " · 已保存变更等待重启" : ""}
-          </li>
-          <li>
+        <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted">
+          <span>
+            Revision：<span className="font-mono text-ink">{agent.revision}</span>
+          </span>
+          <span>
             来源：<span className="font-mono text-ink">{agent.source}</span>
-            {agent.editable ? "" : " · 当前只读"}
-          </li>
-        </ul>
+            {agent.editable ? "" : " · 只读"}
+          </span>
+        </div>
       )}
-    </section>
+    </Frame>
   );
 }
 

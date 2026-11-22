@@ -3,7 +3,7 @@ import { stateLabel } from "../../lib/format.js";
 
 export type SignalTone = "success" | "warning" | "error" | "neutral";
 
-/** 语义状态 → 几何信号与配色（DESIGN.md §2：成功方形、警告菱形、中性圆形、错误三角形）。 */
+/** 语义状态 → 几何信号（成功方形、警告菱形、中性圆形、错误三角形），禁止只靠颜色区分。 */
 const TONE_SHAPES: Readonly<Record<SignalTone, string>> = {
   success: "■",
   warning: "◆",
@@ -12,10 +12,10 @@ const TONE_SHAPES: Readonly<Record<SignalTone, string>> = {
 };
 
 const TONE_CLASSES: Readonly<Record<SignalTone, string>> = {
-  success: "border-success/40 bg-success-soft text-success",
-  warning: "border-warning/40 bg-warning-soft text-warning",
-  neutral: "text-muted",
-  error: "border-error/40 bg-error-soft text-error",
+  success: "border-success/35 bg-success-soft text-success",
+  warning: "border-warning/35 bg-warning-soft text-warning",
+  neutral: "border-line bg-card text-muted",
+  error: "border-error/35 bg-error-soft text-error",
 };
 
 type StatusBadgeProps = {
@@ -27,17 +27,19 @@ type StatusBadgeProps = {
   className?: string;
 };
 
-/** 状态徽章：几何形状 + 颜色 + 文本三重表达，满足“状态不能只靠颜色”。 */
+/** 状态徽章：2px 微圆角 + 1px 发丝线 + 几何形状与文字标签。 */
 export function StatusBadge({ tone, label, value, className }: StatusBadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border bg-glass-muted px-2.5 py-1 font-mono text-xs font-bold tracking-wide",
+        "inline-flex items-center gap-1.5 rounded-console-sm border px-2 py-0.5 font-mono text-xs leading-[1.35] font-semibold whitespace-nowrap",
         TONE_CLASSES[tone],
         className,
       )}
     >
-      <span aria-hidden="true">{TONE_SHAPES[tone]}</span>
+      <span aria-hidden="true" className="text-[9px] leading-none">
+        {TONE_SHAPES[tone]}
+      </span>
       <span>{label ?? stateLabel(value ?? "unknown")}</span>
     </span>
   );

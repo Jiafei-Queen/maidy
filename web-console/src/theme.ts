@@ -1,30 +1,21 @@
 export const CONSOLE_THEME_STORAGE_KEY = "console-theme";
-export const CONSOLE_THEME_VERSION = 2;
-export const DEFAULT_CONSOLE_THEME = "console-dark";
+export const CONSOLE_THEME_VERSION = 3;
+export const DEFAULT_CONSOLE_THEME = "system";
 
-export const CONSOLE_THEME_IDS = ["console-dark", "night-green", "light"] as const;
+/**
+ * Atelier Glass 昼夜双态：mist（晨雾与纸）/ twilight（暮色窗棂），
+ * system 跟随操作系统的 prefers-color-scheme 自动切换。
+ */
+export const CONSOLE_THEME_IDS = ["system", "mist", "twilight"] as const;
 export type ConsoleThemePreset = (typeof CONSOLE_THEME_IDS)[number];
+export type ConsoleThemeMode = "light" | "dark";
 
 export type ConsoleTheme = {
   readonly id: ConsoleThemePreset;
   readonly name: string;
   readonly description: string;
-  readonly colorScheme: "dark" | "light";
-  readonly background: string;
-  readonly surface: string;
-  readonly surfaceSecondary: string;
-  readonly card: string;
-  readonly input: string;
-  readonly border: string;
-  readonly textPrimary: string;
-  readonly textSecondary: string;
-  readonly accent: string;
-  readonly accentHover: string;
-  readonly accentContrast: string;
-  readonly success: string;
-  readonly warning: string;
-  readonly error: string;
-  readonly errorContrast: string;
+  /** 预览色块：画布、核心内容面、强调色；system 预设展示浅色态。 */
+  readonly swatches: readonly [string, string, string];
 };
 
 export type ConsoleThemePreference = {
@@ -33,96 +24,42 @@ export type ConsoleThemePreference = {
   readonly customColors?: readonly string[];
 };
 
+/** 色值本身集中在 global.css 的 [data-theme-mode] 选择器中，这里只保留展示元数据。 */
 export const CONSOLE_THEMES = {
-  "console-dark": {
-    id: "console-dark",
-    name: "暮蔷薇 · Midnight Rose",
-    description: "暖紫墨底的深夜值班室，蔷薇色承担操作与焦点",
-    colorScheme: "dark",
-    background: "#161022",
-    surface: "#1F1830",
-    surfaceSecondary: "#261D3B",
-    card: "#2D2344",
-    input: "#120D1D",
-    border: "#3B2F55",
-    textPrimary: "#F2ECE1",
-    textSecondary: "#AB9DBF",
-    accent: "#E8A3B9",
-    accentHover: "#F3BCCE",
-    accentContrast: "#251226",
-    success: "#82D996",
-    warning: "#E6B966",
-    error: "#F2837C",
-    errorContrast: "#2B0F0D",
+  system: {
+    id: "system",
+    name: "跟随系统",
+    description: "按操作系统的浅色 / 深色偏好在晨雾与暮色间切换",
+    swatches: ["#E8E2D8", "#1E2738", "#3A4C5E"],
   },
-  "night-green": {
-    id: "night-green",
-    name: "Night Green",
-    description: "低饱和深绿夜间界面",
-    colorScheme: "dark",
-    background: "#101714",
-    surface: "#18251F",
-    surfaceSecondary: "#1D2C25",
-    card: "#22332B",
-    input: "#0C1411",
-    border: "#355044",
-    textPrimary: "#E6F0EA",
-    textSecondary: "#98A8A0",
-    accent: "#6EE7A8",
-    accentHover: "#8BEFB9",
-    accentContrast: "#0C1411",
-    success: "#6EE7A8",
-    warning: "#D6B45A",
-    error: "#FF7B72",
-    errorContrast: "#101714",
+  mist: {
+    id: "mist",
+    name: "晨雾",
+    description: "暖杏雾蓝画布上的纸面工作台",
+    swatches: ["#E8E2D8", "#FFFFFF", "#3A4C5E"],
   },
-  light: {
-    id: "light",
-    name: "晨纸 · Warm Paper",
-    description: "暖米纸面的日间界面，深蔷薇承担操作与焦点",
-    colorScheme: "light",
-    background: "#F6F1E9",
-    surface: "#FDFBF7",
-    surfaceSecondary: "#F3EDE3",
-    card: "#FFFFFF",
-    input: "#FFFFFF",
-    border: "#E3D8C9",
-    textPrimary: "#33291F",
-    textSecondary: "#84745F",
-    accent: "#BC5A78",
-    accentHover: "#A54B67",
-    accentContrast: "#FFF8F5",
-    success: "#3E7D52",
-    warning: "#9C6F1D",
-    error: "#C05650",
-    errorContrast: "#FFFFFF",
+  twilight: {
+    id: "twilight",
+    name: "暮色",
+    description: "深海石板与暖琥珀光斑的夜间工作台",
+    swatches: ["#101520", "#1E2738", "#9CA0E6"],
   },
 } as const satisfies Readonly<Record<ConsoleThemePreset, ConsoleTheme>>;
 
+/** 旧版预设 ID → 新双态：深色系统一迁移为暮色，日间纸面迁移为晨雾。 */
 const LEGACY_THEME_MIGRATIONS: Readonly<Record<string, ConsoleThemePreset>> = {
-  "night-shift": "night-green",
-  "ember-grid": DEFAULT_CONSOLE_THEME,
-  "tide-signal": DEFAULT_CONSOLE_THEME,
+  "console-dark": "twilight",
+  "night-green": "twilight",
+  "night-shift": "twilight",
+  "ember-grid": "twilight",
+  "tide-signal": "twilight",
+  light: "mist",
 };
 
-const THEME_CSS_PROPERTIES = {
-  colorScheme: "--console-color-scheme",
-  background: "--console-background",
-  surface: "--console-surface",
-  surfaceSecondary: "--console-surface-secondary",
-  card: "--console-card",
-  input: "--console-input",
-  border: "--console-border",
-  textPrimary: "--console-text-primary",
-  textSecondary: "--console-text-secondary",
-  accent: "--console-accent",
-  accentHover: "--console-accent-hover",
-  accentContrast: "--console-accent-contrast",
-  success: "--console-success",
-  warning: "--console-warning",
-  error: "--console-error",
-  errorContrast: "--console-error-contrast",
-} as const satisfies Readonly<Record<Exclude<keyof ConsoleTheme, "id" | "name" | "description">, string>>;
+/** 三色自定义覆盖的 CSS 变量：画布底色、主文字、强调色。 */
+const CUSTOM_COLOR_PROPERTIES = ["--console-background", "--console-text-primary", "--console-accent"] as const;
+
+const DARK_QUERY = "(prefers-color-scheme: dark)";
 
 export function isConsoleThemePreset(value: string): value is ConsoleThemePreset {
   return Object.hasOwn(CONSOLE_THEMES, value);
@@ -136,8 +73,8 @@ export function parseStoredTheme(value: string | null): ConsoleThemePreference {
     if (parsed.version === CONSOLE_THEME_VERSION && isConsoleThemePreset(parsed.preset)) {
       return { preset: parsed.preset, version: CONSOLE_THEME_VERSION };
     }
-    // v1 使用三色调色盘；迁移只保留可对应的风格，不把旧值写回 localStorage。
-    if (parsed.version === 1) {
+    // v1/v2 的旧预设只做读取迁移，不把旧值写回 localStorage。
+    if (parsed.version === 1 || parsed.version === 2) {
       const preset = LEGACY_THEME_MIGRATIONS[parsed.preset];
       if (preset !== undefined) return { preset, version: CONSOLE_THEME_VERSION };
     }
@@ -160,42 +97,69 @@ export function safeCustomColors(colors: readonly string[]): readonly string[] {
   return colors.filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 3).map((color) => color.toUpperCase());
 }
 
+/** 把预设解析为实际昼夜模式；system 依赖 matchMedia，不可用时按浅色处理。 */
+export function resolveThemeMode(preset: ConsoleThemePreset, prefersDark: boolean): ConsoleThemeMode {
+  if (preset === "mist") return "light";
+  if (preset === "twilight") return "dark";
+  return prefersDark ? "dark" : "light";
+}
+
 export type ThemeController = {
   readonly current: () => ConsoleThemePreference;
+  /** 当前实际生效的昼夜模式（system 已解析）。 */
+  readonly mode: () => ConsoleThemeMode;
   readonly select: (preset: ConsoleThemePreset) => ConsoleThemePreference;
   readonly apply: (preference: ConsoleThemePreference) => void;
   readonly reset: () => ConsoleThemePreference;
   readonly applyCustomColors: (colors: readonly string[]) => ConsoleThemePreference;
   readonly hydrate: (preference: { readonly preset?: string; readonly customColors?: readonly string[] }) => void;
+  /** 订阅实际模式变化（含系统偏好切换）；返回取消函数。 */
+  readonly subscribe: (listener: (mode: ConsoleThemeMode) => void) => () => void;
 };
 
-export function createThemeController(storage: Storage | null, root: HTMLElement): ThemeController {
+export function createThemeController(storage: Storage | null, root: HTMLElement, media?: MediaQueryList | null): ThemeController {
+  const darkQuery = media === undefined ? safeMatchMedia() : media;
+  const listeners = new Set<(mode: ConsoleThemeMode) => void>();
   let current = readStoredTheme(storage);
-  applyTheme(root, current);
+  let mode = currentMode();
+  applyTheme(root, current, mode);
+
+  function currentMode(): ConsoleThemeMode {
+    return resolveThemeMode(current.preset, darkQuery?.matches ?? false);
+  }
+
+  function commit(next: ConsoleThemePreference): void {
+    current = next;
+    mode = currentMode();
+    applyTheme(root, current, mode);
+    for (const listener of listeners) listener(mode);
+  }
+
+  // 跟随系统时监听偏好变化；显式选择晨雾 / 暮色时 currentMode 会忽略系统值。
+  darkQuery?.addEventListener?.("change", () => {
+    if (current.preset === "system") commit(current);
+  });
 
   return {
     current: () => current,
+    mode: () => mode,
     apply: (preference) => {
-      current = preference;
-      applyTheme(root, current);
+      commit(preference);
       writeStoredTheme(storage, current);
     },
     select: (preset) => {
-      current = { preset, version: CONSOLE_THEME_VERSION };
-      applyTheme(root, current);
+      commit({ preset, version: CONSOLE_THEME_VERSION });
       writeStoredTheme(storage, current);
       return current;
     },
     reset: () => {
-      current = defaultThemePreference();
-      applyTheme(root, current);
+      commit(defaultThemePreference());
       removeStoredTheme(storage);
       return current;
     },
     applyCustomColors: (colors) => {
       const customColors = safeCustomColors(colors);
-      current = { ...current, customColors };
-      applyTheme(root, current);
+      commit(customColors.length === 3 ? { ...current, customColors } : { preset: current.preset, version: CONSOLE_THEME_VERSION });
       return current;
     },
     hydrate: (preference) => {
@@ -203,18 +167,28 @@ export function createThemeController(storage: Storage | null, root: HTMLElement
         ? preference.preset
         : DEFAULT_CONSOLE_THEME;
       const customColors = safeCustomColors(preference.customColors ?? []);
-      current = customColors.length === 3 ? { preset, version: CONSOLE_THEME_VERSION, customColors } : { preset, version: CONSOLE_THEME_VERSION };
-      applyTheme(root, current);
+      commit(customColors.length === 3 ? { preset, version: CONSOLE_THEME_VERSION, customColors } : { preset, version: CONSOLE_THEME_VERSION });
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   };
+}
+
+function safeMatchMedia(): MediaQueryList | null {
+  try {
+    return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(DARK_QUERY) : null;
+  } catch {
+    return null;
+  }
 }
 
 function readStoredTheme(storage: Storage | null): ConsoleThemePreference {
   if (storage === null) return defaultThemePreference();
   try {
     return parseStoredTheme(storage.getItem(CONSOLE_THEME_STORAGE_KEY));
-  } catch (cause) {
-    if (cause instanceof Error) return defaultThemePreference();
+  } catch {
     return defaultThemePreference();
   }
 }
@@ -222,9 +196,9 @@ function readStoredTheme(storage: Storage | null): ConsoleThemePreference {
 function writeStoredTheme(storage: Storage | null, preference: ConsoleThemePreference): void {
   if (storage === null) return;
   try {
-    storage.setItem(CONSOLE_THEME_STORAGE_KEY, serializeTheme(preference));
-  } catch (cause) {
-    if (cause instanceof Error) return;
+    // 自定义色由服务端偏好持有，localStorage 只记录预设 ID。
+    storage.setItem(CONSOLE_THEME_STORAGE_KEY, serializeTheme({ preset: preference.preset, version: CONSOLE_THEME_VERSION }));
+  } catch {
     return;
   }
 }
@@ -233,25 +207,20 @@ function removeStoredTheme(storage: Storage | null): void {
   if (storage === null) return;
   try {
     storage.removeItem(CONSOLE_THEME_STORAGE_KEY);
-  } catch (cause) {
-    if (cause instanceof Error) return;
+  } catch {
     return;
   }
 }
 
-function applyTheme(root: HTMLElement, preference: ConsoleThemePreference): void {
+function applyTheme(root: HTMLElement, preference: ConsoleThemePreference, mode: ConsoleThemeMode): void {
   root.dataset.theme = preference.preset;
+  root.dataset.themeMode = mode;
   if (!root.style) return;
-  const theme = CONSOLE_THEMES[preference.preset];
-  for (const [role, property] of Object.entries(THEME_CSS_PROPERTIES)) {
-    root.style.setProperty(property, theme[role as keyof typeof THEME_CSS_PROPERTIES]);
-  }
+  for (const property of CUSTOM_COLOR_PROPERTIES) root.style.removeProperty(property);
   const colors = preference.customColors;
   if (colors?.length === 3) {
-    // 兼容已有三色用户偏好：依次覆盖背景、主文字与强调色，其余语义层级仍由预设提供。
-    root.style.setProperty("--console-background", colors[0] ?? "");
-    root.style.setProperty("--console-text-primary", colors[1] ?? "");
-    root.style.setProperty("--console-accent", colors[2] ?? "");
+    // 兼容已有三色用户偏好：依次覆盖画布底色、主文字与强调色，其余材质层级仍由昼夜态提供。
+    CUSTOM_COLOR_PROPERTIES.forEach((property, index) => root.style.setProperty(property, colors[index] ?? ""));
   }
 }
 
