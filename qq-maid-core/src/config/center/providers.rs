@@ -24,6 +24,8 @@ pub struct ProviderManagementSnapshot {
     /// 为 true 时前端只渲染 `agent.toml [providers.*]` 统一列表，不再硬编码不可删内置卡片。
     pub managed_providers: bool,
     pub credentials: BTreeMap<String, ConnectionCredentialStatus>,
+    /// 各供应商当前可供路由下拉选择的模型 ID（优先取精选白名单，未配置时取已发现与本地启用模型）。
+    pub available_models: BTreeMap<String, Vec<String>>,
 }
 
 fn controlled_slot(value: &str) -> bool {
@@ -238,7 +240,8 @@ impl ConfigCenter {
         let mut credentials = BTreeMap::new();
         let secrets = self.secret_store.envelope_revisions()?;
         let environment = self.current_resolved_environment()?;
-        for (id, provider) in self.saved_providers()? {
+        let saved_providers = self.saved_providers()?;
+        for (id, provider) in &saved_providers {
             let slot = provider
                 .get("api_key_env")
                 .and_then(Value::as_str)
@@ -253,7 +256,7 @@ impl ConfigCenter {
                 .as_ref()
                 .is_some_and(|key| secrets.get(key) != self.running_secret_revisions.get(key));
             credentials.insert(
-                id,
+                id.clone(),
                 ConnectionCredentialStatus {
                     configured: environment
                         .get(slot)
@@ -272,12 +275,95 @@ impl ConfigCenter {
             .and_then(|snapshot| snapshot.saved_value)
             .and_then(|value| value.get("managed_providers").and_then(Value::as_bool))
             .unwrap_or(false);
+        let available_models = self.collect_available_models(&saved_providers, managed_providers);
         Ok(ProviderManagementSnapshot {
             presets: provider_presets(),
             adapters: ["openai_compatible", "openai_responses"],
             managed_providers,
             credentials,
+            available_models,
         })
+    }
+
+    /// 汇总各供应商当前可供路由下拉选择的模型列表（不含凭据，不触发上游网络请求）。
+    fn collect_available_models(
+        &self,
+        saved_providers: &toml::map::Map<String, Value>,
+        managed_providers: bool,
+    ) -> BTreeMap<String, Vec<String>> {
+        let local = self.load_models().ok().map(|(_, local)| local);
+        let discoveries =
+            super::discovery_cache::load_all_cached_discoveries(&self.discovery_cache_path())
+                .unwrap_or_default();
+
+        let mut provider_ids: Vec<String> = saved_providers.keys().cloned().collect();
+        if !managed_providers {
+            let existing_lower: HashSet<String> = provider_ids
+                .iter()
+                .map(|id| id.to_ascii_lowercase())
+                .collect();
+            for builtin in ["openai", "deepseek", "bigmodel", "gemini"] {
+                if !existing_lower.contains(builtin) {
+                    provider_ids.push(builtin.to_owned());
+                }
+            }
+        }
+
+        let mut result = BTreeMap::new();
+        for raw_id in provider_ids {
+            let canonical = raw_id.to_ascii_lowercase();
+            let (identity, _) = crate::config::model_management::catalog_identity(&canonical);
+            let disabled_ids: HashSet<&str> = local
+                .as_ref()
+                .map(|doc| {
+                    doc.models
+                        .iter()
+                        .filter(|m| m.provider.as_str() == identity && m.enabled == Some(false))
+                        .map(|m| m.id.as_str())
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let mut seen = HashSet::new();
+            let mut models = Vec::new();
+            let mut push_if_allowed = |id: &str| {
+                let trimmed = id.trim();
+                if !trimmed.is_empty()
+                    && !disabled_ids.contains(trimmed)
+                    && seen.insert(trimmed.to_owned())
+                {
+                    models.push(trimmed.to_owned());
+                }
+            };
+
+            let curated = local.as_ref().and_then(|doc| {
+                qq_maid_llm::model_catalog::CatalogProviderId::parse(&canonical)
+                    .ok()
+                    .and_then(|key| doc.selections.get(&key))
+            });
+            if let Some(selected) = curated {
+                for id in selected {
+                    push_if_allowed(id);
+                }
+            } else {
+                if let Some(cached) = discoveries.get(&canonical) {
+                    for item in &cached.models {
+                        push_if_allowed(&item.id);
+                    }
+                }
+                if let Some(doc) = &local {
+                    for entry in &doc.models {
+                        if entry.provider.as_str() == identity && entry.enabled != Some(false) {
+                            push_if_allowed(&entry.id);
+                        }
+                    }
+                }
+            }
+            if !models.is_empty() {
+                result.insert(raw_id, models);
+            }
+        }
+        result
     }
 
     fn saved_providers(&self) -> Result<toml::map::Map<String, Value>, ConfigCenterError> {

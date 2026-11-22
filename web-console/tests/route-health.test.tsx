@@ -1,9 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { ModelRouteEditor } from "../src/features/configuration/model-route-editor.js";
 import {
   affectedRoutesForProvider,
   buildProviderAvailabilityMap,
+  buildRouteModelOptionGroups,
   diagnoseCandidateHealth,
   summarizeRouteHealth,
 } from "../src/features/configuration/route-health.js";
@@ -239,5 +241,53 @@ describe("route-health 诊断与停用影响分析", () => {
     );
     expect(screen.getByText("无可用候选")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("当前路线所有候选均不可用");
+  });
+
+  it("ModelRouteEditor 支持从已保留模型下拉选择并一键清理失效候选", async () => {
+    const snapshot = makeSnapshot({
+      providers: {
+        presets: [],
+        adapters: ["openai_compatible", "openai_responses"],
+        credentials: {
+          mimo: { configured: true, editable: true, revision: "s1", pending_restart: false },
+        },
+        available_models: {
+          openai: ["gpt-5"],
+          deepseek: ["deepseek-chat", "deepseek-reasoner"],
+          mimo: ["mimo-v2.5"],
+        },
+      },
+    });
+    const map = buildProviderAvailabilityMap(snapshot);
+    const groups = buildRouteModelOptionGroups(snapshot, map);
+    // 已停用的 openai 不进入下拉选项，仅保留已启用的 deepseek 与 mimo。
+    expect(groups.map((g) => g.providerId)).toEqual(["deepseek", "mimo"]);
+
+    const onChange = vi.fn();
+    render(
+      <ModelRouteEditor
+        label="私聊主路线"
+        candidates={["openai:gpt-5.6-luna", "deepseek:deepseek-chat"]}
+        disabled={false}
+        modelOptionGroups={groups}
+        diagnoseCandidate={(candidate) => diagnoseCandidateHealth(candidate, map)}
+        onChange={onChange}
+      />,
+    );
+
+    // 从已保留模型下拉添加 mimo:mimo-v2.5
+    await userEvent.selectOptions(
+      screen.getByLabelText("从已保留模型为 私聊主路线 添加候选模型"),
+      "mimo:mimo-v2.5",
+    );
+    expect(onChange).toHaveBeenLastCalledWith([
+      "openai:gpt-5.6-luna",
+      "deepseek:deepseek-chat",
+      "mimo:mimo-v2.5",
+    ]);
+
+    // 点击“清理失效项（1）”仅移出已停用的 openai:gpt-5.6-luna
+    await userEvent.click(screen.getByRole("button", { name: "清理 私聊主路线 中的失效候选" }));
+    expect(onChange).toHaveBeenLastCalledWith(["deepseek:deepseek-chat"]);
   });
 });

@@ -326,6 +326,11 @@ fn model_selection_batch_save_auto_append_and_delete_override_work_with_cas() {
         after_select["selected_models"],
         json!(["gpt-4o", "gpt-4o-mini"])
     );
+    let snapshot_models = center.provider_snapshot().unwrap().available_models;
+    assert_eq!(
+        snapshot_models.get("openai"),
+        Some(&vec!["gpt-4o".to_owned(), "gpt-4o-mini".to_owned()])
+    );
     let rev1 = after_select["revision"].as_str().unwrap().to_owned();
 
     // 旧 revision 必须触发 CAS 冲突。

@@ -141,6 +141,7 @@ export interface ProviderManagementSnapshot {
   adapters: string[];
   managed_providers?: boolean | undefined;
   credentials: Record<string, { configured: boolean; editable: boolean; revision: string; pending_restart: boolean }>;
+  available_models?: Record<string, string[]> | undefined;
 }
 
 export interface ProviderStatus {

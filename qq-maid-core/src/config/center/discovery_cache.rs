@@ -69,6 +69,14 @@ pub(super) fn load_cached_discovery(
     Ok(document.connections.get(&key).cloned())
 }
 
+/// 一次性读取全部连接的发现缓存，用于配置快照汇总可选模型列表。
+pub(super) fn load_all_cached_discoveries(
+    path: &Path,
+) -> Result<BTreeMap<String, CachedDiscoveryEntry>, ConfigCenterError> {
+    let (_, document) = load_document(path)?;
+    Ok(document.connections)
+}
+
 /// 仅在本次发现成功时写入持久化缓存，避免临时网络故障冲掉上次成功列表。
 pub(super) fn save_cached_discovery(
     path: &Path,

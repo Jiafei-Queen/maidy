@@ -31,7 +31,11 @@ import {
   type AgentWebSearchTimeRange,
 } from "./agent-web-search.js";
 import { ModelRouteEditor } from "./model-route-editor.js";
-import { buildProviderAvailabilityMap, diagnoseCandidateHealth } from "./route-health.js";
+import {
+  buildProviderAvailabilityMap,
+  buildRouteModelOptionGroups,
+  diagnoseCandidateHealth,
+} from "./route-health.js";
 import type { ConfigurationBusinessGroup } from "./configuration-navigation.js";
 
 const KNOWLEDGE_MODE_OPTIONS: ReadonlyArray<readonly [string, string]> = [
@@ -107,6 +111,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
 
   const editable = agent.editable;
   const providerAvailability = buildProviderAvailabilityMap(snapshot);
+  const routeModelOptionGroups = buildRouteModelOptionGroups(snapshot, providerAvailability);
   const serverDiagnostics = snapshot.routeDiagnostics ?? [];
   const findServerDiagnostic = (kind: "model_route" | "search_route" | "stt_route", routeName: string) =>
     serverDiagnostics.find((item) => item.kind === kind && item.routeName === routeName);
@@ -196,6 +201,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
                 label={AGENT_ROUTE_LABELS[routeName] ?? routeName}
                 candidates={draft.routeCandidates[routeName]}
                 disabled={!editable}
+                modelOptionGroups={routeModelOptionGroups}
                 diagnoseCandidate={(candidate) =>
                   diagnoseCandidateHealth(candidate, providerAvailability, { serverDiagnostic })}
                 onChange={(candidates) =>
@@ -225,6 +231,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
                       <Input
                         {...props}
                         disabled={!editable}
+                        list={routeModelOptionGroups.length > 0 ? "agent-search-model-suggestions" : undefined}
                         value={value}
                         onChange={(event) =>
                           setDraft({ ...draft, searchRoutes: { ...draft.searchRoutes, [name]: event.target.value } })}
@@ -243,6 +250,15 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
                 </div>
               );
             })}
+            {routeModelOptionGroups.length > 0 ? (
+              <datalist id="agent-search-model-suggestions">
+                {routeModelOptionGroups.flatMap((group) =>
+                  group.models.map((modelId) => (
+                    <option key={`${group.providerId}:${modelId}`} value={`${group.providerId.toLowerCase()}:${modelId}`} />
+                  )),
+                )}
+              </datalist>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -346,6 +362,7 @@ export function AgentEditor({ snapshot, group }: { snapshot: ConfigurationSnapsh
                 label={STT_ROUTE_LABELS[routeName]}
                 entityLabel="转录模型"
                 routeActive={draft.stt.enabled}
+                modelOptionGroups={routeModelOptionGroups}
                 diagnoseCandidate={(candidate) =>
                   diagnoseCandidateHealth(candidate, providerAvailability, { isStt: true, serverDiagnostic })}
                 quickAdd={{

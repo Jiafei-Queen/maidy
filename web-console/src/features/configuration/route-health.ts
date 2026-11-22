@@ -32,6 +32,15 @@ export interface ProviderAvailability {
   readonly configured: boolean;
 }
 
+/** 模型路由快捷下拉选择用的供应商模型分组。 */
+export interface RouteModelOptionGroup {
+  readonly providerId: string;
+  readonly providerLabel: string;
+  readonly enabled: boolean;
+  readonly configured: boolean;
+  readonly models: readonly string[];
+}
+
 const BUILTIN_IDS = new Set(["openai", "deepseek", "bigmodel", "gemini"]);
 
 const SEARCH_ROUTE_LABELS: Record<string, string> = {
@@ -282,6 +291,50 @@ export function affectedRoutesForProvider(
   }
 
   return result;
+}
+
+const BUILTIN_LABELS: Record<string, string> = {
+  openai: "OpenAI",
+  deepseek: "DeepSeek",
+  bigmodel: "智谱 BigModel",
+  gemini: "Gemini",
+};
+
+/** 汇总所有已启用供应商的可选模型分组，供模型路由编辑器下拉选择（停用供应商不进入快捷选项）。 */
+export function buildRouteModelOptionGroups(
+  snapshot: ConfigurationSnapshot,
+  availability: ReadonlyMap<string, ProviderAvailability>,
+): RouteModelOptionGroup[] {
+  const availableModels = snapshot.providers?.available_models ?? {};
+  const savedCustom = savedProvidersOf(snapshot.agent);
+  const displayNames = new Map<string, string>(Object.entries(BUILTIN_LABELS));
+  for (const [rawId, record] of Object.entries(savedCustom)) {
+    const label = typeof record.display_name === "string" && record.display_name.trim()
+      ? record.display_name.trim()
+      : rawId;
+    displayNames.set(rawId, label);
+    displayNames.set(normalizeProviderPrefix(rawId), label);
+  }
+
+  const groups: RouteModelOptionGroup[] = [];
+  for (const [rawId, models] of Object.entries(availableModels)) {
+    if (!Array.isArray(models) || models.length === 0) continue;
+    const normalized = normalizeProviderPrefix(rawId);
+    const state = availability.get(normalized);
+    if (!state || !state.exists || !state.enabled) continue;
+    const cleaned = models.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+    if (cleaned.length === 0) continue;
+    groups.push({
+      providerId: rawId,
+      providerLabel: displayNames.get(rawId) ?? displayNames.get(normalized) ?? rawId,
+      enabled: state.enabled,
+      configured: state.configured,
+      models: cleaned,
+    });
+  }
+  return groups.sort(
+    (a, b) => Number(b.configured) - Number(a.configured) || a.providerLabel.localeCompare(b.providerLabel),
+  );
 }
 
 /** 汇总配置中心顶部摘要所需的路由健康指标。 */
