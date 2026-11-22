@@ -3,16 +3,14 @@
 //! 在 `build_provider` 阶段统一校验：
 //! * 单 provider 模式下所有 specialty route 都必须落在该 provider 上；
 //! * auto 模式下根据 route 实际引用的 provider 计算需要初始化的 provider 集合，
-//!   缺少 API key 的候选可以跳过，但每条 route 必须至少保留一个可用 provider；
-//! * auto 模式保留旧的「单 OpenAI 主模型自动追加 DeepSeek fallback」兼容行为。
+//!   已停用或缺少 API key 的候选会被跳过，但每条 route 必须至少保留一个可用 provider；
+//! * auto 模式严格按用户显式配置的候选顺序执行，不再隐式追加其他供应商的 fallback。
 
 use crate::{
     config::{LlmConfig, ProviderMode},
     error::LlmError,
-    provider::{deepseek, types::ModelId},
+    provider::types::{ModelProvider, ModelRoute},
 };
-
-use super::types::{ModelProvider, ModelRoute};
 
 /// `build_provider` 与配置中心候选校验共享的纯配置计划。
 ///
@@ -30,6 +28,7 @@ pub(crate) fn provider_build_plan(config: &LlmConfig) -> Result<ProviderBuildPla
     ensure_custom_providers_declared(
         &config.configured_model_routes,
         &configured_custom_providers,
+        &config.disabled_providers,
     )?;
 
     let default_provider = config.provider.default_provider();
@@ -53,7 +52,9 @@ pub(crate) fn provider_build_plan(config: &LlmConfig) -> Result<ProviderBuildPla
 
     let provider_kinds = if config.provider == ProviderMode::Auto {
         available_provider_kinds_for_routes(config, &provider_routes, &default_provider)
-    } else if provider_api_key_configured(config, &default_provider) {
+    } else if !provider_is_disabled(config, &default_provider)
+        && provider_api_key_configured(config, &default_provider)
+    {
         vec![default_provider.clone()]
     } else {
         Vec::new()
@@ -86,39 +87,19 @@ pub(crate) fn provider_build_plan(config: &LlmConfig) -> Result<ProviderBuildPla
 
 /// auto 模式的默认候选链。
 ///
-/// 兼容旧的 `LLM_PROVIDER=auto` 行为：单个 OpenAI/裸主模型在可恢复失败时，
-/// 仍可降级到 `DEEPSEEK_MODEL`。用户显式写多个候选时则严格按配置顺序执行。
+/// 严格遵守显式配置的候选顺序，不再为单候选隐式追加其他供应商的 fallback，
+/// 避免不同供应商之间产生隐藏耦合。
 pub(crate) fn auto_default_route(config: &LlmConfig) -> Result<ModelRoute, LlmError> {
-    let mut candidates = config.model_route.candidates().to_vec();
-    if candidates.len() == 1
-        && config
-            .deepseek_api_key
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-        && candidates[0].provider.as_ref() != Some(&ModelProvider::DeepSeek)
-    {
-        let deepseek_model = deepseek::deepseek_config_model(&config.deepseek_model)?;
-        candidates.push(ModelId {
-            provider: Some(ModelProvider::DeepSeek),
-            name: deepseek_model,
-        });
-    }
-    ModelRoute::from_candidates(candidates)
+    Ok(config.model_route.clone())
 }
 
 /// 返回所有需要初始化 provider 实例的 named route 列表。
-///
-/// provider 初始化必须使用 auto 模式的实际默认链（来自 [`auto_default_route`]），
-/// 才能保留单 OpenAI 主模型自动追加 DeepSeek fallback 的兼容行为，
-/// 因此这里会把 `LLM_MODEL` 项替换为 `default_route`。
 pub(crate) fn auto_provider_routes(
     config: &LlmConfig,
     default_route: &ModelRoute,
 ) -> Result<Vec<(String, ModelRoute)>, LlmError> {
     let mut routes = config.configured_model_routes.clone();
     if let Some((_, route)) = routes.iter_mut().find(|(name, _)| *name == "LLM_MODEL") {
-        // provider 初始化必须使用 auto 模式的实际默认链，才能保留单 OpenAI
-        // 主模型自动追加 DeepSeek fallback 的兼容行为。
         *route = default_route.clone();
     }
     Ok(routes)
@@ -126,21 +107,23 @@ pub(crate) fn auto_provider_routes(
 
 /// 校验 route 中显式引用的自定义 provider 都已在配置文件中声明。
 ///
-/// API key 缺失仍由 auto 模式的可用性预检处理；这里仅拦截拼写错误或漏写
-/// `[providers.*]` 的配置，避免错误 provider 前缀被静默跳过。
+/// 已声明但停用的 provider（出现在 `disabled_providers` 中）会在运行时跳过，不视为未配置；
+/// 这里仅拦截拼写错误或漏写 `[providers.*]` 的配置，避免错误 provider 前缀被静默跳过。
 pub(crate) fn ensure_custom_providers_declared(
     routes: &[(String, ModelRoute)],
     configured_providers: &[ModelProvider],
+    disabled_providers: &[ModelProvider],
 ) -> Result<(), LlmError> {
     for (route_name, route) in routes {
         for candidate in route.candidates() {
             let Some(provider @ ModelProvider::Custom(name)) = candidate.provider.as_ref() else {
                 continue;
             };
-            if !configured_providers
+            let declared = configured_providers
                 .iter()
-                .any(|configured| configured == provider)
-            {
+                .chain(disabled_providers.iter())
+                .any(|configured| configured == provider);
+            if !declared {
                 return Err(LlmError::config(format!(
                     "{route_name} candidate `{}` references custom provider `{name}`, but providers.{name} is not configured",
                     candidate.to_request_model()
@@ -181,10 +164,10 @@ pub(crate) fn provider_kinds_for_routes(
         .collect()
 }
 
-/// 收集 auto 模式下具备 API key、可以初始化的 provider。
+/// 收集 auto 模式下已启用且具备 API key、可以初始化的 provider。
 ///
-/// 候选链允许写多个 provider 做 fallback；缺少某个 provider 的 API key 时，
-/// 运行时候选链会跳过缺少凭证的 provider，并继续尝试后续可用候选。
+/// 候选链允许写多个 provider 做 fallback；已停用或缺少某个 provider 的 API key 时，
+/// 运行时候选链会跳过不可用的 provider，并继续尝试后续可用候选。
 pub(crate) fn available_provider_kinds_for_routes(
     config: &LlmConfig,
     routes: &[(String, ModelRoute)],
@@ -193,8 +176,17 @@ pub(crate) fn available_provider_kinds_for_routes(
     let configured_providers = configured_custom_provider_ids(config);
     provider_kinds_for_routes(routes, default_provider, &configured_providers)
         .into_iter()
-        .filter(|provider| provider_api_key_configured(config, provider))
+        .filter(|provider| {
+            !provider_is_disabled(config, provider) && provider_api_key_configured(config, provider)
+        })
         .collect()
+}
+
+fn provider_is_disabled(config: &LlmConfig, provider: &ModelProvider) -> bool {
+    config
+        .disabled_providers
+        .iter()
+        .any(|disabled| disabled == provider)
 }
 
 pub(crate) fn provider_api_key_configured(config: &LlmConfig, provider: &ModelProvider) -> bool {

@@ -351,7 +351,7 @@ pub(crate) fn outcome_to_stream(outcome: ChatOutcome) -> LlmStream {
 /// - `DeepSeek`：仅使用 DeepSeek 提供商。
 /// - `BigModel`：仅使用智谱 BigModel 提供商。
 /// - `Gemini`：仅使用 Google Gemini 提供商。
-/// - `Auto`：根据模型候选链路由；单 OpenAI 主模型仍兼容原 OpenAI -> DeepSeek fallback。
+/// - `Auto`：严格按模型候选链路由，自动跳过已停用或未配置凭证的候选。
 pub fn build_provider(config: &LlmConfig) -> Result<DynLlmProvider, LlmError> {
     let plan = provider_build_plan(config)?;
 

@@ -433,6 +433,7 @@ fn app_config(provider: ProviderMode, model: &str) -> LlmConfig {
         gemini_model: "gemini:gemini-2.5-flash".to_owned(),
         openai_compatible_providers: Vec::new(),
         openai_responses_providers: Vec::new(),
+        disabled_providers: Vec::new(),
         stream: true,
         request_timeout_seconds: 90,
         media_max_bytes: 10 * 1024 * 1024,

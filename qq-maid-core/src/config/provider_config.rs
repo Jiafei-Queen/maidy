@@ -89,12 +89,14 @@ pub(super) fn llm_provider_configs(
 ) -> (
     Vec<OpenAiCompatibleProviderConfig>,
     Vec<OpenAiResponsesProviderConfig>,
+    Vec<qq_maid_llm::provider::types::ModelProvider>,
 ) {
     let mut compatible = Vec::new();
     let mut responses = Vec::new();
+    let mut disabled = Vec::new();
     for provider in agent_config.provider_configs() {
-        // Agent 解析已拒绝所有停用项的路线引用，此处只装配启用连接。
         if !provider.enabled {
+            disabled.push(provider.id);
             continue;
         }
         let auth = HttpAuthConfig {
@@ -126,5 +128,5 @@ pub(super) fn llm_provider_configs(
             }
         }
     }
-    (compatible, responses)
+    (compatible, responses, disabled)
 }

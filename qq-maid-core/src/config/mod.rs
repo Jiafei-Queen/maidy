@@ -577,7 +577,7 @@ impl AppConfig {
             .expect("agent config is validated when AppConfig is created");
         let mut web_search = self.agent_config.web_search().clone();
         web_search.default_model = private_policy.search_model.clone();
-        let (openai_compatible_providers, openai_responses_providers) =
+        let (openai_compatible_providers, openai_responses_providers, disabled_providers) =
             provider_config::llm_provider_configs(&self.agent_config);
         qq_maid_llm::config::LlmConfig {
             provider: qq_maid_llm::config::ProviderMode::Auto,
@@ -604,6 +604,7 @@ impl AppConfig {
             gemini_model: DEFAULT_GEMINI_MODEL.to_owned(),
             openai_compatible_providers,
             openai_responses_providers,
+            disabled_providers,
             stream: self.stream,
             request_timeout_seconds: self.request_timeout_seconds,
             media_max_bytes: self.media_max_bytes,
