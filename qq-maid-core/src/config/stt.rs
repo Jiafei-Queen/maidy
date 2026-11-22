@@ -256,66 +256,81 @@ impl AppConfig {
 
     fn resolve_stt_candidate(&self, model: &ModelId) -> SttCandidate {
         let provider = model.provider.clone().unwrap_or(ModelProvider::OpenAi);
-        let (base_url, api_key, auth_header, auth_scheme, timeout) = match &provider {
-            ModelProvider::OpenAi => (
-                self.openai_base_url
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_owned()),
-                self.openai_api_key.clone(),
+        let (base_url, api_key, auth_header, auth_scheme, timeout) = if let Some(configured) =
+            self.agent_config.provider_config(&provider)
+        {
+            let compatible = configured.kind == AgentProviderKind::OpenAiCompatible
+                || provider == ModelProvider::OpenAi;
+            if compatible {
+                let api_key =
+                    if !configured.enabled || self.disabled_builtin_providers.contains(&provider) {
+                        None
+                    } else {
+                        env_optional(&configured.api_key_env)
+                    };
+                (
+                    configured.base_url.clone(),
+                    api_key,
+                    configured.auth_header.clone(),
+                    configured.auth_scheme.clone(),
+                    configured.request_timeout_seconds,
+                )
+            } else {
+                (
+                    String::new(),
+                    None,
+                    "Authorization".to_owned(),
+                    Some("Bearer".to_owned()),
+                    None,
+                )
+            }
+        } else if self.agent_config.managed_providers() {
+            (
+                String::new(),
+                None,
                 "Authorization".to_owned(),
                 Some("Bearer".to_owned()),
                 None,
-            ),
-            ModelProvider::DeepSeek => (
-                self.deepseek_base_url.clone(),
-                self.deepseek_api_key.clone(),
-                "Authorization".to_owned(),
-                Some("Bearer".to_owned()),
-                None,
-            ),
-            ModelProvider::BigModel => (
-                self.bigmodel_base_url.clone(),
-                self.bigmodel_api_key.clone(),
-                "Authorization".to_owned(),
-                Some("Bearer".to_owned()),
-                None,
-            ),
-            ModelProvider::Gemini => (
-                self.gemini_base_url.clone(),
-                self.gemini_api_key.clone(),
-                "Authorization".to_owned(),
-                Some("Bearer".to_owned()),
-                None,
-            ),
-            ModelProvider::Custom(name) => {
-                match self
-                    .agent_config
-                    .provider_configs()
-                    .into_iter()
-                    .find(|configured| configured.id.as_str() == name)
-                {
-                    Some(configured) if configured.kind == AgentProviderKind::OpenAiCompatible => (
-                        configured.base_url,
-                        // 已停用的自定义连接跳过远程转写，与内置连接停用语义保持一致。
-                        if configured.enabled {
-                            env_optional(&configured.api_key_env)
-                        } else {
-                            None
-                        },
-                        configured.auth_header,
-                        configured.auth_scheme,
-                        configured.request_timeout_seconds,
-                    ),
-                    // Agent 配置阶段已拒绝未知/停用/Responses 候选；保留安全兜底，
-                    // 避免未来新增入口绕过校验后静默使用错误协议。
-                    _ => (
-                        String::new(),
-                        None,
-                        "Authorization".to_owned(),
-                        Some("Bearer".to_owned()),
-                        None,
-                    ),
-                }
+            )
+        } else {
+            match &provider {
+                ModelProvider::OpenAi => (
+                    self.openai_base_url
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_owned()),
+                    self.openai_api_key.clone(),
+                    "Authorization".to_owned(),
+                    Some("Bearer".to_owned()),
+                    None,
+                ),
+                ModelProvider::DeepSeek => (
+                    self.deepseek_base_url.clone(),
+                    self.deepseek_api_key.clone(),
+                    "Authorization".to_owned(),
+                    Some("Bearer".to_owned()),
+                    None,
+                ),
+                ModelProvider::BigModel => (
+                    self.bigmodel_base_url.clone(),
+                    self.bigmodel_api_key.clone(),
+                    "Authorization".to_owned(),
+                    Some("Bearer".to_owned()),
+                    None,
+                ),
+                ModelProvider::Gemini => (
+                    self.gemini_base_url.clone(),
+                    self.gemini_api_key.clone(),
+                    "Authorization".to_owned(),
+                    Some("Bearer".to_owned()),
+                    None,
+                ),
+                ModelProvider::Custom(_) => (
+                    String::new(),
+                    None,
+                    "Authorization".to_owned(),
+                    Some("Bearer".to_owned()),
+                    None,
+                ),
             }
         };
         SttCandidate {

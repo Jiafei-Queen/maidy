@@ -69,12 +69,19 @@ pub(super) fn llm_provider_configs(
     let mut responses = Vec::new();
     let mut disabled = Vec::new();
     for provider in agent_config.provider_configs() {
-        if !provider.enabled {
+        let legacy_prefix = match provider.id {
+            ModelProvider::OpenAi => Some("OPENAI"),
+            ModelProvider::DeepSeek => Some("DEEPSEEK"),
+            ModelProvider::BigModel => Some("BIGMODEL"),
+            ModelProvider::Gemini => Some("GEMINI"),
+            ModelProvider::Custom(_) => None,
+        };
+        let legacy_enabled = legacy_prefix.is_none_or(|prefix| {
+            provider.api_key_env != format!("{prefix}_API_KEY")
+                || super::env_bool(&format!("{prefix}_ENABLED"), true).unwrap_or(true)
+        });
+        if !provider.enabled || !legacy_enabled {
             disabled.push(provider.id);
-            continue;
-        }
-        // 标准品牌变体在 Commit 5 之前由顶层 LlmConfig 字段承载，避免在 custom 列表重复声明。
-        if !matches!(provider.id, ModelProvider::Custom(_)) {
             continue;
         }
         let auth = HttpAuthConfig {
@@ -82,11 +89,12 @@ pub(super) fn llm_provider_configs(
             scheme: provider.auth_scheme,
         };
         let api_key = env_optional(&provider.api_key_env);
+        let base_url = resolve_legacy_base_url_override(&provider.id, &provider.base_url);
         match provider.kind {
             AgentProviderKind::OpenAiCompatible => {
                 compatible.push(OpenAiCompatibleProviderConfig {
                     id: provider.id,
-                    base_url: provider.base_url,
+                    base_url,
                     api_key_env: provider.api_key_env,
                     api_key,
                     auth,
@@ -96,7 +104,7 @@ pub(super) fn llm_provider_configs(
             AgentProviderKind::OpenAiResponses => {
                 responses.push(OpenAiResponsesProviderConfig {
                     id: provider.id,
-                    base_url: provider.base_url,
+                    base_url,
                     api_key_env: provider.api_key_env,
                     api_key,
                     auth,
@@ -107,4 +115,31 @@ pub(super) fn llm_provider_configs(
         }
     }
     (compatible, responses, disabled)
+}
+
+fn resolve_legacy_base_url_override(provider: &ModelProvider, configured: &str) -> String {
+    let (default_url, env_override) = match provider {
+        ModelProvider::OpenAi => (
+            "https://api.openai.com/v1",
+            super::openai_base_url_from_env(),
+        ),
+        ModelProvider::DeepSeek => (
+            super::DEFAULT_DEEPSEEK_BASE_URL,
+            env_optional("DEEPSEEK_BASE_URL"),
+        ),
+        ModelProvider::BigModel => (
+            super::DEFAULT_BIGMODEL_BASE_URL,
+            env_optional("BIGMODEL_BASE_URL"),
+        ),
+        ModelProvider::Gemini => (
+            super::DEFAULT_GEMINI_BASE_URL,
+            env_optional("GEMINI_BASE_URL"),
+        ),
+        ModelProvider::Custom(_) => return configured.to_owned(),
+    };
+    if configured == default_url {
+        env_override.unwrap_or_else(|| configured.to_owned())
+    } else {
+        configured.to_owned()
+    }
 }

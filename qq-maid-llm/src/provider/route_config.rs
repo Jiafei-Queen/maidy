@@ -190,25 +190,26 @@ fn provider_is_disabled(config: &LlmConfig, provider: &ModelProvider) -> bool {
 }
 
 pub(crate) fn provider_api_key_configured(config: &LlmConfig, provider: &ModelProvider) -> bool {
-    match provider {
+    let from_configured = config
+        .openai_compatible_providers
+        .iter()
+        .find(|entry| &entry.id == provider)
+        .and_then(|entry| entry.api_key.as_deref())
+        .or_else(|| {
+            config
+                .openai_responses_providers
+                .iter()
+                .find(|entry| &entry.id == provider)
+                .and_then(|entry| entry.api_key.as_deref())
+        });
+    let key = from_configured.or_else(|| match provider {
         ModelProvider::OpenAi => config.openai_api_key.as_deref(),
         ModelProvider::DeepSeek => config.deepseek_api_key.as_deref(),
         ModelProvider::BigModel => config.bigmodel_api_key.as_deref(),
         ModelProvider::Gemini => config.gemini_api_key.as_deref(),
-        ModelProvider::Custom(_) => config
-            .openai_compatible_providers
-            .iter()
-            .find(|entry| &entry.id == provider)
-            .and_then(|entry| entry.api_key.as_deref())
-            .or_else(|| {
-                config
-                    .openai_responses_providers
-                    .iter()
-                    .find(|entry| &entry.id == provider)
-                    .and_then(|entry| entry.api_key.as_deref())
-            }),
-    }
-    .is_some_and(|value| !value.trim().is_empty())
+        ModelProvider::Custom(_) => None,
+    });
+    key.is_some_and(|value| !value.trim().is_empty())
 }
 
 fn configured_custom_provider_ids(config: &LlmConfig) -> Vec<ModelProvider> {

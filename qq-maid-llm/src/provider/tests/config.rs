@@ -770,3 +770,45 @@ fn provider_id_cannot_be_declared_for_two_protocols() {
             .contains("provider `routera` is declared more than once")
     );
 }
+
+#[test]
+fn configured_standard_providers_assemble_without_legacy_top_level_keys() {
+    let mut config = app_config(
+        ProviderMode::Auto,
+        "deepseek:deepseek-v4-flash,openai:gpt-5.6-luna",
+    );
+    config.openai_api_key = None;
+    config.deepseek_api_key = None;
+    config
+        .openai_responses_providers
+        .push(OpenAiResponsesProviderConfig {
+            id: ModelProvider::DeepSeek,
+            base_url: "https://custom-deepseek.example".to_owned(),
+            api_key_env: "QQ_MAID_CONNECTION_DS".to_owned(),
+            api_key: Some("ds-slot-key".to_owned()),
+            auth: HttpAuthConfig {
+                header: "x-api-key".to_owned(),
+                scheme: None,
+            },
+            request_timeout_seconds: Some(30),
+            chat_fallback: false,
+        });
+    config
+        .openai_compatible_providers
+        .push(OpenAiCompatibleProviderConfig {
+            id: ModelProvider::OpenAi,
+            base_url: "https://custom-openai.example/v1".to_owned(),
+            api_key_env: "QQ_MAID_CONNECTION_OA".to_owned(),
+            api_key: Some("oa-slot-key".to_owned()),
+            auth: HttpAuthConfig::default(),
+            request_timeout_seconds: Some(45),
+        });
+
+    preflight_provider_config(&config).unwrap();
+    let provider = build_provider(&config).unwrap();
+    assert_eq!(
+        provider.model(),
+        "deepseek:deepseek-v4-flash,openai:gpt-5.6-luna"
+    );
+    crate::web_search::build_web_search_executor(&config).unwrap();
+}
