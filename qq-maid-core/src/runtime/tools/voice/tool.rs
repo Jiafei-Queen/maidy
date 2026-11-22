@@ -89,7 +89,7 @@ impl Tool for SendVoiceTool {
         ToolMetadata {
             name: SEND_VOICE_TOOL_NAME.to_owned(),
             description: format!(
-                "把一段口语化纯文本合成语音并发送到当前会话。仅在你判断适合用语音表达时调用，每次回复最多调用一次；不要用于代码、表格、长链接或技术细节。text 会直接朗读，最多 {} 个字符。最终文字回复应与语音内容互补，不要逐字重复。发送是否成功必须以本工具返回的 ok 为准；ok 不是 true 时不得声称已经发送语音。",
+                "把一段口语化纯文本合成语音并发送到当前会话。仅在你判断适合用语音表达时调用，每次回复最多调用一次；不要用于代码、表格、长链接或技术细节。text 会直接朗读，最多 {} 个字符，且需要能在平台单条语音上限（约 60 秒）内读完，过长会直接失败。最终文字回复应与语音内容互补，不要逐字重复。发送是否成功必须以本工具返回的 ok 为准；ok 不是 true 时不得声称已经发送语音。",
                 self.max_text_chars
             ),
             parameters: json!({
@@ -154,6 +154,14 @@ impl Tool for SendVoiceTool {
                 "当前会话缺少语音发送目标，本次未发送。",
             ));
         };
+        // QQ 单条语音有实际时长上限，超长文本即使合成成功也无法正常播放。
+        // 这里按估算提前拒绝，让模型改写成更短的语音，而不是等平台返回失败。
+        if super::exceeds_qq_voice_limit(text) {
+            return Ok(failure_output(
+                VoiceSendError::TextTooLongForVoice.code(),
+                &VoiceSendError::TextTooLongForVoice.user_message(),
+            ));
+        }
 
         let deadline = context
             .execution_deadline
@@ -162,8 +170,9 @@ impl Tool for SendVoiceTool {
         //
         // 停顿目标 = 配置延迟 + 估算语音时长，让语音整体晚于纯文本回复一段
         // “朗读时间”；Gateway 会再扣掉真实 TTS 耗时，所以这里只需表达目标值。
+        // 上面的平台上限校验已保证语音时长贡献有界。
         // 语音链路还要预留 TTS 合成和上传时间，预算不足时直接放弃停顿。
-        let speech = super::estimated_speech_duration(text);
+        let speech = super::estimate::estimated_speech_duration(text);
         let target_delay = (target.target.target_type == PushTargetType::Private)
             .then(|| {
                 self.pacing.effective_voice_delay(

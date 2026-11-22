@@ -231,7 +231,7 @@ fn unsupported_platforms_cannot_bind_a_voice_target() {
 #[tokio::test]
 async fn private_voice_delay_includes_estimated_speech_duration() {
     use crate::config::ChatSendPacingConfig;
-    use crate::runtime::tools::voice::estimated_speech_duration;
+    use crate::runtime::tools::voice::estimate::estimated_speech_duration;
     use std::time::Duration;
 
     let sink = Arc::new(RecordingSink::success());
@@ -304,4 +304,86 @@ async fn voice_pacing_is_dropped_when_tool_budget_is_short() {
     tool.execute(ctx, json!({"text": "晚安"})).await.unwrap();
 
     assert_eq!(sink.calls()[0].target_delay, None);
+}
+
+#[tokio::test]
+async fn text_over_platform_voice_limit_is_rejected_before_synthesis() {
+    use crate::config::ChatSendPacingConfig;
+    use crate::runtime::tools::voice::MAX_QQ_VOICE_DURATION;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::success());
+    let tool = SendVoiceTool::new(sink.clone(), 600)
+        .with_pacing(ChatSendPacingConfig {
+            delay_min: Duration::from_millis(1000),
+            delay_max: Duration::from_millis(1000),
+            gap: Duration::ZERO,
+        })
+        .scoped_for_request(&private_request())
+        .expect("request should provide a voice target");
+
+    // 271 字约 60.16 秒，超过 QQ 单条语音上限；不进入 TTS，也不伪造成功。
+    let output = tool
+        .execute(context(), json!({ "text": "朗".repeat(271) }))
+        .await
+        .unwrap();
+
+    assert_eq!(output.value["ok"], false);
+    assert_eq!(output.value["error_code"], "text_too_long_for_voice");
+    assert!(output.value["message"].as_str().unwrap().contains("缩短"));
+    assert!(sink.calls().is_empty());
+    assert_eq!(MAX_QQ_VOICE_DURATION, Duration::from_secs(60));
+}
+
+#[tokio::test]
+async fn text_within_platform_voice_limit_is_accepted() {
+    use crate::config::ChatSendPacingConfig;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::success());
+    let tool = SendVoiceTool::new(sink.clone(), 600)
+        .with_pacing(ChatSendPacingConfig {
+            delay_min: Duration::from_millis(1000),
+            delay_max: Duration::from_millis(1000),
+            gap: Duration::ZERO,
+        })
+        .scoped_for_request(&private_request())
+        .expect("request should provide a voice target");
+
+    // 270 字约 59.94 秒，仍在平台上限内。
+    let output = tool
+        .execute(context(), json!({ "text": "朗".repeat(270) }))
+        .await
+        .unwrap();
+
+    assert_eq!(output.value["ok"], true);
+    assert_eq!(sink.calls().len(), 1);
+}
+
+#[tokio::test]
+async fn long_voice_delay_is_bounded_by_platform_acceptance() {
+    use crate::config::ChatSendPacingConfig;
+    use crate::runtime::tools::voice::MAX_QQ_VOICE_DURATION;
+    use std::time::Duration;
+
+    let sink = Arc::new(RecordingSink::success());
+    let tool = SendVoiceTool::new(sink.clone(), 600)
+        .with_pacing(ChatSendPacingConfig {
+            delay_min: Duration::from_millis(1000),
+            delay_max: Duration::from_millis(1000),
+            gap: Duration::ZERO,
+        })
+        .scoped_for_request(&private_request())
+        .expect("request should provide a voice target");
+    let mut ctx = context();
+    ctx.execution_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(600));
+
+    // 270 字约 59.94 秒，是能被接受的最长语音，停顿也不会超过平台上限。
+    tool.execute(ctx, json!({ "text": "朗".repeat(270) }))
+        .await
+        .unwrap();
+
+    let target_delay = sink.calls()[0].target_delay.expect("private voice delay");
+    assert!(target_delay <= Duration::from_secs(1) + MAX_QQ_VOICE_DURATION);
+    assert!(target_delay >= Duration::from_secs(1) + Duration::from_secs(59));
 }

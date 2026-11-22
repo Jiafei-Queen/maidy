@@ -11,10 +11,26 @@ use std::time::Duration;
 /// 不需要与真实音频逐毫秒对齐。
 const ESTIMATED_MS_PER_CHAR: u64 = 222;
 
+/// QQ 单条语音的实际时长上限：普通用户 60 秒，会员更长。
+///
+/// Bot 富媒体文档只限制文件大小，没有写时长；但语音条一旦超过本机 QQ 的录制
+/// 上限就会被截断或无法播放。这里以普通用户上限作为安全边界，估算超过它时
+/// 不再生成语音，避免合成一条注定失败的音频。
+pub const MAX_QQ_VOICE_DURATION: Duration = Duration::from_secs(60);
+
 /// 按朗读文本估算语音时长；空文本为 0。
 pub fn estimated_speech_duration(text: &str) -> Duration {
     let chars = text.chars().count() as u64;
     Duration::from_millis(chars.saturating_mul(ESTIMATED_MS_PER_CHAR))
+}
+
+/// 估算时长是否超过 QQ 单条语音上限。
+///
+/// 工具在合成前用这个判断拒绝超长文本；因此真正进入发送的语音，其估算时长
+/// 天然不超过 [`MAX_QQ_VOICE_DURATION`]，用于拟人停顿的时长贡献也随之有界，
+/// 不需要再单独裁剪。
+pub fn exceeds_qq_voice_limit(text: &str) -> bool {
+    estimated_speech_duration(text) > MAX_QQ_VOICE_DURATION
 }
 
 #[cfg(test)]
@@ -47,5 +63,23 @@ mod tests {
             estimated_speech_duration(&text),
             Duration::from_millis(600 * 222)
         );
+    }
+
+    #[test]
+    fn qq_voice_limit_is_sixty_seconds() {
+        // 270 字 * 222ms = 59.94s，仍在 60 秒内。
+        assert!(!exceeds_qq_voice_limit(&"朗".repeat(270)));
+        // 271 字 * 222ms = 60.162s，超过平台可播放上限。
+        assert!(exceeds_qq_voice_limit(&"朗".repeat(271)));
+    }
+
+    #[test]
+    fn accepted_text_never_exceeds_platform_limit() {
+        // 拒绝逻辑已保证进入发送的文本不超过上限，因此停顿贡献天然有界。
+        for chars in [0, 1, 30, 270] {
+            let text = "朗".repeat(chars);
+            assert!(!exceeds_qq_voice_limit(&text));
+            assert!(estimated_speech_duration(&text) <= MAX_QQ_VOICE_DURATION);
+        }
     }
 }
