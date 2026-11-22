@@ -4,6 +4,7 @@
 //! 数据库外的独立文件。这里提供领域模型和安全写入能力，管理员认证与页面由后续任务接入。
 
 mod agent_file;
+mod discovery_cache;
 mod field;
 mod managed_file;
 mod models;
@@ -466,12 +467,19 @@ impl ConfigCenter {
             &self.external_environment,
         )?;
         let changes = self.prepare_provider_changes(changes)?;
-        self.agent_file
+        let updated = self
+            .agent_file
             .as_ref()
             .ok_or_else(|| ConfigCenterError::invalid("agent config domain is not initialized"))?
             .update_with_validator(expected_revision, &changes, |candidate_agent| {
                 self.validate_candidate_for_write(&environment, Some(candidate_agent))
-            })
+            })?;
+        for change in &changes {
+            if let AgentConfigChange::RemoveProvider { id, .. } = change {
+                let _ = discovery_cache::remove_cached_discovery(&self.discovery_cache_path(), id);
+            }
+        }
+        Ok(updated)
     }
 
     pub fn replace_secret(

@@ -217,3 +217,86 @@ fn custom_connection_does_not_guess_catalog_and_keeps_local_metadata() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn discovered_models_persist_across_metadata_reads_without_mutating_models_revision() {
+    use axum::{Router, routing::get};
+    use qq_maid_llm::provider::discovery::DiscoveryState;
+
+    let app = Router::new().route(
+        "/v1/models",
+        get(|| async { r#"{"data":[{"id":"sync-alpha"},{"id":"sync-beta"}]}"# }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (center, _database, directory) = model_center();
+    let initial = center.current_snapshot().unwrap().agent.unwrap();
+    let saved = center
+        .update_agent(
+            &initial.revision,
+            &[AgentConfigChange::SetProvider {
+                id: "sync_proxy".into(),
+                provider: AgentProviderUpdate {
+                    display_name: Some("Sync Proxy".into()),
+                    enabled: true,
+                    kind: AgentProviderKind::OpenAiCompatible,
+                    base_url: base,
+                    api_key_env: String::new(),
+                    auth_header: "Authorization".into(),
+                    auth_scheme: Some("Bearer".into()),
+                    request_timeout_seconds: Some(3),
+                    chat_fallback: None,
+                },
+            }],
+        )
+        .unwrap();
+    center
+        .update_connection_credential("sync_proxy", &saved.revision, "missing", Some("test-key"))
+        .unwrap();
+
+    let before_metadata = center.connection_model_metadata("sync_proxy").unwrap();
+    assert!(before_metadata["discovered"].is_null());
+    let before_revision = before_metadata["revision"].as_str().unwrap().to_owned();
+
+    let discovery = center
+        .discover_connection_models("sync_proxy", &saved.revision)
+        .await
+        .unwrap();
+    assert_eq!(discovery.state, DiscoveryState::Success);
+
+    // 同步后立即落盘到独立缓存文件，且不改变 models.json 的 revision。
+    assert!(directory.join("models-discovery-cache.json").is_file());
+    let after_metadata = center.connection_model_metadata("sync_proxy").unwrap();
+    assert_eq!(after_metadata["revision"], before_revision);
+    assert_eq!(after_metadata["discovered"]["state"], "success");
+    assert!(
+        after_metadata["discovered"]["synced_at"]
+            .as_str()
+            .is_some_and(|ts| !ts.is_empty())
+    );
+    let ids = after_metadata["discovered"]["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["sync-alpha", "sync-beta"]);
+
+    // 删除供应商时顺带清理该连接的发现缓存。
+    center
+        .update_agent(
+            &saved.revision,
+            &[AgentConfigChange::RemoveProvider {
+                id: "sync_proxy".into(),
+                cleanup_references: false,
+            }],
+        )
+        .unwrap();
+    let cache_text =
+        std::fs::read_to_string(directory.join("models-discovery-cache.json")).unwrap();
+    assert!(!cache_text.contains("sync_proxy"));
+
+    server.abort();
+}

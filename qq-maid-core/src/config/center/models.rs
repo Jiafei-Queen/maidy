@@ -17,6 +17,11 @@ impl ConfigCenter {
             .unwrap_or_else(|| PathBuf::from("config/models.json"))
     }
 
+    pub(super) fn discovery_cache_path(&self) -> PathBuf {
+        self.models_path()
+            .with_file_name("models-discovery-cache.json")
+    }
+
     pub(super) fn load_models(&self) -> Result<(String, LocalModelOverrides), ConfigCenterError> {
         let bytes = managed_file::read_regular_file(&self.models_path())?;
         let revision = bytes
@@ -81,8 +86,13 @@ impl ConfigCenter {
             .iter()
             .filter(|m| m.provider.as_str() == identity)
             .collect();
+        let discovered = super::discovery_cache::load_cached_discovery(
+            &self.discovery_cache_path(),
+            &canonical,
+        )?;
         Ok(
             json!({"revision": revision, "provider": identity, "models": models, "overrides": overrides,
+            "discovered": discovered,
             "catalog_source": if builtin { Some(embedded.base_source()) } else { None },
             "verified_capabilities": "unknown", "apply_mode": "restart"}),
         )

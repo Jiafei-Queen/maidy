@@ -39,7 +39,7 @@ impl ConfigCenter {
         expected_revision: &str,
     ) -> Result<qq_maid_llm::provider::discovery::ModelDiscovery, ConfigCenterError> {
         let connection = self.resolve_connection_for_read(id, expected_revision)?;
-        qq_maid_llm::provider::discovery::discover_models(
+        let discovery = qq_maid_llm::provider::discovery::discover_models(
             connection.discovery_adapter,
             &connection.base_url,
             &connection.auth,
@@ -47,7 +47,26 @@ impl ConfigCenter {
             std::time::Duration::from_secs(connection.timeout_seconds),
         )
         .await
-        .map_err(|error| ConfigCenterError::invalid(error.message))
+        .map_err(|error| ConfigCenterError::invalid(error.message))?;
+        if discovery.state == qq_maid_llm::provider::discovery::DiscoveryState::Success {
+            let _guard = self
+                .mutation_lock
+                .lock()
+                .map_err(|_| ConfigCenterError::io("configuration mutation lock is poisoned"))?;
+            // 仅持久化最近一次成功发现的模型 ID 列表，不修改 models.json / agent.toml revision。
+            if let Err(error) = super::discovery_cache::save_cached_discovery(
+                &self.discovery_cache_path(),
+                id,
+                &discovery,
+            ) {
+                tracing::warn!(
+                    connection_id = id,
+                    error = %error,
+                    "供应商模型发现缓存写入失败，仍返回本次实时发现结果"
+                );
+            }
+        }
+        Ok(discovery)
     }
 
     pub async fn test_provider_connection(
