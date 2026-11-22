@@ -21,12 +21,6 @@ pub(super) fn provider_from_file(
     }
     let id = ModelProvider::parse_prefix(name)
         .map_err(|err| LlmError::config(format!("invalid providers.{name}: {}", err.message)))?;
-    if !matches!(id, ModelProvider::Custom(_)) {
-        return Err(LlmError::config(format!(
-            "providers.{name} cannot override built-in provider `{}`",
-            id.as_str()
-        )));
-    }
     let base_url = provider.base_url.trim();
     if base_url.is_empty() {
         return Err(LlmError::config(format!(
@@ -142,12 +136,16 @@ pub(super) fn validate_connection_references(
         }
     }
     let mut invalid = Vec::new();
+    let managed = document.managed_providers;
     let mut check = |value: &str, location: String| -> Result<(), LlmError> {
         let model = ModelId::parse_config(value, &location)?;
-        if let Some(ModelProvider::Custom(id)) = model.provider
-            && !providers.contains_key(&ModelProvider::Custom(id.clone()))
-        {
-            invalid.push(format!("{location}: providers.{id} is not configured"));
+        let provider = model.provider.unwrap_or(ModelProvider::OpenAi);
+        let requires_declaration = managed || matches!(provider, ModelProvider::Custom(_));
+        if requires_declaration && !providers.contains_key(&provider) {
+            invalid.push(format!(
+                "{location}: providers.{} is not configured",
+                provider.as_str()
+            ));
         }
         Ok(())
     };

@@ -61,6 +61,7 @@ fn agent_provider_add_modify_and_remove_preserves_other_providers() {
         &modified.revision,
         &[AgentConfigChange::RemoveProvider {
             id: "opencode_zen".to_owned(),
+            cleanup_references: false,
         }],
     )
     .unwrap();
@@ -73,7 +74,7 @@ fn agent_provider_add_modify_and_remove_preserves_other_providers() {
 fn invalid_agent_provider_change_does_not_replace_file() {
     let (file, _running, _database, path) = test_agent_file();
     for (id, base_url) in [
-        ("openai", "https://example.com/v1"),
+        ("9bad", "https://example.com/v1"),
         ("opencode_zen", "invalid-url"),
     ] {
         let before = std::fs::read(&path).unwrap();

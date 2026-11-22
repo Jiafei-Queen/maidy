@@ -348,7 +348,73 @@ impl AppConfig {
         )?;
         let effective_environment = effective_environment();
         let agent_config = AgentRuntimeConfig::load_from_environment(&effective_environment)?;
-        let disabled_builtin_providers = provider_config::disabled_builtin_providers()?;
+        let (openai_api_key, openai_resolved_base_url, openai_disabled) =
+            provider_config::resolve_standard_provider(
+                &agent_config,
+                qq_maid_llm::provider::types::ModelProvider::OpenAi,
+                "OPENAI",
+                "https://api.openai.com/v1",
+                openai_base_url_from_env(),
+            )?;
+        let openai_base_url = if openai_resolved_base_url == "https://api.openai.com/v1" {
+            openai_base_url_from_env()
+        } else {
+            Some(openai_resolved_base_url)
+        };
+        let openai_api_mode = match agent_config
+            .provider_config(&qq_maid_llm::provider::types::ModelProvider::OpenAi)
+            .map(|provider| provider.kind)
+        {
+            Some(agent::AgentProviderKind::OpenAiCompatible) => OpenAiApiMode::ChatOnly,
+            _ => parse_openai_api_mode(&env_string("OPENAI_API_MODE", "auto"))?,
+        };
+        let (deepseek_api_key, deepseek_base_url, deepseek_disabled) =
+            provider_config::resolve_standard_provider(
+                &agent_config,
+                qq_maid_llm::provider::types::ModelProvider::DeepSeek,
+                "DEEPSEEK",
+                DEFAULT_DEEPSEEK_BASE_URL,
+                env_optional("DEEPSEEK_BASE_URL"),
+            )?;
+        let (bigmodel_api_key, bigmodel_base_url, bigmodel_disabled) =
+            provider_config::resolve_standard_provider(
+                &agent_config,
+                qq_maid_llm::provider::types::ModelProvider::BigModel,
+                "BIGMODEL",
+                DEFAULT_BIGMODEL_BASE_URL,
+                env_optional("BIGMODEL_BASE_URL"),
+            )?;
+        let (gemini_api_key, gemini_base_url, gemini_disabled) =
+            provider_config::resolve_standard_provider(
+                &agent_config,
+                qq_maid_llm::provider::types::ModelProvider::Gemini,
+                "GEMINI",
+                DEFAULT_GEMINI_BASE_URL,
+                env_optional("GEMINI_BASE_URL"),
+            )?;
+        let mut disabled_builtin_providers = Vec::new();
+        for (disabled, provider) in [
+            (
+                openai_disabled,
+                qq_maid_llm::provider::types::ModelProvider::OpenAi,
+            ),
+            (
+                deepseek_disabled,
+                qq_maid_llm::provider::types::ModelProvider::DeepSeek,
+            ),
+            (
+                bigmodel_disabled,
+                qq_maid_llm::provider::types::ModelProvider::BigModel,
+            ),
+            (
+                gemini_disabled,
+                qq_maid_llm::provider::types::ModelProvider::Gemini,
+            ),
+        ] {
+            if disabled {
+                disabled_builtin_providers.push(provider);
+            }
+        }
         let ops_config =
             crate::runtime::tools::ops::OpsConfig::load_from_environment(&effective_environment)?;
         let command_prefix = CommandPrefix::parse(&env_string("CHAT_COMMAND_PREFIX", "/"))
@@ -368,15 +434,15 @@ impl AppConfig {
             command_prefix,
             voice,
             chat_send_pacing,
-            openai_api_key: provider_config::builtin_api_key("OPENAI")?,
-            openai_base_url: openai_base_url_from_env(),
-            openai_api_mode: parse_openai_api_mode(&env_string("OPENAI_API_MODE", "auto"))?,
-            deepseek_api_key: provider_config::builtin_api_key("DEEPSEEK")?,
-            deepseek_base_url: env_string("DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL),
-            bigmodel_api_key: provider_config::builtin_api_key("BIGMODEL")?,
-            bigmodel_base_url: env_string("BIGMODEL_BASE_URL", DEFAULT_BIGMODEL_BASE_URL),
-            gemini_api_key: provider_config::builtin_api_key("GEMINI")?,
-            gemini_base_url: env_string("GEMINI_BASE_URL", DEFAULT_GEMINI_BASE_URL),
+            openai_api_key,
+            openai_base_url,
+            openai_api_mode,
+            deepseek_api_key,
+            deepseek_base_url,
+            bigmodel_api_key,
+            bigmodel_base_url,
+            gemini_api_key,
+            gemini_base_url,
             disabled_builtin_providers,
             stream: env_bool("LLM_STREAM", true)?,
             request_timeout_seconds: env_u64(

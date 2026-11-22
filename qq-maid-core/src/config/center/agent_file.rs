@@ -29,6 +29,9 @@ pub enum AgentConfigChange {
     },
     RemoveProvider {
         id: String,
+        /// 为 true 时同时从文本路线与 STT 路线中移除该供应商的候选引用；
+        /// 若某条文本路线移除后将变为空，拒绝本次删除并给出明确提示。
+        cleanup_references: bool,
     },
     SetKnowledge {
         mode: KnowledgeRetrievalMode,
@@ -340,6 +343,7 @@ fn apply_change(
     match change {
         AgentConfigChange::SetProvider { id, provider } => {
             let id = provider_entry_name(id)?;
+            document.managed_providers = true;
             document.providers.insert(
                 id,
                 ProviderFile {
@@ -355,8 +359,19 @@ fn apply_change(
                 },
             );
         }
-        AgentConfigChange::RemoveProvider { id } => {
-            document.providers.remove(provider_entry_name(id)?.as_str());
+        AgentConfigChange::RemoveProvider {
+            id,
+            cleanup_references,
+        } => {
+            let entry_id = provider_entry_name(id)?;
+            document.managed_providers = true;
+            document.providers.remove(entry_id.as_str());
+            if *cleanup_references {
+                let target_provider =
+                    qq_maid_llm::provider::types::ModelProvider::parse_prefix(&entry_id)
+                        .map_err(|error| ConfigCenterError::invalid(error.message))?;
+                cleanup_provider_references(document, &target_provider)?;
+            }
         }
         AgentConfigChange::SetKnowledge { mode, embedding } => {
             document.knowledge.mode = *mode;
@@ -485,14 +500,88 @@ fn apply_change(
 
 fn provider_entry_name(name: &str) -> Result<String, ConfigCenterError> {
     let name = entry_name(name)?;
-    let id = qq_maid_llm::provider::types::ModelProvider::parse_prefix(&name)
+    qq_maid_llm::provider::types::ModelProvider::parse_prefix(&name)
         .map_err(|error| ConfigCenterError::invalid(error.message))?;
-    if !matches!(id, qq_maid_llm::provider::types::ModelProvider::Custom(_)) {
+    Ok(name)
+}
+
+fn cleanup_provider_references(
+    document: &mut AgentConfigDocument,
+    target: &qq_maid_llm::provider::types::ModelProvider,
+) -> Result<(), ConfigCenterError> {
+    use qq_maid_llm::provider::types::{ModelId, ModelProvider, ModelRoute};
+
+    let mut emptied_routes = Vec::new();
+    for (route_name, route) in &mut document.model_routes {
+        let parsed = ModelRoute::parse_config(&route.candidates.join(","), route_name)
+            .map_err(|error| ConfigCenterError::invalid(error.message))?;
+        let kept = parsed
+            .candidates()
+            .iter()
+            .filter(|candidate| {
+                let provider = candidate
+                    .provider
+                    .as_ref()
+                    .unwrap_or(&ModelProvider::OpenAi);
+                provider != target
+            })
+            .map(ModelId::to_request_model)
+            .collect::<Vec<_>>();
+        if kept.is_empty() {
+            emptied_routes.push(route_name.clone());
+        } else {
+            route.candidates = kept;
+        }
+    }
+    if !emptied_routes.is_empty() {
+        emptied_routes.sort();
         return Err(ConfigCenterError::invalid(format!(
-            "provider `{name}` cannot override a built-in provider"
+            "无法删除供应商 {}：模型路线 {} 仅剩该供应商的候选，请先前往「文本模型路由」补充其他候选模型",
+            target.as_str(),
+            emptied_routes.join("、")
         )));
     }
-    Ok(name)
+
+    for candidates in [
+        &mut document.stt.routes.default,
+        &mut document.stt.routes.private,
+        &mut document.stt.routes.group,
+    ] {
+        candidates.retain(|raw| {
+            ModelId::parse(raw, "config")
+                .map(|model| model.provider.as_ref() != Some(target))
+                .unwrap_or(true)
+        });
+    }
+
+    let search_backend = document
+        .tools
+        .web_search
+        .backend
+        .trim()
+        .to_ascii_lowercase();
+    let uses_provider_native_search =
+        search_backend.is_empty() || search_backend == "provider_native";
+    if uses_provider_native_search {
+        let mut blocked_search = Vec::new();
+        for (route_name, route) in &document.tools.web_search.routes {
+            if let Ok(model) = ModelId::parse_config(&route.model, route_name) {
+                let provider = model.provider.unwrap_or(ModelProvider::OpenAi);
+                if &provider == target {
+                    blocked_search.push(route_name.clone());
+                }
+            }
+        }
+        if !blocked_search.is_empty() {
+            blocked_search.sort();
+            return Err(ConfigCenterError::invalid(format!(
+                "无法删除供应商 {}：Provider 原生搜索路线 {} 正在使用该供应商，请先修改搜索模型或切换联网搜索后端",
+                target.as_str(),
+                blocked_search.join("、")
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn default_provider_auth_header() -> String {

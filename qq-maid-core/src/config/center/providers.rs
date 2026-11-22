@@ -21,6 +21,8 @@ pub struct ConnectionCredentialStatus {
 pub struct ProviderManagementSnapshot {
     pub presets: Vec<ProviderPreset>,
     pub adapters: [&'static str; 2],
+    /// 为 true 时前端只渲染 `agent.toml [providers.*]` 统一列表，不再硬编码不可删内置卡片。
+    pub managed_providers: bool,
     pub credentials: BTreeMap<String, ConnectionCredentialStatus>,
 }
 
@@ -80,54 +82,76 @@ impl ConfigCenter {
             .mutation_lock
             .lock()
             .map_err(|_| ConfigCenterError::io("configuration mutation lock is poisoned"))?;
-        if let Some(definition) = builtin_connection(id) {
-            return self.resolve_builtin_connection_for_read(id, expected_revision, definition);
-        }
-        let snapshot = self
+        let agent_snapshot = self
             .agent_file
             .as_ref()
-            .ok_or_else(|| ConfigCenterError::invalid("Agent 配置不可用"))?
-            .snapshot()?;
+            .map(AgentConfigFile::snapshot)
+            .transpose()?;
+        let saved_providers = agent_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.saved_value.as_ref())
+            .and_then(|value| value.get("providers").and_then(Value::as_table).cloned())
+            .unwrap_or_default();
+        let managed_providers = agent_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.saved_value.as_ref())
+            .and_then(|value| value.get("managed_providers").and_then(Value::as_bool))
+            .unwrap_or(false);
+
+        // 优先从统一的 agent.toml [providers.*] 读取；仅旧版未迁移配置才回退内置 env 连接。
+        if let Some(provider) = saved_providers.get(id) {
+            let snapshot = agent_snapshot.expect("saved provider implies agent snapshot");
+            if snapshot.revision != expected_revision {
+                return Err(ConfigCenterError::conflict(
+                    "Connection 已修改，请刷新后测试",
+                ));
+            }
+            let connection: super::AgentProviderUpdate = provider
+                .clone()
+                .try_into()
+                .map_err(|_| ConfigCenterError::invalid("Connection 配置无效"))?;
+            if !connection.enabled {
+                return Err(ConfigCenterError::invalid("请先启用 Connection"));
+            }
+            let environment = self.current_resolved_environment()?;
+            let key = environment
+                .get(&connection.api_key_env)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| ConfigCenterError::invalid("Credential 尚未配置"))?;
+            let responses =
+                connection.kind == crate::config::agent::AgentProviderKind::OpenAiResponses;
+            return Ok(ResolvedConnection {
+                base_url: connection.base_url,
+                responses,
+                auth: qq_maid_llm::config::HttpAuthConfig {
+                    header: connection.auth_header,
+                    scheme: connection.auth_scheme,
+                },
+                api_key: key.to_owned(),
+                timeout_seconds: discovery_timeout(
+                    &environment,
+                    connection.request_timeout_seconds,
+                )?,
+                discovery_adapter: if responses {
+                    DiscoveryAdapter::OpenAiResponses
+                } else {
+                    DiscoveryAdapter::OpenAiCompatible
+                },
+            });
+        }
+
+        if !managed_providers && let Some(definition) = builtin_connection(id) {
+            return self.resolve_builtin_connection_for_read(id, expected_revision, definition);
+        }
+
+        let snapshot =
+            agent_snapshot.ok_or_else(|| ConfigCenterError::invalid("Agent 配置不可用"))?;
         if snapshot.revision != expected_revision {
             return Err(ConfigCenterError::conflict(
                 "Connection 已修改，请刷新后测试",
             ));
         }
-        let providers = snapshot
-            .saved_value
-            .and_then(|value| value.get("providers").and_then(Value::as_table).cloned())
-            .unwrap_or_default();
-        let provider = providers
-            .get(id)
-            .ok_or_else(|| ConfigCenterError::invalid("Connection 不存在"))?;
-        let connection: super::AgentProviderUpdate = provider
-            .clone()
-            .try_into()
-            .map_err(|_| ConfigCenterError::invalid("Connection 配置无效"))?;
-        if !connection.enabled {
-            return Err(ConfigCenterError::invalid("请先启用 Connection"));
-        }
-        let environment = self.current_resolved_environment()?;
-        let key = environment
-            .get(&connection.api_key_env)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| ConfigCenterError::invalid("Credential 尚未配置"))?;
-        let responses = connection.kind == crate::config::agent::AgentProviderKind::OpenAiResponses;
-        Ok(ResolvedConnection {
-            base_url: connection.base_url,
-            responses,
-            auth: qq_maid_llm::config::HttpAuthConfig {
-                header: connection.auth_header,
-                scheme: connection.auth_scheme,
-            },
-            api_key: key.to_owned(),
-            timeout_seconds: discovery_timeout(&environment, connection.request_timeout_seconds)?,
-            discovery_adapter: if responses {
-                DiscoveryAdapter::OpenAiResponses
-            } else {
-                DiscoveryAdapter::OpenAiCompatible
-            },
-        })
+        Err(ConfigCenterError::invalid("Connection 不存在"))
     }
 
     fn resolve_builtin_connection_for_read(
@@ -221,9 +245,18 @@ impl ConfigCenter {
                 },
             );
         }
+        let managed_providers = self
+            .agent_file
+            .as_ref()
+            .map(AgentConfigFile::snapshot)
+            .transpose()?
+            .and_then(|snapshot| snapshot.saved_value)
+            .and_then(|value| value.get("managed_providers").and_then(Value::as_bool))
+            .unwrap_or(false);
         Ok(ProviderManagementSnapshot {
             presets: provider_presets(),
             adapters: ["openai_compatible", "openai_responses"],
+            managed_providers,
             credentials,
         })
     }
@@ -291,14 +324,6 @@ impl ConfigCenter {
                             "Connection ID 不能包含首尾空白，且不超过 64 字符",
                         ));
                     }
-                    if !matches!(
-                        parsed,
-                        qq_maid_llm::provider::types::ModelProvider::Custom(_)
-                    ) {
-                        return Err(ConfigCenterError::invalid(format!(
-                            "provider `{id}` cannot override a built-in provider"
-                        )));
-                    }
                     if let Some(existing) = saved.get(id) {
                         let slot = existing
                             .get("api_key_env")
@@ -319,7 +344,7 @@ impl ConfigCenter {
                             "Connection ID 必须为小写，且不超过 64 字符",
                         ));
                     } else {
-                        // 旧版三个预设请求继续兼容；新通用页面不提交任意环境变量名。
+                        // 旧版 OpenCode 共用 OPENCODE_API_KEY 继续兼容；新建其余连接均由服务端生成隔离 Slot。
                         let legacy_opencode = ["opencode_zen", "opencode_zen_chat", "opencode_go"]
                             .contains(&id.as_str())
                             && provider.api_key_env == "OPENCODE_API_KEY";
@@ -336,7 +361,7 @@ impl ConfigCenter {
                 }
                 // 专属密文归档留在加密存储中。重建同名 Connection 分配新的随机 Slot，
                 // 永不重新绑定旧密文；避免跨 TOML / SQLite 非原子删除造成凭证丢失。
-                AgentConfigChange::RemoveProvider { id } => {
+                AgentConfigChange::RemoveProvider { id, .. } => {
                     let canonical_id = provider_canonical_id(id)?;
                     let exact_saved = saved.contains_key(id);
                     let canonical_saved = saved_by_canonical_id.contains_key(&canonical_id);
@@ -433,14 +458,6 @@ impl ConfigCenter {
 fn provider_canonical_id(id: &str) -> Result<String, ConfigCenterError> {
     let parsed = qq_maid_llm::provider::types::ModelProvider::parse_prefix(id)
         .map_err(|_| ConfigCenterError::invalid("Connection ID 格式无效"))?;
-    if !matches!(
-        parsed,
-        qq_maid_llm::provider::types::ModelProvider::Custom(_)
-    ) {
-        return Err(ConfigCenterError::invalid(format!(
-            "provider `{id}` cannot override a built-in provider"
-        )));
-    }
     Ok(parsed.as_str().to_owned())
 }
 

@@ -21,23 +21,41 @@ pub(super) fn builtin_api_key(prefix: &str) -> Result<Option<String>, crate::err
     })
 }
 
-/// 收集通过 `<PROVIDER>_ENABLED=false` 显式停用的内置供应商。
+/// 结合统一 `[providers.*]` 与旧环境变量解析知名品牌连接的启停、密钥与地址。
 ///
-/// 停用的供应商不再阻断同路由中其他可用候选，但必须透传给 LLM 层，
-/// 确保其即使保留旧 API Key 也不会被初始化，同时在配置中心输出路由告警。
-pub(super) fn disabled_builtin_providers() -> Result<Vec<ModelProvider>, crate::error::LlmError> {
-    let mut disabled = Vec::new();
-    for (prefix, provider) in [
-        ("OPENAI", ModelProvider::OpenAi),
-        ("DEEPSEEK", ModelProvider::DeepSeek),
-        ("BIGMODEL", ModelProvider::BigModel),
-        ("GEMINI", ModelProvider::Gemini),
-    ] {
-        if !super::env_bool(&format!("{prefix}_ENABLED"), true)? {
-            disabled.push(provider);
-        }
+/// - 当 `agent.managed_providers() == true` 时，`[providers.*]` 是唯一来源：被删除的连接绝不
+///   从旧环境变量复活；仍存在的连接优先采用自身配置，仅在仍使用默认 URL/密钥引用时兼容旧 env。
+/// - 当 `agent.managed_providers() == false`（旧手工 TOML）时，完全沿用原环境变量行为。
+pub(super) fn resolve_standard_provider(
+    agent: &AgentRuntimeConfig,
+    provider: ModelProvider,
+    env_prefix: &str,
+    default_base_url: &str,
+    env_base_url: Option<String>,
+) -> Result<(Option<String>, String, bool), crate::error::LlmError> {
+    let env_enabled = super::env_bool(&format!("{env_prefix}_ENABLED"), true)?;
+    if let Some(configured) = agent.provider_config(&provider) {
+        let uses_legacy_slot = configured.api_key_env == format!("{env_prefix}_API_KEY");
+        let enabled = configured.enabled && (!uses_legacy_slot || env_enabled);
+        let api_key = if enabled {
+            env_optional(&configured.api_key_env)
+        } else {
+            None
+        };
+        // 若用户未修改默认地址且部署环境显式设置了旧 BASE_URL，保留旧部署兼容。
+        let base_url = if configured.base_url == default_base_url {
+            env_base_url.unwrap_or_else(|| configured.base_url.clone())
+        } else {
+            configured.base_url.clone()
+        };
+        return Ok((api_key, base_url, !enabled));
     }
-    Ok(disabled)
+    if agent.managed_providers() {
+        return Ok((None, default_base_url.to_owned(), true));
+    }
+    let api_key = builtin_api_key(env_prefix)?;
+    let base_url = env_base_url.unwrap_or_else(|| default_base_url.to_owned());
+    Ok((api_key, base_url, !env_enabled))
 }
 
 pub(super) fn llm_provider_configs(
@@ -53,6 +71,10 @@ pub(super) fn llm_provider_configs(
     for provider in agent_config.provider_configs() {
         if !provider.enabled {
             disabled.push(provider.id);
+            continue;
+        }
+        // 标准品牌变体在 Commit 5 之前由顶层 LlmConfig 字段承载，避免在 custom 列表重复声明。
+        if !matches!(provider.id, ModelProvider::Custom(_)) {
             continue;
         }
         let auth = HttpAuthConfig {

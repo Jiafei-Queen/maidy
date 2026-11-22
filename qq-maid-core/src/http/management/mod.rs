@@ -260,6 +260,8 @@ enum AgentChangeRequest {
     },
     RemoveProvider {
         id: String,
+        #[serde(default)]
+        cleanup_references: bool,
     },
     SetKnowledge {
         mode: KnowledgeRetrievalMode,
@@ -435,7 +437,13 @@ fn agent_change(change: AgentChangeRequest) -> Result<AgentConfigChange, BoxedRe
         AgentChangeRequest::SetProvider { id, provider } => {
             AgentConfigChange::SetProvider { id, provider }
         }
-        AgentChangeRequest::RemoveProvider { id } => AgentConfigChange::RemoveProvider { id },
+        AgentChangeRequest::RemoveProvider {
+            id,
+            cleanup_references,
+        } => AgentConfigChange::RemoveProvider {
+            id,
+            cleanup_references,
+        },
         AgentChangeRequest::SetKnowledge { mode, embedding } => {
             AgentConfigChange::SetKnowledge { mode, embedding }
         }

@@ -174,44 +174,64 @@ fn build_provider_availability(
     environment: &HashMap<String, String>,
 ) -> HashMap<String, ProviderAvailability> {
     let mut map = HashMap::new();
-    for (id, prefix) in [
-        ("openai", "OPENAI"),
-        ("deepseek", "DEEPSEEK"),
-        ("bigmodel", "BIGMODEL"),
-        ("gemini", "GEMINI"),
-    ] {
-        let enabled = !environment
-            .get(&format!("{prefix}_ENABLED"))
-            .is_some_and(|raw| is_false_env(raw));
-        let credential_configured = environment
-            .get(&format!("{prefix}_API_KEY"))
-            .is_some_and(|raw| !raw.trim().is_empty());
-        map.insert(
-            id.to_owned(),
-            ProviderAvailability {
-                enabled,
-                credential_configured,
-            },
-        );
+    // 旧配置（未开启 managed_providers）继续兜底内置环境变量；统一模式只以 `[providers.*]` 为准。
+    if !agent.managed_providers() {
+        for (id, prefix) in [
+            ("openai", "OPENAI"),
+            ("deepseek", "DEEPSEEK"),
+            ("bigmodel", "BIGMODEL"),
+            ("gemini", "GEMINI"),
+        ] {
+            let enabled = !environment
+                .get(&format!("{prefix}_ENABLED"))
+                .is_some_and(|raw| is_false_env(raw));
+            let credential_configured = environment
+                .get(&format!("{prefix}_API_KEY"))
+                .is_some_and(|raw| !raw.trim().is_empty());
+            map.insert(
+                id.to_owned(),
+                ProviderAvailability {
+                    enabled,
+                    credential_configured,
+                },
+            );
+        }
     }
-    let mut seen_custom = HashSet::new();
+    let mut seen = HashSet::new();
     for provider in agent.provider_configs() {
         let id = provider.id.as_str().to_owned();
-        if !seen_custom.insert(id.clone()) {
+        if !seen.insert(id.clone()) {
             continue;
         }
+        // 与 AppConfig::resolve_standard_provider 保持一致：沿用旧环境变量槽位时同时尊重 `<PREFIX>_ENABLED=false`。
+        let env_enabled = legacy_env_prefix(&provider.id).is_none_or(|prefix| {
+            provider.api_key_env != format!("{prefix}_API_KEY")
+                || !environment
+                    .get(&format!("{prefix}_ENABLED"))
+                    .is_some_and(|raw| is_false_env(raw))
+        });
         let credential_configured = environment
             .get(&provider.api_key_env)
             .is_some_and(|raw| !raw.trim().is_empty());
         map.insert(
             id,
             ProviderAvailability {
-                enabled: provider.enabled,
+                enabled: provider.enabled && env_enabled,
                 credential_configured,
             },
         );
     }
     map
+}
+
+fn legacy_env_prefix(provider: &ModelProvider) -> Option<&'static str> {
+    match provider {
+        ModelProvider::OpenAi => Some("OPENAI"),
+        ModelProvider::DeepSeek => Some("DEEPSEEK"),
+        ModelProvider::BigModel => Some("BIGMODEL"),
+        ModelProvider::Gemini => Some("GEMINI"),
+        ModelProvider::Custom(_) => None,
+    }
 }
 
 fn diagnose_candidate(

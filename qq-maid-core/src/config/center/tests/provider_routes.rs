@@ -76,22 +76,45 @@ fn builtin_disable_succeeds_and_reports_route_diagnostics() {
 fn trusted_presets_keep_existing_ids_and_supported_adapters_without_credentials() {
     let presets = provider_presets();
     for id in [
+        "openai",
+        "openai_chat",
+        "gemini",
+        "deepseek",
+        "bigmodel",
+        "mimo",
         "opencode_zen",
         "opencode_zen_chat",
         "opencode_go",
-        "openai_custom",
-        "deepseek_custom",
-        "bigmodel_custom",
-        "gemini_custom",
     ] {
         assert!(presets.iter().any(|preset| preset.id == id));
     }
     let serialized = serde_json::to_string(&presets).unwrap();
     assert!(!serialized.contains("api_key"));
     assert!(!serialized.contains("credential"));
-    assert_eq!(presets[0].kind, AgentProviderKind::OpenAiResponses);
-    assert_eq!(presets[1].kind, AgentProviderKind::OpenAiCompatible);
-    assert_eq!(presets[2].base_url, "https://opencode.ai/zen/go/v1");
+    assert_eq!(
+        presets
+            .iter()
+            .find(|p| p.id == "opencode_zen")
+            .unwrap()
+            .kind,
+        AgentProviderKind::OpenAiResponses
+    );
+    assert_eq!(
+        presets
+            .iter()
+            .find(|p| p.id == "opencode_zen_chat")
+            .unwrap()
+            .kind,
+        AgentProviderKind::OpenAiCompatible
+    );
+    assert_eq!(
+        presets
+            .iter()
+            .find(|p| p.id == "opencode_go")
+            .unwrap()
+            .base_url,
+        "https://opencode.ai/zen/go/v1"
+    );
 }
 
 #[test]
@@ -149,6 +172,7 @@ fn managed_connection_credentials_are_isolated_revision_checked_and_never_reused
             &saved.revision,
             &[AgentConfigChange::RemoveProvider {
                 id: "custom_test".into(),
+                cleanup_references: false,
             }],
         )
         .unwrap();
@@ -331,6 +355,7 @@ fn disabling_connection_is_allowed_while_removing_still_reports_references() {
             &saved.revision,
             &[AgentConfigChange::RemoveProvider {
                 id: "test_connection".into(),
+                cleanup_references: false,
             }],
         )
         .unwrap_err();
@@ -354,6 +379,91 @@ fn disabling_connection_is_allowed_while_removing_still_reports_references() {
         )
         .unwrap();
     assert_ne!(disabled.revision, saved.revision);
+}
+
+#[test]
+fn standard_providers_can_be_deleted_with_reference_cleanup_and_recreated() {
+    let (center, _database, _directory) = test_center();
+    let (_file, running, _agent_database, path) = test_agent_file();
+    let center = center
+        .with_external_environment(HashMap::from([
+            ("DEEPSEEK_API_KEY".into(), "old-deepseek-key".into()),
+            ("OPENAI_API_KEY".into(), "test-openai-key".into()),
+        ]))
+        .with_running_agent_config(running)
+        .unwrap();
+    let initial = center.current_snapshot().unwrap();
+    assert!(initial.providers.managed_providers);
+    let agent_rev = initial.agent.unwrap().revision;
+
+    // 一次原子操作即可清理路由引用并删除 deepseek、bigmodel、mimo。
+    let after_delete = center
+        .update_agent(
+            &agent_rev,
+            &[
+                AgentConfigChange::RemoveProvider {
+                    id: "deepseek".into(),
+                    cleanup_references: true,
+                },
+                AgentConfigChange::RemoveProvider {
+                    id: "bigmodel".into(),
+                    cleanup_references: true,
+                },
+                AgentConfigChange::RemoveProvider {
+                    id: "mimo".into(),
+                    cleanup_references: true,
+                },
+            ],
+        )
+        .unwrap();
+    let providers = after_delete.saved_value.as_ref().unwrap()["providers"]
+        .as_table()
+        .unwrap();
+    assert!(!providers.contains_key("deepseek"));
+    assert!(!providers.contains_key("bigmodel"));
+    assert!(!providers.contains_key("mimo"));
+    assert!(providers.contains_key("openai"));
+    assert!(providers.contains_key("gemini"));
+
+    // 被删除的 deepseek 即使环境变量里还有旧 DEEPSEEK_API_KEY 也不会复活。
+    let env = HashMap::from([
+        (
+            crate::config::agent::AGENT_CONFIG_FILE_ENV.into(),
+            path.to_string_lossy().into_owned(),
+        ),
+        ("DEEPSEEK_API_KEY".into(), "old-deepseek-key".into()),
+        ("OPENAI_API_KEY".into(), "test-openai-key".into()),
+    ]);
+    let _guard = crate::config::ValidationEnvironmentGuard::install(env);
+    let app = crate::config::AppConfig::from_env().unwrap();
+    assert!(app.deepseek_api_key.is_none());
+    assert!(app.openai_api_key.is_some());
+
+    // 删除后的标准供应商仍可随时通过 set_provider 重建，并获得隔离的新 Slot。
+    let recreated = center
+        .update_agent(
+            &after_delete.revision,
+            &[AgentConfigChange::SetProvider {
+                id: "deepseek".into(),
+                provider: AgentProviderUpdate {
+                    display_name: Some("DeepSeek 重建".into()),
+                    enabled: true,
+                    kind: AgentProviderKind::OpenAiResponses,
+                    base_url: "https://api.deepseek.com".into(),
+                    api_key_env: String::new(),
+                    auth_header: "Authorization".into(),
+                    auth_scheme: Some("Bearer".into()),
+                    request_timeout_seconds: None,
+                    chat_fallback: Some(false),
+                },
+            }],
+        )
+        .unwrap();
+    let new_slot = recreated.saved_value.unwrap()["providers"]["deepseek"]["api_key_env"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(new_slot.starts_with("QQ_MAID_CONNECTION_"));
 }
 
 #[test]

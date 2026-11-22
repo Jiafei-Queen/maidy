@@ -35,19 +35,21 @@ impl ConfigCenter {
     pub fn connection_model_metadata(&self, id: &str) -> Result<Value, ConfigCenterError> {
         let canonical = id.to_ascii_lowercase();
         let (identity, builtin) = catalog_identity(&canonical);
-        if !builtin
-            && !self
-                .agent_file
-                .as_ref()
-                .map(|f| f.current_runtime())
-                .transpose()?
-                .is_some_and(|agent| {
-                    agent
-                        .provider_configs()
-                        .iter()
-                        .any(|p| p.id.as_str() == canonical)
-                })
-        {
+        let agent_runtime = self
+            .agent_file
+            .as_ref()
+            .map(|f| f.current_runtime())
+            .transpose()?;
+        let exists_in_agent = agent_runtime.as_ref().is_some_and(|agent| {
+            agent
+                .provider_configs()
+                .iter()
+                .any(|p| p.id.as_str() == canonical)
+        });
+        let managed = agent_runtime
+            .as_ref()
+            .is_some_and(crate::config::AgentRuntimeConfig::managed_providers);
+        if !exists_in_agent && (managed || !builtin) {
             return Err(ConfigCenterError::invalid("Connection 不存在"));
         }
         let (revision, local) = self.load_models()?;

@@ -134,6 +134,8 @@ pub struct AgentRuntimeConfig {
     source: AgentConfigSource,
     /// 保留进程启动时实际读取的文档，用于区分 saved 与 running。
     document: Option<AgentConfigDocument>,
+    /// 为 true 时 `[providers.*]` 是唯一供应商清单，不再把内置品牌当作不可删除的隐式连接。
+    managed_providers: bool,
     providers: HashMap<String, AgentProviderConfig>,
     routes: HashMap<String, ModelRoute>,
     web_search_routes: HashMap<String, String>,
@@ -266,6 +268,9 @@ impl KnowledgeRetrievalMode {
 #[serde(deny_unknown_fields)]
 pub(in crate::config) struct AgentConfigDocument {
     version: u32,
+    /// 为 true 时 `[providers.*]` 为完整且可增删的统一供应商清单；旧文件缺省为 false 以保持兼容。
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(in crate::config) managed_providers: bool,
     #[serde(default)]
     pub(in crate::config) knowledge: KnowledgeConfigFile,
     #[serde(default)]
@@ -457,7 +462,7 @@ impl AgentRuntimeConfig {
             let provider = provider_from_file(&name, provider)?;
             providers.insert(name, provider);
         }
-        let stt = SttSettings::from_file(file.stt, &providers)?;
+        let stt = SttSettings::from_file(file.stt, &providers, file.managed_providers)?;
         let mut routes = HashMap::new();
         for (name, route) in file.model_routes {
             if route.candidates.is_empty() {
@@ -495,6 +500,7 @@ impl AgentRuntimeConfig {
         let config = Self {
             source,
             document: Some(document),
+            managed_providers: file.managed_providers,
             providers,
             routes,
             web_search_routes,
@@ -686,8 +692,16 @@ impl AgentRuntimeConfig {
             .collect()
     }
 
+    pub fn managed_providers(&self) -> bool {
+        self.managed_providers
+    }
+
     pub fn provider_configs(&self) -> Vec<AgentProviderConfig> {
         self.providers.values().cloned().collect()
+    }
+
+    pub fn provider_config(&self, id: &ModelProvider) -> Option<&AgentProviderConfig> {
+        self.providers.values().find(|provider| &provider.id == id)
     }
 
     pub fn knowledge_embedding(&self) -> &KnowledgeEmbeddingConfig {
@@ -752,24 +766,32 @@ impl AgentRuntimeConfig {
     ) -> Result<(), LlmError> {
         let field_name = format!("tools.web_search.routes.{route_name}");
         let model = ModelId::parse_config(value, &field_name)?;
-        // 裸搜索模型只作为历史格式兼容为内置 OpenAI；显式前缀始终严格校验。
+        // 裸搜索模型只作为历史格式兼容为 OpenAI；显式前缀始终严格校验。
         let provider = model.provider.unwrap_or(ModelProvider::OpenAi);
-        // 运行时元数据已规范化 ID，原始 TOML key 可能保留历史大小写。
+        // 统一管理模式下所有供应商按 `[providers.*]` 声明校验；旧配置保持历史内置规则。
+        if let Some(configured) = self.provider_config(&provider) {
+            if provider == ModelProvider::Gemini
+                || configured.kind == AgentProviderKind::OpenAiResponses
+            {
+                return Ok(());
+            }
+            return Err(LlmError::config(format!(
+                "{field_name} references provider `{}`, but openai_compatible does not support provider_native search; configure an openai_responses provider or Tavily",
+                provider.as_str()
+            )));
+        }
+        if self.managed_providers {
+            return Err(LlmError::config(format!(
+                "{field_name} references provider `{}`, but providers.{} is not configured",
+                provider.as_str(),
+                provider.as_str()
+            )));
+        }
         match provider {
             ModelProvider::OpenAi | ModelProvider::Gemini | ModelProvider::DeepSeek => Ok(()),
-            ModelProvider::Custom(name) => match self
-                .providers
-                .values()
-                .find(|provider| provider.id.as_str() == name)
-            {
-                Some(provider) if provider.kind == AgentProviderKind::OpenAiResponses => Ok(()),
-                Some(_) => Err(LlmError::config(format!(
-                    "{field_name} references provider `{name}`, but openai_compatible does not support provider_native search; configure an openai_responses provider or Tavily"
-                ))),
-                None => Err(LlmError::config(format!(
-                    "{field_name} references custom provider `{name}`, but providers.{name} is not configured"
-                ))),
-            },
+            ModelProvider::Custom(name) => Err(LlmError::config(format!(
+                "{field_name} references custom provider `{name}`, but providers.{name} is not configured"
+            ))),
             ModelProvider::BigModel => Err(LlmError::config(format!(
                 "{field_name} references provider `{}`, which does not support provider_native search; configure Tavily instead",
                 provider.as_str()
@@ -834,6 +856,7 @@ impl AgentRuntimeConfig {
         Self {
             source: AgentConfigSource::File("test-agent.toml".to_owned()),
             document: None,
+            managed_providers: false,
             providers: HashMap::new(),
             routes,
             web_search_routes: HashMap::from([("search".to_owned(), search_model.to_owned())]),
@@ -1008,6 +1031,10 @@ fn validate_positive(name: &str, value: usize) -> Result<(), LlmError> {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_max_tool_rounds() -> usize {
