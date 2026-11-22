@@ -202,7 +202,7 @@ pub(crate) fn provider_api_key_configured(config: &LlmConfig, provider: &ModelPr
                 .find(|entry| &entry.id == provider)
                 .and_then(|entry| entry.api_key.as_deref())
         });
-    let key = from_configured.or_else(|| match provider {
+    let key = from_configured.or(match provider {
         ModelProvider::OpenAi => config.openai_api_key.as_deref(),
         ModelProvider::DeepSeek => config.deepseek_api_key.as_deref(),
         ModelProvider::BigModel => config.bigmodel_api_key.as_deref(),
