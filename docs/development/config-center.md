@@ -42,7 +42,7 @@ runtime 或 secret 保存前会构造候选最终环境视图：未修改的当�
 | 模块 | 普通受管字段 | 加密敏感字段 |
 | --- | --- | --- |
 | 命令 | `command.prefix`（WebUI 提供 `/`、`#`、`*` 下拉选项，重启生效） | 无 |
-| Provider | 各内置 Provider 的 Base URL、API mode，以及 `agent.toml` 中的 OpenCode Provider 元数据 | OpenAI、DeepSeek、BigModel、Gemini、MiMo、OpenCode API Key |
+| Provider | `agent.toml` 中统一可删的 `[providers.*]` 连接定义（`managed_providers = true`）；未迁移的旧配置兼容保留内置 Provider 的 Base URL / API mode 字段 | OpenAI、DeepSeek、BigModel、Gemini、MiMo、OpenCode 及各新建连接的独立加密 Slot API Key |
 | Core / 交付 | RSS、Memory、Todo 与 Todo 提醒时间、语音工具 TTS 参数 | `weather.qweather.api_key`、`tools.web_search.tavily.api_key`、`tools.web_search.exa.api_key`、`tools.web_search.firecrawl.api_key`、Qwen / OpenAI TTS API Key |
 | 控制台 | `console.enabled`、`console.allowed_origins` | 无 |
 | QQ 官方 | `platform.qq_official.enabled` | AppID、AppSecret |
@@ -65,7 +65,7 @@ runtime 或 secret 保存前会构造候选最终环境视图：未修改的当�
 
 ## 管理接口边界
 
-通用供应商预设、连接启停、凭证与真实诊断的使用及 API 见[供应商管理](./provider-management.md)。
+通用供应商预设、统一可删连接、模型发现持久化缓存、模型精选白名单、软停用路由诊断及真实连接测试的使用与 API 见[供应商管理](./provider-management.md)。
 
 启用控制台后，`GET /api/v1/console/configuration` 返回 runtime 与 agent 两个配置域的安全快照，但必须先通过独立部署管理员会话。HTTP 写接口分别接受 runtime 普通值 set/remove、agent 结构化变更和带 expected revision 的 secret replace/clear/批量修改，不能把脱敏占位符当作真实 secret 保存。所有认证与配置写操作要求同源 Origin、HttpOnly 服务端会话、轮换 CSRF、权限和脱敏审计；现有跨域 allowlist 只保留给只读状态与 Markdown 兼容接口，不授予管理 API 跨域凭据能力。
 
