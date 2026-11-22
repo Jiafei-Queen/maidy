@@ -3,6 +3,7 @@ import { useAtomValue } from "jotai";
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/button.js";
 import { Field, Input } from "../../components/ui/field.js";
+import { ConsoleIcon } from "../../components/ui/icons.js";
 import {
   authMessageAtom,
   authModeAtom,
@@ -11,6 +12,7 @@ import {
   startPasswordReset,
   submitAuth,
 } from "../../stores/auth.js";
+import { themeModeAtom, toggleThemeMode } from "../../stores/theme.js";
 import {
   authCredentialsSchema,
   bootstrapTokenSchema,
@@ -23,6 +25,7 @@ import {
  * 提交走 store 层动作，敏感输入不写入任何持久存储。 */
 export function AuthGate() {
   const mode = useAtomValue(authModeAtom);
+  const themeMode = useAtomValue(themeModeAtom);
   const bootstrapStatus = useAtomValue(bootstrapStatusAtom);
   const message = useAtomValue(authMessageAtom);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -50,20 +53,30 @@ export function AuthGate() {
       : ({ message: "密码至少 6 个字符" } as const);
 
   return (
-    <div className="relative z-1 grid min-h-dvh place-items-center bg-canvas p-4">
+    <div className="relative z-1 grid min-h-dvh place-items-center p-4">
+      <button
+        type="button"
+        onClick={toggleThemeMode}
+        aria-label={themeMode === "dark" ? "切换到晨雾浅色态" : "切换到暮色深色态"}
+        className="console-shell fixed top-4 right-4 inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-console-sm border border-line px-2.5 text-xs font-medium text-ink transition-colors duration-[120ms] hover:bg-accent-soft"
+      >
+        <ConsoleIcon name={themeMode === "dark" ? "sun" : "moon"} className="size-3.5" />
+        <span>{themeMode === "dark" ? "暮色" : "晨雾"}</span>
+      </button>
+
       <form
-        className="w-full max-w-[30rem] rounded-console-lg border border-line bg-surface p-6 shadow-console animate-page-in sm:p-12"
+        className="console-panel w-full max-w-[28rem] p-6 shadow-console animate-page-in sm:p-9"
         onSubmit={(event) => {
           event.preventDefault();
           event.stopPropagation();
           void form.handleSubmit();
         }}
       >
-        <p className="console-mono-tag mb-2">QQ MAID BOT · SECURE CONSOLE</p>
-        <h1 className="m-0 mb-1 text-balance text-[clamp(1.55rem,4vw,2.2rem)] font-bold leading-tight">
+        <p className="m-0 font-mono text-xs text-muted">QQ Maid Console</p>
+        <h1 className="m-0 mt-2 font-display text-[28px] leading-[1.2] font-semibold text-ink">
           {resetting ? "重置部署管理员密码" : bootstrapStatus?.initialized ? "部署管理员登录" : "建立首位部署管理员"}
         </h1>
-        <p className="mt-2 max-w-[44rem] text-sm leading-relaxed text-muted">
+        <p className="mt-2 text-sm leading-[1.55] text-muted">
           {resetting
             ? "请在运行目录读取 config/secrets/bootstrap.token；可粘贴完整令牌字符串或仅粘贴 token。重置成功后令牌与旧管理员会话全部失效。"
             : bootstrapStatus?.initialized
@@ -71,7 +84,7 @@ export function AuthGate() {
               : "请在运行目录读取 bootstrap.token；同一个短时单次令牌只在新生成时输出一次到控制台，使用成功后立即失效。"}
         </p>
 
-        <div className="mt-6 flex flex-col gap-4">
+        <div className="mt-6 flex flex-col gap-4 border-t border-line-inner pt-5">
           {!resetting ? (
             <form.Field
               name="username"
@@ -147,10 +160,10 @@ export function AuthGate() {
           ) : null}
         </div>
 
-        <div className="mt-6 flex flex-col gap-3">
+        <div className="mt-6 flex flex-col gap-2.5">
           <form.Subscribe selector={(state) => [state.canSubmit, state.isSubmitting] as const}>
             {([canSubmit, isSubmitting]) => (
-              <Button type="submit" disabled={!canSubmit || isSubmitting}>
+              <Button type="submit" disabled={!canSubmit || isSubmitting} className="w-full">
                 {isSubmitting
                   ? "验证中…"
                   : resetting
@@ -164,6 +177,7 @@ export function AuthGate() {
           {bootstrapStatus?.initialized ? (
             <Button
               variant="secondary"
+              className="w-full"
               onClick={() => {
                 setSubmitError(null);
                 if (resetting) cancelPasswordReset();
@@ -175,7 +189,7 @@ export function AuthGate() {
           ) : null}
         </div>
 
-        <p aria-live="polite" role={submitError || message?.kind === "error" ? "alert" : "status"} className="m-0 mt-4 text-sm font-semibold text-error">
+        <p aria-live="polite" role={submitError || message?.kind === "error" ? "alert" : "status"} className="m-0 mt-4 text-sm font-medium text-error">
           {submitError ?? message?.text}
         </p>
       </form>
@@ -197,12 +211,12 @@ function PasswordRevealField(props: React.ComponentProps<"input">) {
   const [revealed, setRevealed] = useState(false);
   return (
     <div className="flex">
-      <Input {...props} type={revealed ? "text" : "password"} className="flex-1" />
+      <Input {...props} type={revealed ? "text" : "password"} className="flex-1 rounded-r-none" />
       <button
         type="button"
         aria-pressed={revealed}
         onClick={() => setRevealed((current) => !current)}
-        className="border border-line border-l-0 bg-glass-raised px-3 text-sm font-bold text-ink hover:bg-accent-soft"
+        className="cursor-pointer rounded-r-console-sm border border-l-0 border-line bg-card px-3 text-xs font-medium text-muted transition-colors duration-[120ms] hover:bg-accent-soft hover:text-ink"
       >
         {revealed ? "隐藏" : "显示"}
       </button>

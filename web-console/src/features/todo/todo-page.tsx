@@ -2,10 +2,9 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useState } from "react";
 import { deleteTodo, listTodoTargets, listTodos, updateTodo } from "../../api.js";
 import { Button } from "../../components/ui/button.js";
-import { DataTable } from "../../components/ui/data-table.js";
 import { ConfirmDialog } from "../../components/ui/dialog.js";
-import { Frame, SectionHeader } from "../../components/ui/frame.js";
-import { Input } from "../../components/ui/field.js";
+import { Frame, PageHeader } from "../../components/ui/frame.js";
+import { Input, Select } from "../../components/ui/field.js";
 import { QueryState } from "../../components/ui/query-state.js";
 import { showToast } from "../../stores/toast.js";
 import type { TodoStatus } from "../../types.js";
@@ -77,7 +76,6 @@ export function TodoPage() {
     queryFn: () => listTodos(buildListParams(applied, page)),
   });
 
-  // 删除/翻页后当前页越界时回退到最后一页（沿用旧 pageAfterDelete 语义）。
   useEffect(() => {
     const result = listQuery.data;
     if (result && page > result.totalPages && page > 1) {
@@ -129,80 +127,105 @@ export function TodoPage() {
   };
 
   return (
-    <Frame variant="panel" className="animate-page-in">
-      <SectionHeader
-        eyebrow="TODO / TASK CONTROL"
+    <div className="flex flex-col gap-6">
+      <PageHeader
         title="Todo 管理"
-        lede="查看、创建和更新当前运行目录中的 Todo，目标与提醒状态来自管理 API。"
-        meta={<span className="border border-line bg-accent-soft px-2 py-1 font-mono text-[0.64rem] font-bold tracking-wide text-accent-strong">受控写入</span>}
+        subtitle="查看、创建和更新当前运行目录中的待办事项，目标与提醒状态来自管理 API"
+        metrics={listQuery.data ? [{ label: "当前匹配", value: listQuery.data.total, unit: "项" }] : undefined}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => void listQuery.refetch()} disabled={listQuery.isFetching}>
+              刷新
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              创建 Todo
+            </Button>
+          </>
+        }
       />
 
-      <section aria-labelledby="todo-board-heading" className="mt-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 id="todo-board-heading" className="m-0 text-base font-bold">任务清单</h2>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => void listQuery.refetch()} disabled={listQuery.isFetching}>刷新</Button>
-            <Button onClick={() => setCreateOpen(true)}>创建 Todo</Button>
-          </div>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-end gap-3 [&>*]:min-w-0">
-          <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
-            状态
-            <select
-              value={filters.status}
-              onChange={(event) => setFilters({ ...filters, status: event.target.value as TodoFilters["status"] })}
-              className="rounded-console border border-line bg-input px-3 py-2 text-sm text-ink outline-none"
+      <section aria-label="任务清单" className="flex flex-col gap-4">
+        <Frame variant="panel" className="flex flex-col gap-3 p-3.5 sm:p-4">
+          <div className="flex flex-wrap items-end gap-2.5 [&>*]:min-w-0">
+            <label className="flex flex-col gap-1 text-xs font-medium text-muted">
+              状态
+              <Select
+                value={filters.status}
+                onChange={(event) => setFilters({ ...filters, status: event.target.value as TodoFilters["status"] })}
+              >
+                <option value="all">全部</option>
+                <option value="pending">待处理</option>
+                <option value="completed">已完成</option>
+              </Select>
+            </label>
+            <label className="flex flex-1 flex-col gap-1 text-xs font-medium text-muted sm:max-w-64">
+              关键词
+              <Input
+                type="search"
+                placeholder="搜索标题或内容"
+                value={filters.keyword}
+                onChange={(event) => setFilters({ ...filters, keyword: event.target.value })}
+              />
+            </label>
+            <Button variant="secondary" size="sm" onClick={() => setAdvancedOpen((open) => !open)} aria-expanded={advancedOpen}>
+              {advancedOpen ? "收起高级筛选" : advancedActive ? "高级筛选 · 已启用" : "高级筛选"}
+            </Button>
+            <Button size="sm" onClick={applyFilters}>应用筛选</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setFilters(DEFAULT_FILTERS);
+                setApplied(DEFAULT_FILTERS);
+                setPage(1);
+              }}
             >
-              <option value="all">全部</option>
-              <option value="pending">待处理</option>
-              <option value="completed">已完成</option>
-            </select>
-          </label>
-          <label className="flex flex-1 flex-col gap-1 text-xs font-semibold text-muted sm:max-w-64">
-            关键词
-            <Input type="search" placeholder="搜索标题或内容" value={filters.keyword} onChange={(event) => setFilters({ ...filters, keyword: event.target.value })} className="py-2 text-sm" />
-          </label>
-          <Button variant="secondary" onClick={() => setAdvancedOpen((open) => !open)} aria-expanded={advancedOpen} className="px-3 py-2 text-xs">
-            {advancedOpen ? "收起高级筛选" : advancedActive ? "高级筛选 · 已启用" : "高级筛选"}
-          </Button>
-          <Button onClick={applyFilters} className="px-3 py-2 text-xs">应用筛选</Button>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              setFilters(DEFAULT_FILTERS);
-              setApplied(DEFAULT_FILTERS);
-              setPage(1);
-            }}
-            className="px-3 py-2 text-xs"
-          >
-            重置
-          </Button>
-        </div>
-
-        {advancedOpen ? (
-          <div className="mt-3 grid grid-cols-2 gap-3 rounded-console-lg border border-line bg-glass-muted p-3 md:grid-cols-3 lg:grid-cols-5">
-            <FilterSelect label="时间" value={filters.timeFilter} onChange={(value) => setFilters({ ...filters, timeFilter: value })}
-              options={[["all", "全部"], ["overdue", "已逾期"], ["no_due_date", "无截止日期"]]} />
-            <FilterSelect label="重复" value={filters.recurring} onChange={(value) => setFilters({ ...filters, recurring: value })}
-              options={[["all", "全部"], ["true", "仅重复"], ["false", "非重复"]]} />
-            <FilterSelect label="目标" value={filters.targetRef} onChange={(value) => setFilters({ ...filters, targetRef: value })}
-              options={[["", "全部目标"], ...targets.map((target) => [target.targetRef, `${target.platform} · ${target.scopeType}`] as const)]} />
-            <FilterText label="平台" placeholder="qq_official" value={filters.platform} onChange={(value) => setFilters({ ...filters, platform: value })} />
-            <FilterText label="账号" placeholder="可选" value={filters.accountId} onChange={(value) => setFilters({ ...filters, accountId: value })} />
-            <FilterText label="用户/群组" placeholder="可选" value={filters.userId} onChange={(value) => setFilters({ ...filters, userId: value })} />
-            <FilterSelect label="范围" value={filters.scopeType} onChange={(value) => setFilters({ ...filters, scopeType: value })}
-              options={[["", "全部"], ["private", "私聊"], ["group", "群聊"]]} />
-            <FilterDate label="日期起" value={filters.dateStart} onChange={(value) => setFilters({ ...filters, dateStart: value })} />
-            <FilterDate label="日期止" value={filters.dateEnd} onChange={(value) => setFilters({ ...filters, dateEnd: value })} />
+              重置
+            </Button>
           </div>
+
+          {advancedOpen ? (
+            <div className="grid grid-cols-2 gap-3 border-t border-line-inner pt-3 md:grid-cols-3 lg:grid-cols-5">
+              <FilterSelect
+                label="时间"
+                value={filters.timeFilter}
+                onChange={(value) => setFilters({ ...filters, timeFilter: value })}
+                options={[["all", "全部"], ["overdue", "已逾期"], ["no_due_date", "无截止日期"]]}
+              />
+              <FilterSelect
+                label="重复"
+                value={filters.recurring}
+                onChange={(value) => setFilters({ ...filters, recurring: value })}
+                options={[["all", "全部"], ["true", "仅重复"], ["false", "非重复"]]}
+              />
+              <FilterSelect
+                label="目标"
+                value={filters.targetRef}
+                onChange={(value) => setFilters({ ...filters, targetRef: value })}
+                options={[["", "全部目标"], ...targets.map((target) => [target.targetRef, `${target.platform} · ${target.scopeType}`] as const)]}
+              />
+              <FilterText label="平台" placeholder="qq_official" value={filters.platform} onChange={(value) => setFilters({ ...filters, platform: value })} />
+              <FilterText label="账号" placeholder="可选" value={filters.accountId} onChange={(value) => setFilters({ ...filters, accountId: value })} />
+              <FilterText label="用户/群组" placeholder="可选" value={filters.userId} onChange={(value) => setFilters({ ...filters, userId: value })} />
+              <FilterSelect
+                label="范围"
+                value={filters.scopeType}
+                onChange={(value) => setFilters({ ...filters, scopeType: value })}
+                options={[["", "全部"], ["private", "私聊"], ["group", "群聊"]]}
+              />
+              <FilterDate label="日期起" value={filters.dateStart} onChange={(value) => setFilters({ ...filters, dateStart: value })} />
+              <FilterDate label="日期止" value={filters.dateEnd} onChange={(value) => setFilters({ ...filters, dateEnd: value })} />
+            </div>
+          ) : null}
+        </Frame>
+
+        {statusMessage ? (
+          <p aria-live="polite" role={statusMessage.error ? "alert" : "status"} className={`m-0 text-xs font-medium ${statusMessage.error ? "text-error" : "text-muted"}`}>
+            {statusMessage.text}
+          </p>
         ) : null}
 
-        <p aria-live="polite" role="status" className={`m-0 mt-3 text-sm ${statusMessage?.error ? "text-error" : "text-muted"}`}>
-          {statusMessage?.text ?? (listQuery.data ? `${listQuery.data.total} 项 Todo` : "")}
-        </p>
-
-        <div aria-live="polite" className="mt-3 flex flex-col gap-3">
+        <div aria-live="polite" className="flex flex-col gap-2.5">
           <QueryState query={listQuery}>
             {listQuery.data && listQuery.data.items.length > 0 ? (
               listQuery.data.items.map((todo) => (
@@ -216,16 +239,22 @@ export function TodoPage() {
                 />
               ))
             ) : listQuery.data ? (
-              <p className="m-0 py-6 text-center text-sm text-muted">当前筛选没有 Todo。</p>
+              <Frame variant="card" className="py-8 text-center text-sm text-muted">
+                当前筛选没有 Todo。
+              </Frame>
             ) : null}
           </QueryState>
         </div>
 
         {listQuery.data && listQuery.data.totalPages > 1 ? (
-          <div className="mt-4 flex items-center justify-center gap-4 text-sm text-muted">
-            <Button variant="secondary" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="px-3 py-1.5 text-xs">上一页</Button>
+          <div className="flex items-center justify-center gap-4 text-xs text-muted">
+            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>
+              上一页
+            </Button>
             <span className="font-mono">{listQuery.data.page} / {listQuery.data.totalPages}</span>
-            <Button variant="secondary" disabled={page >= listQuery.data.totalPages} onClick={() => setPage((current) => current + 1)} className="px-3 py-1.5 text-xs">下一页</Button>
+            <Button variant="secondary" size="sm" disabled={page >= listQuery.data.totalPages} onClick={() => setPage((current) => current + 1)}>
+              下一页
+            </Button>
           </div>
         ) : null}
       </section>
@@ -253,7 +282,7 @@ export function TodoPage() {
           if (deleting) deleteMutation.mutate(deleting.id);
         }}
       />
-    </Frame>
+    </div>
   );
 }
 
@@ -264,17 +293,13 @@ function FilterSelect({ label, value, onChange, options }: {
   options: ReadonlyArray<readonly [string, string]>;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+    <label className="flex flex-col gap-1 text-xs font-medium text-muted">
       {label}
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="rounded-console border border-line bg-input px-2 py-2 text-sm text-ink outline-none"
-      >
+      <Select value={value} onChange={(event) => onChange(event.target.value)}>
         {options.map(([optionValue, optionLabel]) => (
           <option key={optionValue} value={optionValue}>{optionLabel}</option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }
@@ -286,9 +311,9 @@ function FilterText({ label, value, onChange, placeholder }: {
   placeholder?: string;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+    <label className="flex flex-col gap-1 text-xs font-medium text-muted">
       {label}
-      <Input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="py-2 text-sm" />
+      <Input value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
@@ -299,9 +324,9 @@ function FilterDate({ label, value, onChange }: {
   onChange: (value: string) => void;
 }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-semibold text-muted">
+    <label className="flex flex-col gap-1 text-xs font-medium text-muted">
       {label}
-      <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} className="py-2 text-sm" />
+      <Input type="date" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }

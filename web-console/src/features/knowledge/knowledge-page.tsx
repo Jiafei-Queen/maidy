@@ -11,8 +11,8 @@ import {
 } from "../../api.js";
 import { Button } from "../../components/ui/button.js";
 import { ConfirmDialog } from "../../components/ui/dialog.js";
-import { Frame, SectionHeader } from "../../components/ui/frame.js";
-import { Input } from "../../components/ui/field.js";
+import { Frame, PageHeader } from "../../components/ui/frame.js";
+import { Input, Select } from "../../components/ui/field.js";
 import { QueryState } from "../../components/ui/query-state.js";
 import { StatusBadge } from "../../components/ui/status-badge.js";
 import type { KnowledgeFileItem, KnowledgeFileStatus } from "../../types.js";
@@ -32,7 +32,7 @@ const MAX_POLL_FAILURES = 3;
 type StatusFilter = KnowledgeFileStatus | "all";
 
 /** 知识库文件管理：查看、筛选、上传、下载、删除与失败重试。
- * 轮询语义沿用旧契约：仅页面可见且存在非终态行时每 5s 刷新，全部终态即停止，
+ * 轮询语义：仅页面可见且存在非终态行时每 5s 刷新，全部终态即停止，
  * 连续失败达到上限后停止并提示手动刷新；终态转换以提示行报告。 */
 export function KnowledgePage() {
   const queryClient = useQueryClient();
@@ -52,10 +52,17 @@ export function KnowledgePage() {
 
   const listQuery = useInfiniteQuery({
     queryKey: ["knowledge", filters],
-    queryFn: ({ pageParam }) => listKnowledgeFiles({ page_size: PAGE_SIZE, search: filters.search, status: filters.status, sort: "updated_at", order: "desc", page: pageParam }),
+    queryFn: ({ pageParam }) =>
+      listKnowledgeFiles({
+        page_size: PAGE_SIZE,
+        search: filters.search,
+        status: filters.status,
+        sort: "updated_at",
+        order: "desc",
+        page: pageParam,
+      }),
     initialPageParam: 1,
     getNextPageParam: (last) => (last.page < last.total_pages ? last.page + 1 : undefined),
-    // 有非终态行时轮询；连续失败达到上限即停止（沿用 KnowledgePollingController 语义）。
     refetchInterval: (query) => {
       const items = query.state.data?.pages.flatMap((page) => page.items) ?? [];
       const hasActive = items.some((item) => item.status === "pending" || item.status === "processing");
@@ -70,8 +77,8 @@ export function KnowledgePage() {
   });
 
   const items = listQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const totalFiles = listQuery.data?.pages[0]?.total;
 
-  // 轮询结果的状态对比：pending/processing → ready/failed 时报告终态转换。
   useEffect(() => {
     if (listQuery.data === undefined) return;
     const previous = previousStatusesRef.current;
@@ -157,15 +164,37 @@ export function KnowledgePage() {
   const busy = uploadMutation.isPending || downloadMutation.isPending || retryMutation.isPending || deleteMutation.isPending;
 
   return (
-    <Frame variant="panel" className="animate-page-in">
-      <SectionHeader
-        eyebrow="KNOWLEDGE / FILES"
+    <div className="flex flex-col gap-6">
+      <PageHeader
         title="知识库文件"
-        lede="查看、筛选和上传由后端处理的知识库文件；目录来源文件只读，托管文件可操作。"
-        meta={<span className="border border-line bg-accent-soft px-2 py-1 font-mono text-[0.64rem] font-bold tracking-wide text-accent-strong">受控写入</span>}
+        subtitle="查看、筛选与上传后端处理的知识库文件；目录来源文件只读，托管文件可下载、重试或删除"
+        metrics={totalFiles !== undefined ? [{ label: "已收录文件", value: totalFiles, unit: "份" }] : undefined}
+        actions={
+          <label className="inline-flex">
+            <input
+              type="file"
+              hidden
+              accept={capabilitiesQuery.data?.supported_extensions.join(",")}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (file) uploadMutation.mutate(file);
+              }}
+            />
+            <Button
+              disabled={busy || capabilitiesQuery.isLoading}
+              onClick={(event) => {
+                const input = event.currentTarget.parentElement?.querySelector<HTMLInputElement>("input[type=file]");
+                input?.click();
+              }}
+            >
+              {uploadMutation.isPending ? "上传中…" : "上传文件"}
+            </Button>
+          </label>
+        }
       />
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <Frame variant="panel" className="flex flex-wrap items-center gap-2.5 p-3.5 sm:p-4">
         <Input
           type="search"
           placeholder="搜索文件名"
@@ -177,69 +206,46 @@ export function KnowledgePage() {
               setFilters({ search: searchInput.trim(), status: statusInput });
             }
           }}
-          className="w-64 py-2 text-sm"
+          className="w-full sm:w-64"
         />
-        <select
-          value={statusInput}
-          onChange={(event) => setStatusInput(event.target.value as StatusFilter)}
-          className="rounded-console border border-line bg-input px-3 py-2 text-sm text-ink outline-none"
-        >
+        <Select value={statusInput} onChange={(event) => setStatusInput(event.target.value as StatusFilter)}>
           <option value="all">全部状态</option>
           <option value="pending">等待处理</option>
           <option value="processing">处理中</option>
           <option value="ready">已完成</option>
           <option value="failed">处理失败</option>
-        </select>
-        <Button onClick={() => setFilters({ search: searchInput.trim(), status: statusInput })} className="px-3 py-2 text-xs">应用筛选</Button>
+        </Select>
+        <Button size="sm" onClick={() => setFilters({ search: searchInput.trim(), status: statusInput })}>
+          应用筛选
+        </Button>
         <Button
           variant="secondary"
+          size="sm"
           onClick={() => {
             setSearchInput("");
             setStatusInput("all");
             setFilters({ search: "", status: "all" });
           }}
-          className="px-3 py-2 text-xs"
         >
           重置
         </Button>
-        <Button variant="secondary" onClick={() => void listQuery.refetch()} disabled={listQuery.isFetching} className="px-3 py-2 text-xs">刷新</Button>
-        <label className="ml-auto">
-          <input
-            type="file"
-            hidden
-            accept={capabilitiesQuery.data?.supported_extensions.join(",")}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (file) uploadMutation.mutate(file);
-            }}
-          />
-          <Button
-            variant="secondary"
-            disabled={busy || capabilitiesQuery.isLoading}
-            onClick={(event) => {
-              const input = event.currentTarget.parentElement?.querySelector<HTMLInputElement>("input[type=file]");
-              input?.click();
-            }}
-            className="px-3 py-2 text-xs"
-          >
-            {uploadMutation.isPending ? "上传中…" : "上传文件"}
-          </Button>
-        </label>
-      </div>
+        <Button variant="ghost" size="sm" onClick={() => void listQuery.refetch()} disabled={listQuery.isFetching}>
+          刷新
+        </Button>
+      </Frame>
 
-      <p aria-live="polite" role="status" className={`m-0 mt-3 text-sm ${statusMessage?.error ? "text-error" : "text-muted"}`}>
+      <p aria-live="polite" role="status" className={`m-0 text-xs ${statusMessage?.error ? "font-medium text-error" : "text-muted"}`}>
         {statusMessage?.text ?? (capabilitiesQuery.data ? `支持 ${capabilitiesQuery.data.supported_extensions.join(" / ")}，单文件上限 ${formatBytes(capabilitiesQuery.data.max_file_bytes)}` : "")}
       </p>
 
-      <div className="mt-3 overflow-x-auto">
-        <QueryState query={listQuery}>
-          {items.length > 0 ? (
-            <table className="w-full border-collapse text-sm">
+      <QueryState query={listQuery}>
+        {items.length > 0 ? (
+          <div className="console-paper overflow-x-auto">
+            <table className="w-full border-collapse text-[13px] leading-[1.45] tabular-nums">
               <thead>
-                <tr>
+                <tr className="border-b border-line">
                   {["文件名", "类型", "大小", "上传时间", "最近处理", "状态", "失败原因", "操作"].map((label) => (
-                    <th key={label} scope="col" className="border-b border-line px-2 py-2 text-left font-mono text-[0.66rem] font-bold tracking-widest text-muted uppercase whitespace-nowrap">
+                    <th key={label} scope="col" className="px-3 py-2.5 text-left text-xs font-medium whitespace-nowrap text-muted">
                       {label}
                     </th>
                   ))}
@@ -248,38 +254,46 @@ export function KnowledgePage() {
               <tbody>
                 {items.map((item) => {
                   const meta = knowledgeStatusMeta(item.status);
-                  const managed = item.source === "managed" && item.file_id !== null;
                   return (
-                    <tr key={item.file_id ?? item.filename} className="border-b border-line-inner last:border-b-0">
-                      <td className="px-2 py-2.5 whitespace-nowrap">
-                        <span className="text-ink">{item.filename}</span>
-                        <span className={`ml-2 border px-1.5 py-0.5 font-mono text-[0.6rem] ${item.source === "managed" ? "border-line text-accent-strong" : "border-line text-muted"}`}>
+                    <tr
+                      key={item.file_id ?? item.filename}
+                      className="border-b border-line-inner transition-colors duration-[120ms] ease-out last:border-b-0 hover:bg-accent-soft/60"
+                    >
+                      <td className="px-3 py-2.5 whitespace-nowrap">
+                        <span className="font-medium text-ink">{item.filename}</span>
+                        <span className="console-kbd ml-2 text-[11px]">
                           {item.source === "managed" ? "托管" : "目录"}
                         </span>
                       </td>
-                      <td className="px-2 py-2.5 font-mono text-xs whitespace-nowrap">{shortContentType(item.content_type)}</td>
-                      <td className="px-2 py-2.5 font-mono text-xs whitespace-nowrap">{formatBytes(item.size)}</td>
-                      <td className="px-2 py-2.5 font-mono text-xs whitespace-nowrap">{formatDateTime(item.uploaded_at)}</td>
-                      <td className="px-2 py-2.5 font-mono text-xs whitespace-nowrap">{formatDateTime(latestProcessingTime(item))}</td>
-                      <td className="px-2 py-2.5 whitespace-nowrap">
+                      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-muted">{shortContentType(item.content_type)}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-muted">{formatBytes(item.size)}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-muted">{formatDateTime(item.uploaded_at)}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap text-muted">{formatDateTime(latestProcessingTime(item))}</td>
+                      <td className="px-3 py-2.5 whitespace-nowrap">
                         <StatusBadge tone={meta.tone} label={meta.label} />
                       </td>
-                      <td className="max-w-52 truncate px-2 py-2.5 text-xs text-error" title={item.error_summary ?? undefined}>
+                      <td className="max-w-52 truncate px-3 py-2.5 text-xs text-error" title={item.error_summary ?? undefined}>
                         {item.error_summary ?? "—"}
                       </td>
-                      <td className="px-2 py-2.5 whitespace-nowrap">
+                      <td className="px-3 py-2.5 whitespace-nowrap">
                         {item.source === "directory" ? (
                           <span className="text-muted">—</span>
                         ) : (
-                          <div className="flex gap-2">
+                          <div className="flex gap-1.5">
                             {item.downloadable ? (
-                              <Button variant="secondary" disabled={busy} onClick={() => downloadMutation.mutate(item)} className="px-2.5 py-1.5 text-xs">下载</Button>
+                              <Button variant="secondary" size="sm" disabled={busy} onClick={() => downloadMutation.mutate(item)}>
+                                下载
+                              </Button>
                             ) : null}
                             {item.status === "failed" ? (
-                              <Button variant="secondary" disabled={busy} onClick={() => item.file_id !== null && retryMutation.mutate(item.file_id)} className="px-2.5 py-1.5 text-xs">重新处理</Button>
+                              <Button variant="secondary" size="sm" disabled={busy} onClick={() => item.file_id !== null && retryMutation.mutate(item.file_id)}>
+                                重新处理
+                              </Button>
                             ) : null}
                             {item.status !== "processing" ? (
-                              <Button variant="danger" disabled={busy} onClick={() => setDeleting(item)} className="px-2.5 py-1.5 text-xs">删除</Button>
+                              <Button variant="danger" size="sm" disabled={busy} onClick={() => setDeleting(item)}>
+                                删除
+                              </Button>
                             ) : null}
                           </div>
                         )}
@@ -289,15 +303,17 @@ export function KnowledgePage() {
                 })}
               </tbody>
             </table>
-          ) : listQuery.data ? (
-            <p className="m-0 py-6 text-center text-sm text-muted">暂无知识库文件</p>
-          ) : null}
-        </QueryState>
-      </div>
+          </div>
+        ) : listQuery.data ? (
+          <Frame variant="card" className="py-8 text-center text-sm text-muted">
+            暂无知识库文件
+          </Frame>
+        ) : null}
+      </QueryState>
 
       {listQuery.hasNextPage ? (
-        <div className="mt-4 text-center">
-          <Button variant="secondary" disabled={listQuery.isFetchingNextPage} onClick={() => void listQuery.fetchNextPage()} className="px-4 py-2 text-xs">
+        <div className="text-center">
+          <Button variant="secondary" size="sm" disabled={listQuery.isFetchingNextPage} onClick={() => void listQuery.fetchNextPage()}>
             {listQuery.isFetchingNextPage ? "加载中…" : "加载更多"}
           </Button>
         </div>
@@ -317,6 +333,6 @@ export function KnowledgePage() {
           if (deleting?.file_id !== null && deleting?.file_id !== undefined) deleteMutation.mutate(deleting.file_id);
         }}
       />
-    </Frame>
+    </div>
   );
 }

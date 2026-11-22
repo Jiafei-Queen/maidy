@@ -10,23 +10,27 @@ type DataTableProps = {
 };
 
 /**
- * 数据表原语：窄屏横向滚动容器由调用方决定是否启用；
- * 表头使用等宽小写字距样式，与控制台技术数据风格一致。
+ * 高密度数据表原语：禁止斑马纹，统一用 1px 发丝线与 hover 微弱底色区分行，
+ * 启用 tabular-nums 保证数字列对齐。
  */
 export function DataTable({ columns, rows, empty, className }: DataTableProps) {
   if (rows.length === 0 && empty !== undefined) {
-    return <p className="m-0 px-2 py-6 text-center text-sm text-muted">{empty}</p>;
+    return (
+      <div className={cn("console-paper px-4 py-8 text-center text-sm text-muted", className)}>
+        {empty}
+      </div>
+    );
   }
   return (
-    <div className={cn("overflow-x-auto", className)}>
-      <table className="w-full border-collapse text-sm">
+    <div className={cn("console-paper overflow-x-auto", className)}>
+      <table className="w-full border-collapse text-[13px] leading-[1.45] tabular-nums">
         <thead>
-          <tr>
+          <tr className="border-b border-line">
             {columns.map((column) => (
               <th
                 key={column}
                 scope="col"
-                className="border-b border-line px-2 py-2 text-left font-mono text-[0.66rem] font-bold tracking-widest text-muted uppercase whitespace-nowrap"
+                className="px-3 py-2.5 text-left text-xs font-semibold whitespace-nowrap text-muted"
               >
                 {column}
               </th>
@@ -35,9 +39,12 @@ export function DataTable({ columns, rows, empty, className }: DataTableProps) {
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr key={rowIndex} className="border-b border-line-inner last:border-b-0">
+            <tr
+              key={rowIndex}
+              className="border-b border-line-inner transition-colors duration-[120ms] ease-out last:border-b-0 hover:bg-accent-soft/60"
+            >
               {row.map((cellValue, cellIndex) => (
-                <td key={cellIndex} className="px-2 py-2.5 align-middle whitespace-nowrap">
+                <td key={cellIndex} className="px-3 py-2.5 align-middle whitespace-nowrap text-ink">
                   {cellValue}
                 </td>
               ))}

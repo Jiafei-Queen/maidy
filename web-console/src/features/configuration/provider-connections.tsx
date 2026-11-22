@@ -106,40 +106,45 @@ export function ProviderConnections({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-0 rounded-console-lg border border-line lg:grid-cols-[15rem_1fr]">
+      <div className="console-paper grid grid-cols-1 gap-0 lg:grid-cols-[14rem_1fr]">
         <aside
           aria-label="服务商列表"
-          className="flex flex-col gap-2 rounded-t-console-lg border-b border-line bg-glass-muted p-3 lg:rounded-t-none lg:rounded-l-console-lg lg:min-h-64 lg:border-b-0 lg:border-r"
+          className="flex flex-col gap-2 border-b border-line bg-surface p-3 lg:min-h-64 lg:border-r lg:border-b-0"
         >
           <Input
             aria-label="搜索供应商"
             placeholder="搜索供应商…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="py-1.5 text-sm"
           />
           <ul className="m-0 flex list-none flex-row gap-1.5 overflow-x-auto p-0 pb-1 lg:flex-1 lg:flex-col lg:gap-0.5 lg:overflow-y-auto lg:pb-0">
             {entries.map((entry) => {
               const providerEnabled = providerEnabledOf(entry, snapshot, fields, publicDraft, saved);
               const connected = providerConnectedOf(entry, snapshot, fields, credentials);
               const isSelected = entry.id === selectedId;
+              const active = connected && providerEnabled;
               return (
                 <li key={`${entry.kind}:${entry.id}`} className="shrink-0 lg:w-full">
                   <button
                     type="button"
                     onClick={() => setSelected(entry.id)}
                     aria-current={isSelected ? "true" : undefined}
-                    className={`flex w-full items-center gap-2 rounded-console px-2.5 py-1.5 text-left text-sm whitespace-nowrap transition-colors lg:whitespace-normal ${
-                      isSelected ? "bg-accent-soft text-ink" : "text-ink hover:bg-accent-soft"
+                    className={`relative flex w-full cursor-pointer items-center gap-2 rounded-console-sm px-2.5 py-1.5 text-left text-[13px] whitespace-nowrap transition-colors duration-[120ms] lg:whitespace-normal ${
+                      isSelected ? "bg-accent-soft text-ink" : "text-ink hover:bg-accent-soft/60"
                     }`}
                   >
-                    <span
-                      aria-hidden
-                      className={`size-2 shrink-0 rounded-full ${connected && providerEnabled ? "bg-success" : "bg-[var(--console-border)]"}`}
-                    />
+                    {isSelected ? (
+                      <span aria-hidden="true" className="hidden lg:block lg:absolute lg:inset-y-1.5 lg:left-0 lg:w-[2px] lg:rounded-full lg:bg-accent" />
+                    ) : null}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{entry.name}</span>
-                      <span className="block truncate font-mono text-[0.64rem] text-muted">{entry.id}</span>
+                      <span className="block truncate font-medium">{entry.name}</span>
+                      <span className="block truncate font-mono text-[11px] text-muted">{entry.id}</span>
+                    </span>
+                    <span
+                      className={`shrink-0 font-mono text-[11px] ${active ? "text-success" : "text-muted"}`}
+                      title={active ? "已连接并启用" : "未连接或未启用"}
+                    >
+                      {active ? "■ 就绪" : "● 待配"}
                     </span>
                   </button>
                 </li>
@@ -149,7 +154,7 @@ export function ProviderConnections({
               <li className="px-2 py-4 text-xs text-muted">没有匹配的服务商。</li>
             ) : null}
           </ul>
-          <Button disabled={snapshot.agent?.editable !== true} onClick={() => setCreating(true)}>+ 新建供应商</Button>
+          <Button size="sm" disabled={snapshot.agent?.editable !== true} onClick={() => setCreating(true)}>+ 新建供应商</Button>
         </aside>
 
         <div className="flex min-w-0 flex-col gap-5 p-4">

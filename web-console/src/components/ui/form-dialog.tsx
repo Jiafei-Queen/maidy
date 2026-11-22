@@ -20,18 +20,20 @@ export function FormDialog({ open, onOpenChange, title, description, children, f
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-[color-mix(in_srgb,var(--console-background)_78%,transparent)] animate-fade-in" />
-        <DialogPrimitive.Content className={`fixed top-1/2 left-1/2 z-50 flex max-h-[90dvh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-auto rounded-console-lg border border-line bg-surface p-5 shadow-console animate-page-in sm:p-6 ${wide ? "w-[min(58rem,calc(100vw-1.5rem))]" : "w-[min(34rem,calc(100vw-1.5rem))]"}`}>
-          <DialogPrimitive.Title className="m-0 text-lg font-bold">{title}</DialogPrimitive.Title>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-scrim backdrop-blur-[2px] animate-fade-in" />
+        <DialogPrimitive.Content
+          className={`console-dialog fixed top-1/2 left-1/2 z-50 flex max-h-[90dvh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-auto p-5 animate-page-in sm:p-6 ${wide ? "w-[min(58rem,calc(100vw-1.5rem))]" : "w-[min(34rem,calc(100vw-1.5rem))]"}`}
+        >
+          <DialogPrimitive.Title className="m-0 font-display text-xl font-semibold text-ink">{title}</DialogPrimitive.Title>
           {description ? (
-            <DialogPrimitive.Description className="mt-1 text-sm leading-relaxed text-muted">
+            <DialogPrimitive.Description className="mt-1.5 text-sm leading-relaxed text-muted">
               {description}
             </DialogPrimitive.Description>
           ) : null}
           <div className="mt-4 flex flex-1 flex-col gap-4">{children}</div>
-          <div className="mt-5 flex items-center justify-between gap-3">
+          <div className="mt-5 flex items-center justify-between gap-3 border-t border-line-inner pt-4">
             <div className="min-w-0 flex-1">{footer}</div>
-            <div className="flex gap-3">
+            <div className="flex gap-2.5">
               <DialogPrimitive.Close asChild>
                 <Button variant="secondary" disabled={busy}>取消</Button>
               </DialogPrimitive.Close>

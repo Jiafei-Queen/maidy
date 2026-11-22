@@ -23,10 +23,12 @@ function RootLayout() {
 
 function AuthChecking() {
   return (
-    <div className="relative z-1 grid min-h-dvh place-items-center bg-canvas p-4">
-      <p className="console-mono-tag" role="status">
-        正在恢复管理员会话…
-      </p>
+    <div className="relative z-1 grid min-h-dvh place-items-center p-4">
+      <div className="console-panel px-5 py-3.5 shadow-console">
+        <p className="console-meta m-0" role="status">
+          正在恢复管理员会话…
+        </p>
+      </div>
       {/* 会话恢复完成前不挂载业务路由，避免提前触发受保护 API。 */}
     </div>
   );

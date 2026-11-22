@@ -1,5 +1,6 @@
 export const BACKGROUND_MODE_COOKIE = "console-background-mode";
 export const BACKGROUND_UNLOCK_COOKIE = "console-background-unlocked";
+// 旧版页面过渡切片序号 cookie；过渡动画已移除，只保留名称用于一次性清理。
 export const BACKGROUND_TRANSITION_INDEX_COOKIE = "console-background-transition-index";
 export const BACKGROUND_LEGACY_COOKIES = [
   BACKGROUND_MODE_COOKIE,
@@ -12,8 +13,6 @@ export const BACKGROUND_MODES = ["default", "special"] as const;
 export type BackgroundMode = (typeof BACKGROUND_MODES)[number];
 export type BackgroundFile = { readonly fileId: string; readonly filename: string; readonly url: string };
 export type BackgroundSelection = { readonly mode: BackgroundMode; readonly activeFileId: string | null };
-/** 导航过渡中心图：拼图 URL 与 3×3 切片位置；默认（无背景）模式为 null。 */
-export type TransitionImage = { readonly url: string; readonly position: string } | null;
 export type BackgroundServerState = {
   readonly fileIds: readonly string[];
   readonly activeFileId: string | null;
@@ -60,7 +59,6 @@ export type BackgroundController = {
     persist: (patch: BackgroundPersistPatch) => Promise<void>,
   ) => Promise<void>;
   readonly unlock: () => BackgroundMode;
-  readonly nextTransitionImage: () => TransitionImage;
 };
 
 type CookieDocument = Pick<Document, "cookie">;
@@ -85,7 +83,6 @@ export function createBackgroundController(
   let current: BackgroundSelection = { mode: readMode(cookieDocument), activeFileId: null };
   let activeObjectUrl: string | null = null;
   let files: readonly BackgroundFile[] = [];
-  let transitionIndex = readTransitionIndex(cookieDocument);
   let lastError: string | null = null;
   // 解锁前的完整选择与解锁状态；解锁持久化失败时用于回滚，避免“本地 special、
   // 服务端旧状态”的分裂。
@@ -244,16 +241,6 @@ export function createBackgroundController(
       }
       clearLegacyBackgroundCookies(cookieDocument);
     },
-    // 默认（无背景）模式不提供过渡中心图，只保留主题清洗过渡；
-    // 特殊模式按 3×3 拼图（special.webp）的 9 个切片循环中心图。
-    // default.png 已压缩为 64×64，仅保留给 favicon。
-    nextTransitionImage: () => {
-      if (current.mode === "default" && current.activeFileId === null) return null;
-      const column = transitionIndex % 3;
-      const row = Math.floor(transitionIndex / 3);
-      transitionIndex = (transitionIndex + 1) % 9;
-      return { url: "/console/background/special.webp", position: `${column * 50}% ${row * 50}%` };
-    },
   };
   return controller;
 }
@@ -274,11 +261,6 @@ export function installBackgroundConsoleUnlock(
 
 function readMode(cookieDocument: CookieDocument | null): BackgroundMode {
   return readCookie(cookieDocument, BACKGROUND_MODE_COOKIE) === "special" ? "special" : "default";
-}
-
-function readTransitionIndex(cookieDocument: CookieDocument | null): number {
-  const value = Number.parseInt(readCookie(cookieDocument, BACKGROUND_TRANSITION_INDEX_COOKIE) ?? "0", 10);
-  return Number.isInteger(value) && value >= 0 && value < 9 ? value : 0;
 }
 
 function readCookie(cookieDocument: CookieDocument | null, name: string): string | null {

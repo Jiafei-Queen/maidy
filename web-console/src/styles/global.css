@@ -1,69 +1,124 @@
 @import "tailwindcss";
 
 /*
- * 语义主题 token（DESIGN.md §2）。
- * :root 提供与「暮蔷薇」一致的默认值，保证脚本加载前不闪回旧画布；
- * theme.ts 运行时通过 setProperty 覆盖同名变量完成主题切换，
- * 因此这里的 @theme inline 只做引用注册，不拥有颜色值。
+ * Atelier Glass（双栖琉璃）语义 token，契约见 web-console/DESIGN.md。
+ * 晨雾 / 暮色两套色值只在这里定义，theme.ts 通过 :root[data-theme-mode] 切换；
+ * 三色自定义偏好以 inline 变量覆盖 --console-background / --console-text-primary / --console-accent。
+ * 未加载脚本前按浅色态渲染，避免首帧闪回旧画布。
  */
-:root {
-  color-scheme: var(--console-color-scheme);
-  --console-color-scheme: dark;
-  --console-background: #161022;
-  --console-surface: #1f1830;
-  --console-surface-secondary: #261d3b;
-  --console-card: #2d2344;
-  --console-input: #120d1d;
-  --console-border: #3b2f55;
-  --console-text-primary: #f2ece1;
-  --console-text-secondary: #ab9dbf;
-  --console-accent: #e8a3b9;
-  --console-accent-hover: #f3bcce;
-  --console-accent-contrast: #251226;
-  --console-success: #82d996;
-  --console-warning: #e6b966;
-  --console-error: #f2837c;
-  --console-error-contrast: #2b0f0d;
+:root,
+:root[data-theme-mode="light"] {
+  color-scheme: light;
 
-  /* 派生 token：组件状态只从语义色推导，不拥有独立主题色。 */
-  --console-glass: color-mix(in srgb, var(--console-surface) 94%, transparent);
-  --console-glass-raised: color-mix(in srgb, var(--console-card) 94%, transparent);
-  --console-glass-muted: color-mix(in srgb, var(--console-surface-secondary) 92%, transparent);
-  --console-line-inner: color-mix(in srgb, var(--console-border) 48%, transparent);
-  --console-accent-soft: color-mix(in srgb, var(--console-accent) 14%, var(--console-surface));
-  --console-success-soft: color-mix(in srgb, var(--console-success) 14%, var(--console-surface));
-  --console-warning-soft: color-mix(in srgb, var(--console-warning) 14%, var(--console-surface));
-  --console-error-soft: color-mix(in srgb, var(--console-error) 14%, var(--console-surface));
-  --console-focus: color-mix(in srgb, var(--console-accent) 42%, transparent);
-  --console-shadow: 0 24px 48px -16px rgb(12 6 24 / 55%), 0 2px 8px rgb(12 6 24 / 30%);
-  --console-z-top: 40;
-  --console-z-bottom: 50;
+  /* L0 环境画布：暖杏 → 雾蓝柔光，层次稍清晰以衬托通透玻璃。 */
+  --console-background: #e6dfd4;
+  --console-canvas-to: #cdd7e2;
+  --console-canvas-glow: rgb(255 236 206 / 82%);
+  --console-canvas-glow-2: rgb(174 198 224 / 72%);
 
-  /* 框体几何：面板大圆角 + 控件小圆角，替代旧版全局 0 圆角。 */
-  --console-radius: 10px;
-  --console-radius-lg: 16px;
+  /* L1–L3 高通透琉璃材质：低不透明度 + 轻柔模糊，让背景图与画布清晰透出。 */
+  --console-shell: rgb(255 255 255 / 34%);
+  --console-surface: rgb(255 255 255 / 44%);
+  --console-card: rgb(255 255 255 / 56%);
+  --console-input: rgb(255 255 255 / 72%);
+  --console-dialog: rgb(252 252 250 / 84%);
+  --console-glass-edge: rgb(255 255 255 / 62%);
+
+  --console-text-primary: #182028;
+  --console-text-secondary: #4c5662;
+  --console-border: rgb(24 32 40 / 12%);
+  --console-line-inner: rgb(24 32 40 / 8%);
+  --console-accent: #36495c;
+  --console-accent-hover: #263544;
+  --console-accent-contrast: #f8f9fa;
+  --console-accent-soft: rgb(54 73 92 / 12%);
+  --console-warmth: #b58338;
+  --console-success: #256e4e;
+  --console-warning: #a9762c;
+  --console-error: #ba3b35;
+  --console-error-contrast: #ffffff;
+  --console-scrim: rgb(24 32 40 / 24%);
 }
 
-/* 把语义 token 注册为 Tailwind 颜色 token：
-   bg-surface / text-muted / border-line 等类名在内联处引用变量，
-   运行时主题切换与自定义三色覆盖对全部 utility 立即生效。 */
+:root[data-theme-mode="dark"] {
+  color-scheme: dark;
+
+  /* L0：深海石板底叠加暖琥珀与冷月光斑。 */
+  --console-background: #0f1521;
+  --console-canvas-to: #0b101a;
+  --console-canvas-glow: rgb(212 163 106 / 24%);
+  --console-canvas-glow-2: rgb(156 160 230 / 18%);
+
+  --console-shell: rgb(16 22 34 / 36%);
+  --console-surface: rgb(22 30 46 / 42%);
+  --console-card: rgb(28 38 56 / 52%);
+  --console-input: rgb(20 28 44 / 64%);
+  --console-dialog: rgb(22 30 46 / 84%);
+  --console-glass-edge: rgb(255 255 255 / 14%);
+
+  --console-text-primary: #f4efe6;
+  --console-text-secondary: #a2aec2;
+  --console-border: rgb(244 239 230 / 14%);
+  --console-line-inner: rgb(244 239 230 / 8%);
+  --console-accent: #a6aaf0;
+  --console-accent-hover: #bcc0f6;
+  --console-accent-contrast: #121722;
+  --console-accent-soft: rgb(166 170 240 / 18%);
+  --console-warmth: #d4a36a;
+  --console-success: #5ec492;
+  --console-warning: #d4a36a;
+  --console-error: #e5736d;
+  --console-error-contrast: #121722;
+  --console-scrim: rgb(5 8 14 / 48%);
+}
+
+:root {
+  /* 派生 token：状态底色只从语义色推导，不拥有独立主题色。 */
+  --console-success-soft: color-mix(in srgb, var(--console-success) 12%, transparent);
+  --console-warning-soft: color-mix(in srgb, var(--console-warning) 12%, transparent);
+  --console-error-soft: color-mix(in srgb, var(--console-error) 12%, transparent);
+  --console-warmth-soft: color-mix(in srgb, var(--console-warmth) 12%, transparent);
+  --console-focus: color-mix(in srgb, var(--console-accent) 45%, transparent);
+  --console-shadow: 0 12px 32px -8px rgb(0 0 0 / 18%);
+
+  /* 几何：控件 8px、卡片 12px、外层玻璃与浮层 16px。 */
+  --console-radius-sm: 8px;
+  --console-radius: 12px;
+  --console-radius-lg: 16px;
+
+  /* 壳层尺寸与层级。 */
+  --console-sidebar: 220px;
+  --console-rail: 60px;
+  --console-topbar: 48px;
+  --console-z-shell: 30;
+  --console-z-overlay: 40;
+  --console-z-dialog: 50;
+
+  --console-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* 把语义 token 注册为 Tailwind 颜色：
+   bg-shell / bg-surface / bg-card 对应 L1 / L2 / L3 材质；旧 glass 系列名映射到同一层级。 */
 @theme inline {
   --color-canvas: var(--console-background);
+  --color-shell: var(--console-shell);
   --color-surface: var(--console-surface);
-  --color-surface-2: var(--console-surface-secondary);
+  --color-surface-2: var(--console-surface);
   --color-card: var(--console-card);
   --color-input: var(--console-input);
+  --color-glass: var(--console-shell);
+  --color-glass-muted: var(--console-surface);
+  --color-glass-raised: var(--console-card);
   --color-line: var(--console-border);
+  --color-line-inner: var(--console-line-inner);
   --color-ink: var(--console-text-primary);
   --color-muted: var(--console-text-secondary);
   --color-accent: var(--console-accent);
   --color-accent-strong: var(--console-accent-hover);
   --color-accent-contrast: var(--console-accent-contrast);
   --color-accent-soft: var(--console-accent-soft);
-  --color-glass: var(--console-glass);
-  --color-glass-raised: var(--console-glass-raised);
-  --color-glass-muted: var(--console-glass-muted);
-  --color-line-inner: var(--console-line-inner);
+  --color-warmth: var(--console-warmth);
+  --color-warmth-soft: var(--console-warmth-soft);
   --color-success: var(--console-success);
   --color-warning: var(--console-warning);
   --color-error: var(--console-error);
@@ -72,22 +127,24 @@
   --color-warning-soft: var(--console-warning-soft);
   --color-error-soft: var(--console-error-soft);
   --color-focus-ring: var(--console-focus);
+  --color-scrim: var(--console-scrim);
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-  /* 标题衬线：中文走宋体族（Noto/思源宋体优先），给页面标题「值班手记」的编辑感。 */
-  --font-display: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", ui-serif, Georgia, serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* 字体只引用本机字体栈：CSP 仅允许同源资源，不加载外部 Web Font。
+     衬线优先 Charter / Iowan Old Style + 华文中宋（STZhongsong），笔画饱满温润，避免细宋体发虚。 */
+  --font-display: "Source Serif 4", "Charter", "Iowan Old Style", "Noto Serif SC", "Source Han Serif SC", "STZhongsong", Georgia, serif;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
+  --radius-console-sm: var(--console-radius-sm);
   --radius-console: var(--console-radius);
   --radius-console-lg: var(--console-radius-lg);
 
   --shadow-console: var(--console-shadow);
 
-  --animate-page-in: page-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-  --animate-fade-in: fade-in 0.18s ease-out both;
+  --animate-page-in: page-in 120ms var(--console-ease) both;
+  --animate-fade-in: page-in 120ms ease-out both;
 }
 
-/* 设计系统：暖夜蔷薇主题。圆角由 token 提供，控件 10px、面板 16px。 */
 @layer base {
   html {
     scroll-behavior: smooth;
@@ -99,14 +156,23 @@
     background: var(--console-background);
     color: var(--console-text-primary);
     font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
   }
 
+  /* 衬线视觉锚点：页面标题与区块标题使用半粗字重，保证视觉分量；h3 及以下回到无衬线小标题。 */
   h1,
-  h2,
+  h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
   h3,
   h4 {
-    font-family: var(--font-display);
-    letter-spacing: 0.015em;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   button,
@@ -116,21 +182,24 @@
     font: inherit;
   }
 
-  /* 移动端防护：select/textarea 的固有宽度（最长 option）不允许撑破容器，
-     否则整页出现横向平移，fixed 弹层也会随布局视口跑偏。 */
+  /* 移动端防护：select/textarea 的固有宽度不允许撑破容器。 */
   input,
   select,
   textarea {
     max-width: 100%;
   }
 
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+
   [hidden] {
     display: none !important;
   }
 
-  :is(button, input, select, textarea, summary, [role="button"]):focus-visible {
-    outline: 3px solid var(--console-focus);
-    outline-offset: 2px;
+  :is(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid var(--console-focus);
+    outline-offset: 1px;
   }
 
   ::selection {
@@ -149,7 +218,8 @@
 
   ::-webkit-scrollbar-thumb {
     background: var(--console-border);
-    border: 2px solid transparent;
+    border: 3px solid transparent;
+    border-radius: 6px;
     background-clip: content-box;
   }
 
@@ -159,35 +229,121 @@
   }
 }
 
-/* 框体语言：单 1px 发丝线 + 大圆角 + 暖夜投影；背景透出 glass 层。 */
+/* L1 高通透玻璃外壳：侧边栏、顶栏、设置目录、悬浮操作条。
+   低模糊度让背后的壁纸与环境光斑清晰可辨，顶部细高光模拟真实玻璃切面。 */
+@utility console-shell {
+  background: var(--console-shell);
+  box-shadow: inset 0 1px 0 var(--console-glass-edge);
+  -webkit-backdrop-filter: blur(10px) saturate(135%);
+  backdrop-filter: blur(10px) saturate(135%);
+}
+
+/* L2 通透雾面面板：独立区块、列表外框、分组面板。 */
+@utility console-panel {
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius-lg);
+  background: var(--console-surface);
+  box-shadow: inset 0 1px 0 var(--console-glass-edge), 0 4px 20px -8px rgb(0 0 0 / 10%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
+  backdrop-filter: blur(8px) saturate(125%);
+}
+
+/* L3 通透内容卡片：兼顾背景透光与文字对比度。 */
+@utility console-paper {
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius);
+  background: var(--console-card);
+  box-shadow: inset 0 1px 0 var(--console-glass-edge), 0 2px 12px -6px rgb(0 0 0 / 8%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+  backdrop-filter: blur(6px) saturate(120%);
+}
+
+/* 模态浮层专用玻璃：覆盖页面内容时需更高不透明度与模糊度保证阅读清晰。 */
+@utility console-dialog {
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius-lg);
+  background: var(--console-dialog);
+  box-shadow: inset 0 1px 0 var(--console-glass-edge), var(--console-shadow);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+
+/* 旧类名兼容：等同 L2 面板。 */
 @utility console-frame {
   border: 1px solid var(--console-border);
   border-radius: var(--console-radius-lg);
-  background: var(--console-glass);
+  background: var(--console-surface);
+  box-shadow: inset 0 1px 0 var(--console-glass-edge), 0 4px 20px -8px rgb(0 0 0 / 10%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
+  backdrop-filter: blur(8px) saturate(125%);
 }
 
-/* 小节标签（eyebrow / kicker）：安静的字距标签，主色只留给可交互元素。 */
+/* 元数据标签：Mono 12px，正常大小写，不做拉宽字距的装饰眉题。 */
+@utility console-meta {
+  color: var(--console-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* 旧类名兼容：与 console-meta 相同，不再全大写。 */
 @utility console-mono-tag {
   color: var(--console-text-secondary);
-  font-family: var(--font-sans);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
-/* 背景层与页面切换过渡保留为结构化 CSS：
-   九宫格切片位置和关键帧节奏不适合展开为 utility。 */
+/* 快捷键 / 键名胶囊。 */
+@utility console-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.375rem;
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius-sm);
+  background: var(--console-card);
+  color: var(--console-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 统一的原生 select 外观：与 Input 同一几何。 */
+@utility console-select {
+  min-height: 2.125rem;
+  padding: 0.375rem 2rem 0.375rem 0.625rem;
+  border: 1px solid var(--console-border);
+  border-radius: var(--console-radius-sm);
+  background-color: var(--console-input);
+  background-image: linear-gradient(45deg, transparent 50%, var(--console-text-secondary) 50%),
+    linear-gradient(135deg, var(--console-text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 10px) 52%;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  color: var(--console-text-primary);
+  appearance: none;
+  outline: none;
+  transition: border-color 120ms ease-out;
+}
+
+/* ---------------------------------------------------------------------------
+ * L0 环境画布与可选背景层（结构化 CSS：九宫格切片位置不适合展开为 utility）。
+ * ------------------------------------------------------------------------- */
 .console-background {
   position: fixed;
   inset: 0;
   z-index: 0;
   overflow: hidden;
-  background: var(--console-background);
   pointer-events: none;
 }
 
-/* 默认（未选择背景）不渲染任何背景图层，页面只呈现主题底色。 */
+.console-background--ambient {
+  background:
+    radial-gradient(60vmax 50vmax at 12% 8%, var(--console-canvas-glow), transparent 70%),
+    radial-gradient(55vmax 45vmax at 92% 96%, var(--console-canvas-glow-2), transparent 70%),
+    linear-gradient(135deg, var(--console-background), var(--console-canvas-to));
+}
+
 .console-background--special {
   display: none;
 }
@@ -205,8 +361,7 @@
   margin: auto;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-template-rows: repeat(3, minmax(0, 1fr));
-  opacity: 0.72;
-  filter: saturate(0.82) contrast(0.92);
+  opacity: 0.92;
 }
 
 .console-background-grid-cell {
@@ -239,76 +394,7 @@
   display: block;
 }
 
-/* 页面切换：784ms 中心扩散遮蔽后换页，896ms 清洗淡出；
-   默认模式无中心图，特殊模式循环九宫格切片。 */
-.console-transition {
-  position: fixed;
-  inset: 0;
-  z-index: 35;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.console-transition-wash {
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--console-surface) 82%, transparent);
-  backdrop-filter: blur(22px) saturate(1.18);
-  opacity: 0;
-  clip-path: circle(150px at 50% 50%);
-}
-
-.console-transition-image {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 300px;
-  height: 300px;
-  background-image: url("/console/background/special.webp");
-  background-size: 300% 300%;
-  background-repeat: no-repeat;
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.88);
-  filter: saturate(0.88) contrast(0.96);
-}
-
-.console-transition.is-running .console-transition-wash {
-  animation:
-    console-transition-cover 0.768s cubic-bezier(0.65, 0, 0.35, 1) forwards,
-    console-transition-wash-out 0.896s ease-in 0.768s forwards;
-}
-
-.console-transition.is-running .console-transition-image {
-  animation:
-    console-transition-image-in 0.192s ease-out 0.096s forwards,
-    console-transition-image-out 0.896s ease-in 0.768s forwards;
-}
-
-@keyframes console-transition-cover {
-  from { opacity: 0; clip-path: circle(150px at 50% 50%); }
-  24% { opacity: 1; }
-  to { opacity: 1; clip-path: circle(150vmax at 50% 50%); }
-}
-
-@keyframes console-transition-image-in {
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-}
-
-@keyframes console-transition-wash-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-@keyframes console-transition-image-out {
-  to { opacity: 0; transform: translate(-50%, -50%) scale(1.04); }
-}
-
 @keyframes page-in {
-  from { opacity: 0; transform: translateY(8px); filter: blur(2px); }
-  to { opacity: 1; transform: translateY(0); filter: blur(0); }
-}
-
-@keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
@@ -318,10 +404,11 @@
     scroll-behavior: auto;
   }
 
-  .console-transition,
-  .animate-page-in,
-  .animate-fade-in {
-    animation: none !important;
-    transition: none !important;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

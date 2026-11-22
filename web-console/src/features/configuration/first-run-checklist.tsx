@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "../../components/ui/button.js";
+import { Frame } from "../../components/ui/frame.js";
 import type { ConfigurationBusinessGroup } from "./configuration-navigation.js";
 
 interface ChecklistStep {
@@ -35,77 +36,96 @@ const CHECKLIST_STEPS: ReadonlyArray<ChecklistStep> = [
   {
     title: "保存并校验",
     description:
-      "使用页面底部的“保存普通配置”和“保存密钥变更”，再点“校验配置”。首次安装尚未完成时允许分步保存，未补齐的项会继续显示“需要完成配置”。",
+      "修改后在底部悬浮条点击“保存普通配置”或“保存密钥变更”，再点页眉“校验配置”。首次安装尚未完成时允许分步保存，未补齐的项会继续显示“需要完成配置”。",
   },
   {
     title: "重启并确认",
     description:
-      "点“重启服务”，重新登录后确认总览为“健康”、本页为“本地预检通过”，且没有待重启变更。",
+      "点“重启服务”，重新登录后确认总览为“运行正常”、本页为“本地预检通过”，且没有待重启变更。",
   },
 ];
 
-/** 首次配置检查单：把启动预检的必备项按操作顺序列出，并提供业务域跳转。 */
+/**
+ * 首次配置检查单：放置在配置中心左侧粘性栏中随页面滚动跟随，
+ * 既可随时对照步骤或一键跳转业务域，也不遮挡右侧表单工作区。
+ */
 export function FirstRunChecklist({
   invalidCount,
   onSelectGroup,
+  embedded = false,
 }: {
   invalidCount: number;
   onSelectGroup: (group: ConfigurationBusinessGroup) => void;
+  /** 嵌入配置中心通高侧栏底部时去掉外层重复框体，与导航目录融为一体。 */
+  embedded?: boolean;
 }) {
   // 未通过预检时默认展开；通过后保留为可展开的参考清单。
   const [open, setOpen] = useState(invalidCount > 0);
-  return (
-    <section aria-label="首次配置检查单" className="mt-4 rounded-console-lg border border-line bg-glass-muted p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="m-0 text-base font-bold">首次配置检查单</h3>
-          <p className="m-0 mt-1 text-xs leading-relaxed text-muted">
-            {invalidCount > 0
-              ? "按顺序补齐以下必备项后，本地预检才会通过。"
-              : "当前已通过本地预检；仍可展开核对部署所需配置。"}
-          </p>
-        </div>
+  const body = (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="m-0 text-[13px] font-semibold whitespace-nowrap text-ink">首次配置检查单</h3>
         <Button
-          variant="secondary"
+          variant="ghost"
+          size="sm"
           aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
-          className="px-2.5 py-1 text-xs"
+          className="h-6 shrink-0 px-2 text-[11px]"
         >
           {open ? "收起检查单" : "展开检查单"}
         </Button>
       </div>
+      <p className="m-0 mt-1 text-xs leading-relaxed text-muted">
+        {invalidCount > 0
+          ? "按顺序补齐以下必备项后，本地预检才会通过。"
+          : "当前已通过本地预检；仍可展开核对部署所需配置。"}
+      </p>
       {open ? (
         <>
-          <ol className="m-0 mt-3 flex list-none flex-col gap-3 p-0">
+          <ol className="m-0 mt-3 flex list-none flex-col divide-y divide-line-inner border-t border-line-inner p-0">
             {CHECKLIST_STEPS.map((step, index) => (
-              <li
-                key={step.title}
-                className="flex flex-wrap items-start gap-3 border-t border-line-inner pt-3 first:border-t-0 first:pt-0"
-              >
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent-soft font-mono text-xs font-bold text-accent-strong">
-                  {index + 1}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="m-0 text-sm font-bold">{step.title}</p>
-                  <p className="m-0 mt-1 text-xs leading-relaxed text-muted">{step.description}</p>
+              <li key={step.title} className="flex flex-col gap-1.5 py-2.5 last:pb-0">
+                <div className="flex items-center gap-2">
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-console-sm border border-line bg-card font-mono text-[11px] font-semibold text-ink">
+                    {index + 1}
+                  </span>
+                  <p className="m-0 text-xs font-semibold text-ink">{step.title}</p>
                 </div>
+                <p className="m-0 pl-7 text-[11px] leading-relaxed text-muted">{step.description}</p>
                 {step.group && step.groupLabel ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => step.group && onSelectGroup(step.group)}
-                    className="px-2.5 py-1 text-xs"
-                  >
-                    去{step.groupLabel}
-                  </Button>
+                  <div className="pl-7">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => step.group && onSelectGroup(step.group)}
+                      className="h-6 px-2 text-[11px]"
+                    >
+                      去{step.groupLabel}
+                    </Button>
+                  </div>
                 ) : null}
               </li>
             ))}
           </ol>
-          <p className="m-0 mt-3 border-t border-line-inner pt-3 text-xs text-muted">
-            完整排查步骤见仓库 <span className="font-mono">docs/guides/console-first-run-checklist.md</span>。
+          <p className="m-0 mt-2.5 border-t border-line-inner pt-2.5 text-[11px] leading-relaxed text-muted">
+            排查指引见 <span className="font-mono text-ink">docs/guides/console-first-run-checklist.md</span>
           </p>
         </>
       ) : null}
-    </section>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <section aria-label="首次配置检查单" className="border-t border-line p-3.5">
+        {body}
+      </section>
+    );
+  }
+
+  return (
+    <Frame variant="panel" aria-label="首次配置检查单" className="p-3.5">
+      {body}
+    </Frame>
   );
 }
