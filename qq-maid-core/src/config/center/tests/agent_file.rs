@@ -306,7 +306,7 @@ fn agent_web_search_backend_switches_preserve_routes_and_parameters() {
         assert_eq!(reloaded.web_search().max_results, 8);
         assert_eq!(
             reloaded.resolve(ChatScene::Private).unwrap().search_model,
-            "gpt-5.6-luna"
+            "openai:gpt-5.6-luna"
         );
     }
 }

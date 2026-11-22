@@ -301,7 +301,8 @@ enabled_tools = ["save_memory"]
 
 #[test]
 fn provider_native_accepts_configured_responses_search_with_full_identity() {
-    let text = DEFAULT_AGENT_CONFIG.replace("model = \"gpt-5.6-luna\"", "model = \"xai:grok-4\"")
+    let text = DEFAULT_AGENT_CONFIG
+        .replace("model = \"openai:gpt-5.6-luna\"", "model = \"xai:grok-4\"")
         + r#"
 
 [providers.xai]
@@ -324,8 +325,10 @@ api_key_env = "XAI_API_KEY"
 
 #[test]
 fn provider_native_rejects_undeclared_custom_search_provider_prefix() {
-    let text =
-        DEFAULT_AGENT_CONFIG.replace("model = \"gpt-5.6-luna\"", "model = \"xai_typo:grok-4\"");
+    let text = DEFAULT_AGENT_CONFIG.replace(
+        "model = \"openai:gpt-5.6-luna\"",
+        "model = \"xai_typo:grok-4\"",
+    );
 
     let error = AgentRuntimeConfig::from_toml(
         &text,
@@ -342,8 +345,10 @@ fn provider_native_rejects_undeclared_custom_search_provider_prefix() {
 
 #[test]
 fn provider_native_rejects_compatible_provider_but_tavily_can_ignore_route() {
-    let provider_native =
-        DEFAULT_AGENT_CONFIG.replace("model = \"gpt-5.6-luna\"", "model = \"mimo:mimo-v2.5\"");
+    let provider_native = DEFAULT_AGENT_CONFIG.replace(
+        "model = \"openai:gpt-5.6-luna\"",
+        "model = \"mimo:mimo-v2.5\"",
+    );
     let error = AgentRuntimeConfig::from_toml(
         &provider_native,
         AgentConfigSource::File("config/agent.toml".to_owned()),
@@ -367,7 +372,7 @@ fn provider_native_rejects_compatible_provider_but_tavily_can_ignore_route() {
 #[test]
 fn provider_native_accepts_deepseek_search_route() {
     let text = DEFAULT_AGENT_CONFIG.replace(
-        r#"model = "gpt-5.6-luna""#,
+        r#"model = "openai:gpt-5.6-luna""#,
         r#"model = "deepseek:arbitrary-model""#,
     );
     let config = AgentRuntimeConfig::from_toml(
@@ -383,8 +388,12 @@ fn provider_native_accepts_deepseek_search_route() {
 
 #[test]
 fn provider_native_search_route_keeps_bare_model_as_openai_compatibility_default() {
+    let text = DEFAULT_AGENT_CONFIG.replace(
+        r#"model = "openai:gpt-5.6-luna""#,
+        r#"model = "gpt-5.6-luna""#,
+    );
     let config = AgentRuntimeConfig::from_toml(
-        DEFAULT_AGENT_CONFIG,
+        &text,
         AgentConfigSource::File("config/agent.toml".to_owned()),
     )
     .unwrap();
@@ -802,7 +811,7 @@ fn default_agent_toml_prefers_luna_and_keeps_provider_fallbacks() {
             "openai:gpt-5.6-luna,gemini:gemini-2.5-flash,mimo:mimo-v2.5,deepseek:deepseek-v4-flash"
         )
     );
-    assert_eq!(private.search_model, "gpt-5.6-luna");
+    assert_eq!(private.search_model, "openai:gpt-5.6-luna");
     assert_eq!(private.search_backend, WebSearchBackend::ProviderNative);
     assert_eq!(
         group.main_model,
@@ -814,7 +823,7 @@ fn default_agent_toml_prefers_luna_and_keeps_provider_fallbacks() {
             "openai:gpt-5.6-luna,gemini:gemini-2.5-flash,mimo:mimo-v2.5,deepseek:deepseek-v4-flash"
         )
     );
-    assert_eq!(group.search_model, "gpt-5.6-luna");
+    assert_eq!(group.search_model, "openai:gpt-5.6-luna");
     assert_eq!(
         config.source,
         AgentConfigSource::File("config/agent.toml".to_owned())

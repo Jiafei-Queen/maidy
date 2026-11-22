@@ -197,6 +197,8 @@ pub struct AppConfig {
     pub gemini_api_key: Option<String>,
     /// Google Gemini OpenAI-compatible API 基础地址
     pub gemini_base_url: String,
+    /// 通过 `<PROVIDER>_ENABLED=false` 显式停用的内置供应商。
+    pub disabled_builtin_providers: Vec<qq_maid_llm::provider::types::ModelProvider>,
     /// 是否启用流式输出
     pub stream: bool,
     /// LLM 请求超时秒数
@@ -346,10 +348,7 @@ impl AppConfig {
         )?;
         let effective_environment = effective_environment();
         let agent_config = AgentRuntimeConfig::load_from_environment(&effective_environment)?;
-        provider_config::validate_builtin_connections(
-            &agent_config,
-            &qq_maid_llm::config::ProviderMode::Auto,
-        )?;
+        let disabled_builtin_providers = provider_config::disabled_builtin_providers()?;
         let ops_config =
             crate::runtime::tools::ops::OpsConfig::load_from_environment(&effective_environment)?;
         let command_prefix = CommandPrefix::parse(&env_string("CHAT_COMMAND_PREFIX", "/"))
@@ -378,6 +377,7 @@ impl AppConfig {
             bigmodel_base_url: env_string("BIGMODEL_BASE_URL", DEFAULT_BIGMODEL_BASE_URL),
             gemini_api_key: provider_config::builtin_api_key("GEMINI")?,
             gemini_base_url: env_string("GEMINI_BASE_URL", DEFAULT_GEMINI_BASE_URL),
+            disabled_builtin_providers,
             stream: env_bool("LLM_STREAM", true)?,
             request_timeout_seconds: env_u64(
                 "LLM_REQUEST_TIMEOUT_SECONDS",
@@ -551,10 +551,6 @@ impl AppConfig {
         if let Some(candidate_agent) = candidate_agent {
             config.agent_config = candidate_agent.clone();
         }
-        provider_config::validate_builtin_connections(
-            &config.agent_config,
-            &config.llm_config().provider,
-        )?;
         model_management::validate_disabled_models(&config.agent_config, &config.model_catalog)?;
         qq_maid_llm::provider::preflight_provider_config(&config.llm_config())
     }
@@ -577,8 +573,13 @@ impl AppConfig {
             .expect("agent config is validated when AppConfig is created");
         let mut web_search = self.agent_config.web_search().clone();
         web_search.default_model = private_policy.search_model.clone();
-        let (openai_compatible_providers, openai_responses_providers, disabled_providers) =
+        let (openai_compatible_providers, openai_responses_providers, mut disabled_providers) =
             provider_config::llm_provider_configs(&self.agent_config);
+        for provider in &self.disabled_builtin_providers {
+            if !disabled_providers.contains(provider) {
+                disabled_providers.push(provider.clone());
+            }
+        }
         qq_maid_llm::config::LlmConfig {
             provider: qq_maid_llm::config::ProviderMode::Auto,
             model_route: private_policy.main_route,

@@ -120,7 +120,10 @@ pub(super) fn provider_from_file(
     })
 }
 
-/// 检查全部保存路线，包括当前场景未使用的路线；避免留下等待启用才暴露的悬空引用。
+/// 检查保存路线中的自定义 Provider 声明完整性。
+///
+/// 停用（`enabled = false`）的 Provider 允许继续保留在路由中（运行时跳过、配置中心展示告警）；
+/// 仅拦截未声明/已删除导致的悬空引用，且非 `provider_native` 搜索后端不校验历史搜索路线。
 pub(super) fn validate_connection_references(
     document: &AgentConfigDocument,
 ) -> Result<(), LlmError> {
@@ -130,7 +133,7 @@ pub(super) fn validate_connection_references(
         let id = ModelProvider::parse_prefix(name).map_err(|err| {
             LlmError::config(format!("invalid providers.{name}: {}", err.message))
         })?;
-        // 大小写别名不能覆盖另一项的 enabled 状态，否则停用引用可能被漏检。
+        // 大小写别名不能重复声明同一 canonical ID。
         if providers.insert(id.clone(), provider).is_some() {
             return Err(LlmError::config(format!(
                 "duplicate provider `{}`",
@@ -141,12 +144,10 @@ pub(super) fn validate_connection_references(
     let mut invalid = Vec::new();
     let mut check = |value: &str, location: String| -> Result<(), LlmError> {
         let model = ModelId::parse_config(value, &location)?;
-        if let Some(ModelProvider::Custom(id)) = model.provider {
-            match providers.get(&ModelProvider::Custom(id.clone())) {
-                Some(provider) if provider.enabled => {}
-                Some(_) => invalid.push(format!("{location}: provider `{id}` is disabled")),
-                None => invalid.push(format!("{location}: providers.{id} is not configured")),
-            }
+        if let Some(ModelProvider::Custom(id)) = model.provider
+            && !providers.contains_key(&ModelProvider::Custom(id.clone()))
+        {
+            invalid.push(format!("{location}: providers.{id} is not configured"));
         }
         Ok(())
     };
@@ -160,8 +161,18 @@ pub(super) fn validate_connection_references(
             )?;
         }
     }
-    for (name, route) in &document.tools.web_search.routes {
-        check(&route.model, format!("tools.web_search.routes.{name}"))?;
+    let search_backend = document
+        .tools
+        .web_search
+        .backend
+        .trim()
+        .to_ascii_lowercase();
+    let uses_provider_native_search =
+        search_backend.is_empty() || search_backend == "provider_native";
+    if uses_provider_native_search {
+        for (name, route) in &document.tools.web_search.routes {
+            check(&route.model, format!("tools.web_search.routes.{name}"))?;
+        }
     }
     invalid.sort();
     if invalid.is_empty() {

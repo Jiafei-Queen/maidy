@@ -15,7 +15,7 @@ fn managed_provider(enabled: bool) -> AgentProviderUpdate {
 }
 
 #[test]
-fn builtin_disable_is_rejected_even_during_incomplete_setup() {
+fn builtin_disable_succeeds_and_reports_route_diagnostics() {
     let (_old_center, database, directory) = test_center();
     let (_file, running, _agent_database, _path) = test_agent_file();
     let center = ConfigCenter::open(
@@ -27,11 +27,14 @@ fn builtin_disable_is_rejected_even_during_incomplete_setup() {
         database,
     )
     .unwrap()
+    .with_external_environment(HashMap::from([(
+        "DEEPSEEK_API_KEY".into(),
+        "test-deepseek-key".into(),
+    )]))
     .with_running_agent_config(running)
-    .unwrap()
-    .with_incomplete_setup_writes();
+    .unwrap();
     let initial = center.current_snapshot().unwrap();
-    let error = center
+    center
         .update_managed(
             &initial.revision,
             &[ManagedConfigChange::Set {
@@ -39,14 +42,34 @@ fn builtin_disable_is_rejected_even_during_incomplete_setup() {
                 value: Value::Boolean(false),
             }],
         )
-        .unwrap_err();
-    assert!(error.message().contains("disabled"));
-    assert!(error.message().contains("model_routes"));
-    assert!(error.message().contains("tools.web_search.routes"));
-    assert_eq!(
-        center.current_snapshot().unwrap().revision,
-        initial.revision
+        .unwrap();
+    let updated = center.current_snapshot().unwrap();
+    assert_ne!(updated.revision, initial.revision);
+    let private_main = updated
+        .route_diagnostics
+        .iter()
+        .find(|route| {
+            route.kind == RouteDiagnosticKind::ModelRoute && route.route_name == "private_main"
+        })
+        .unwrap();
+    assert!(private_main.has_available_candidate);
+    let openai = private_main
+        .candidates
+        .iter()
+        .find(|candidate| candidate.provider == "openai")
+        .unwrap();
+    assert!(!openai.available);
+    assert!(
+        openai
+            .issues
+            .contains(&CandidateIssueCode::ProviderDisabled)
     );
+    let deepseek = private_main
+        .candidates
+        .iter()
+        .find(|candidate| candidate.provider == "deepseek")
+        .unwrap();
+    assert!(deepseek.available);
 }
 
 #[test]
@@ -274,7 +297,7 @@ fn managed_connection_rejects_arbitrary_credential_namespace_and_rebinding() {
 }
 
 #[test]
-fn disabling_and_removing_connection_reports_all_route_references_without_writes() {
+fn disabling_connection_is_allowed_while_removing_still_reports_references() {
     let (file, _running, _database, path) = test_agent_file();
     let initial = file.snapshot().unwrap();
     let mut provider = managed_provider(true);
@@ -289,7 +312,10 @@ fn disabling_and_removing_connection_reports_all_route_references_without_writes
                 },
                 AgentConfigChange::SetModelRoute {
                     name: "private_main".into(),
-                    candidates: vec!["test_connection:test-model".into()],
+                    candidates: vec![
+                        "test_connection:test-model".into(),
+                        "deepseek:deepseek-v4-flash".into(),
+                    ],
                 },
                 AgentConfigChange::SetSearchRoute {
                     name: "unused_search".into(),
@@ -299,36 +325,35 @@ fn disabling_and_removing_connection_reports_all_route_references_without_writes
         )
         .unwrap();
     let before = std::fs::read(&path).unwrap();
-    provider.enabled = false;
-    for change in [
-        AgentConfigChange::SetProvider {
-            id: "test_connection".into(),
-            provider,
-        },
-        AgentConfigChange::RemoveProvider {
-            id: "test_connection".into(),
-        },
-    ] {
-        let error = file.update(&saved.revision, &[change]).unwrap_err();
-        assert!(error.message().contains("model_routes.private_main"));
-        assert!(
-            error
-                .message()
-                .contains("tools.web_search.routes.unused_search")
-        );
-        assert_eq!(std::fs::read(&path).unwrap(), before);
-    }
-    // 直接加载手工修改的配置也走相同预检，不依赖 Web 写接口。
-    let text = String::from_utf8(before)
-        .unwrap()
-        .replace("enabled = true\nkind", "enabled = false\nkind");
-    assert!(
-        crate::config::agent::AgentRuntimeConfig::from_toml(
-            &text,
-            crate::config::agent::AgentConfigSource::File("test.toml".into())
+    // 删除仍被引用的连接继续拒绝并列出引用位置，避免悬空拼写/不存在引用。
+    let error = file
+        .update(
+            &saved.revision,
+            &[AgentConfigChange::RemoveProvider {
+                id: "test_connection".into(),
+            }],
         )
-        .is_err()
+        .unwrap_err();
+    assert!(error.message().contains("model_routes.private_main"));
+    assert!(
+        error
+            .message()
+            .contains("tools.web_search.routes.unused_search")
     );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    // 停用连接允许保存，由路由健康诊断与运行时跳过承接。
+    provider.enabled = false;
+    let disabled = file
+        .update(
+            &saved.revision,
+            &[AgentConfigChange::SetProvider {
+                id: "test_connection".into(),
+                provider,
+            }],
+        )
+        .unwrap();
+    assert_ne!(disabled.revision, saved.revision);
 }
 
 #[test]
@@ -391,9 +416,9 @@ fn save_and_reload_preserves_provider_qualified_same_model_candidates() {
 }
 
 #[test]
-fn bare_route_disable_is_rejected_during_setup_without_writes() {
+fn route_diagnostics_flags_route_without_available_candidates_when_openai_disabled() {
     let (center, _database, _directory) = test_center();
-    let (file, _running, _agent_database, path) = test_agent_file();
+    let (file, _running, _agent_database, _path) = test_agent_file();
     let initial = file.snapshot().unwrap();
     file.update(
         &initial.revision,
@@ -404,27 +429,26 @@ fn bare_route_disable_is_rejected_during_setup_without_writes() {
     )
     .unwrap();
     let center = center
+        .with_external_environment(HashMap::from([
+            ("OPENAI_ENABLED".into(), "false".into()),
+            ("DEEPSEEK_API_KEY".into(), "test-key".into()),
+        ]))
         .with_running_agent_config(file.current_runtime().unwrap())
         .unwrap()
         .with_incomplete_setup_writes();
-    let initial = center.current_snapshot().unwrap().agent.unwrap();
-    let before = std::fs::read(&path).unwrap();
-    let environment = HashMap::from([
-        ("OPENAI_ENABLED".into(), "false".into()),
-        ("DEEPSEEK_API_KEY".into(), "test-key".into()),
-    ]);
-    let error = center
-        .validate_candidate_for_write(&environment, None)
-        .unwrap_err();
+    let snapshot = center.current_snapshot().unwrap();
+    let private_main = snapshot
+        .route_diagnostics
+        .iter()
+        .find(|route| {
+            route.kind == RouteDiagnosticKind::ModelRoute && route.route_name == "private_main"
+        })
+        .unwrap();
+    assert!(!private_main.has_available_candidate);
     assert!(
-        error
-            .message()
-            .contains("model_routes.private_main.candidates[0]: provider `openai` is disabled")
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), before);
-    assert_eq!(
-        center.current_snapshot().unwrap().agent.unwrap().revision,
-        initial.revision
+        private_main.candidates[0]
+            .issues
+            .contains(&CandidateIssueCode::ProviderDisabled)
     );
 }
 

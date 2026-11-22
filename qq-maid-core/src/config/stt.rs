@@ -296,7 +296,12 @@ impl AppConfig {
                 {
                     Some(configured) if configured.kind == AgentProviderKind::OpenAiCompatible => (
                         configured.base_url,
-                        env_optional(&configured.api_key_env),
+                        // 已停用的自定义连接跳过远程转写，与内置连接停用语义保持一致。
+                        if configured.enabled {
+                            env_optional(&configured.api_key_env)
+                        } else {
+                            None
+                        },
                         configured.auth_header,
                         configured.auth_scheme,
                         configured.request_timeout_seconds,

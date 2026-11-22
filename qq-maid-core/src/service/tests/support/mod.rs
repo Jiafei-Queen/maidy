@@ -826,6 +826,7 @@ fn test_state_with_group_tool_calling_and_query_executor(
             bigmodel_base_url: DEFAULT_BIGMODEL_BASE_URL.to_owned(),
             gemini_api_key: None,
             gemini_base_url: crate::config::DEFAULT_GEMINI_BASE_URL.to_owned(),
+            disabled_builtin_providers: Vec::new(),
             stream: false,
             request_timeout_seconds,
             agent_finalization_reserve_seconds:

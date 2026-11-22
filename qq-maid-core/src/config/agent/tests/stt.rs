@@ -246,8 +246,8 @@ default = ["custom:whisper-1"]
 }
 
 #[test]
-fn stt_rejects_disabled_provider() {
-    let error = parse(
+fn stt_allows_disabled_provider_so_runtime_skips_it() {
+    let config = parse(
         r#"
 [providers.custom]
 enabled = false
@@ -261,8 +261,8 @@ enabled = true
 default = ["custom:whisper-1"]
 "#,
     )
-    .unwrap_err();
-    assert!(error.message.contains("disabled provider"));
+    .unwrap();
+    assert_eq!(config.stt().routes.default.len(), 1);
 }
 
 #[test]

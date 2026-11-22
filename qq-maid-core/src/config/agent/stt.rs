@@ -278,11 +278,6 @@ fn parse_candidates(
                             "{location} references custom provider `{name}`, but providers.{name} is not configured"
                         )));
                     };
-                    if !configured.enabled {
-                        return Err(LlmError::config(format!(
-                            "{location} references disabled provider `{name}`"
-                        )));
-                    }
                     if configured.kind != AgentProviderKind::OpenAiCompatible {
                         return Err(LlmError::config(format!(
                             "{location} references provider `{name}` with kind openai_responses; transcription requires an openai_compatible provider"
