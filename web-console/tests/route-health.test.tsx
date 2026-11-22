@@ -177,6 +177,42 @@ describe("route-health 诊断与停用影响分析", () => {
     });
   });
 
+  it("managed_providers 模式下已删除的供应商不再视为内置可用，准确标记未配置", () => {
+    const snapshot = makeSnapshot({
+      providers: {
+        presets: [],
+        adapters: ["openai_compatible", "openai_responses"],
+        managed_providers: true,
+        credentials: {
+          deepseek: { configured: true, editable: true, revision: "s-ds", pending_restart: false },
+        },
+      },
+      agent: {
+        revision: "a2",
+        fileExists: true,
+        source: "agent_toml",
+        editable: true,
+        readOnly: false,
+        pendingRestart: false,
+        savedValue: {
+          managed_providers: true,
+          providers: {
+            deepseek: { enabled: true, kind: "openai_responses", base_url: "https://api.deepseek.com", api_key_env: "DEEPSEEK_API_KEY" },
+          },
+          model_routes: {
+            private_main: { candidates: ["openai:gpt-5.6-luna", "deepseek:deepseek-v4-flash"] },
+          },
+        },
+        runningValue: {},
+      },
+    });
+    const map = buildProviderAvailabilityMap(snapshot);
+    const removedOpenAi = diagnoseCandidateHealth("openai:gpt-5.6-luna", map);
+    expect(removedOpenAi.available).toBe(false);
+    expect(removedOpenAi.badge).toBe("未配置");
+    expect(diagnoseCandidateHealth("deepseek:deepseek-v4-flash", map).available).toBe(true);
+  });
+
   it("ModelRouteEditor 对不可用候选渲染徽标并在全部不可用时显示严重告警", () => {
     const map = buildProviderAvailabilityMap(makeSnapshot());
     const { rerender } = render(

@@ -139,6 +139,7 @@ export interface ConfigurationSnapshot {
 export interface ProviderManagementSnapshot {
   presets: Array<{ id: string; name: string; kind: string; base_url: string; auth_header: string; auth_scheme: string }>;
   adapters: string[];
+  managed_providers?: boolean | undefined;
   credentials: Record<string, { configured: boolean; editable: boolean; revision: string; pending_restart: boolean }>;
 }
 

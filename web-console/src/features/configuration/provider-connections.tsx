@@ -26,8 +26,8 @@ import {
 import type { ConfigurationBusinessGroup } from "./configuration-navigation.js";
 import { affectedRoutesForProvider, type AffectedRouteItem } from "./route-health.js";
 
-/** 服务端受信预设；Credential 明文只存在于本次输入与请求，服务端不回传也不落前端持久状态。 */
-const BUILTIN_PROVIDERS: ReadonlyArray<readonly [string, string]> = [
+/** 仅兼容未启用 managed_providers 的旧版配置；统一模式下所有供应商均来自 agent.toml [providers.*] 且全部可删。 */
+const LEGACY_BUILTIN_PROVIDERS: ReadonlyArray<readonly [string, string]> = [
   ["openai", "OpenAI"],
   ["deepseek", "DeepSeek"],
   ["bigmodel", "智谱 BigModel"],
@@ -81,11 +81,19 @@ export function ProviderConnections({
   const saved = useMemo(() => savedProvidersOf(snapshot.agent), [snapshot.agent]);
   const credentials = snapshot.providers?.credentials ?? {};
   const presets = snapshot.providers?.presets ?? [];
+  const managedProviders = snapshot.providers?.managed_providers === true;
 
   const entries = useMemo(() => {
+    const savedKeys = Object.keys(saved).sort((left, right) => left.localeCompare(right));
+    const savedLower = new Set(savedKeys.map((key) => key.toLowerCase()));
+    const legacyEntries = managedProviders
+      ? []
+      : LEGACY_BUILTIN_PROVIDERS
+          .filter(([id]) => !savedLower.has(id))
+          .map(([id, name]) => ({ id, kind: "builtin" as const, name }));
     const list = [
-      ...BUILTIN_PROVIDERS.map(([id, name]) => ({ id, kind: "builtin" as const, name })),
-      ...Object.keys(saved).sort((left, right) => left.localeCompare(right)).map((id) => ({
+      ...legacyEntries,
+      ...savedKeys.map((id) => ({
         id,
         kind: "custom" as const,
         name: typeof saved[id]?.display_name === "string" && saved[id]?.display_name ? saved[id]?.display_name as string : id,
@@ -94,7 +102,7 @@ export function ProviderConnections({
     const term = search.trim().toLowerCase();
     if (!term) return list;
     return list.filter((entry) => `${entry.name} ${entry.id}`.toLowerCase().includes(term));
-  }, [saved, search]);
+  }, [managedProviders, saved, search]);
 
   // 选中项兜底：列表变化（新建/删除）后保持有效选择，默认选第一个服务商。
   const selectedId = selected !== null && entries.some((entry) => entry.id === selected)
@@ -107,7 +115,9 @@ export function ProviderConnections({
       <div>
         <h3 className="m-0 text-base font-bold">供应商连接</h3>
         <p className="m-0 mt-1 text-xs leading-relaxed text-muted">
-          左侧选择服务商，右侧编辑凭据、地址与模型。内置连接随「保存普通配置 / 保存密钥变更」提交；自定义连接重启后生效。
+          {managedProviders
+            ? "左侧选择服务商，右侧统一编辑凭据、协议、地址与模型；所有供应商彼此独立，均可停用、删除或通过预设重新添加。"
+            : "左侧选择服务商，右侧编辑凭据、地址与模型。内置连接随「保存普通配置 / 保存密钥变更」提交；自定义连接重启后生效。"}
         </p>
       </div>
 
@@ -383,15 +393,15 @@ function CustomProviderPane({ snapshot, id, saved, preset, credential, presets, 
   const [values, setValues] = useState<ConnectionFormValues>(() => formValuesFromSaved(id, saved, preset));
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [cleanupOnDelete, setCleanupOnDelete] = useState(true);
   const [clearingCredential, setClearingCredential] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const dirty = JSON.stringify(formValuesFromSaved(id, saved, preset)) !== JSON.stringify(values);
   const pending = JSON.stringify(saved) !== JSON.stringify(running) || credential?.pending_restart === true;
   const enabled = values.enabled;
-  const affectedRoutes = useMemo(
-    () => (enabled ? [] : affectedRoutesForProvider(snapshot, id)),
-    [enabled, id, snapshot],
-  );
+  const routeReferences = useMemo(() => affectedRoutesForProvider(snapshot, id), [id, snapshot]);
+  const affectedRoutes = useMemo(() => (enabled ? [] : routeReferences), [enabled, routeReferences]);
+  const deleteEmptyRoutes = routeReferences.filter((route) => route.active && route.willBecomeEmpty);
 
   const agentChange = useMutation({
     mutationFn: ({ changes }: { changes: unknown[] }) => updateAgentConfiguration(agent.revision, changes),
@@ -553,18 +563,42 @@ function CustomProviderPane({ snapshot, id, saved, preset, credential, presets, 
 
       <ConfirmDialog
         open={confirmingDelete}
-        onOpenChange={setConfirmingDelete}
+        onOpenChange={(open) => {
+          setConfirmingDelete(open);
+          if (open) setCleanupOnDelete(routeReferences.length > 0);
+        }}
         title={`删除供应商 ${id}`}
-        description="仍被路线引用时会拒绝，专属 Credential 将归档。确认删除？"
+        description={
+          routeReferences.length > 0
+            ? `该供应商当前被 ${routeReferences.map((route) => route.label).join("、")} 引用。删除后专属 Credential 将归档。${
+                deleteEmptyRoutes.length > 0
+                  ? ` 注意：${deleteEmptyRoutes.map((route) => route.label).join("、")} 仅剩该供应商的候选，若直接清理会因路由变空被拒绝，请先前往调整路由。`
+                  : ""
+              }`
+            : "仍被路线引用时会拒绝，专属 Credential 将归档。确认删除？"
+        }
         confirmLabel="删除"
         danger
         busy={agentChange.isPending}
         onConfirm={() => {
-          agentChange.mutate({ changes: [removeProviderChange(id)] }, {
-            onSuccess: () => setConfirmingDelete(false),
-          });
+          agentChange.mutate(
+            { changes: [removeProviderChange(id, routeReferences.length > 0 && cleanupOnDelete)] },
+            { onSuccess: () => setConfirmingDelete(false) },
+          );
         }}
-      />
+      >
+        {routeReferences.length > 0 ? (
+          <label className="mt-2 flex items-center gap-2 text-xs text-ink">
+            <input
+              type="checkbox"
+              checked={cleanupOnDelete}
+              onChange={(event) => setCleanupOnDelete(event.target.checked)}
+              className="size-3.5 accent-[var(--console-accent)]"
+            />
+            同时从受影响的路由中移除 {id} 的候选引用
+          </label>
+        ) : null}
+      </ConfirmDialog>
       <ConfirmDialog
         open={clearingCredential}
         onOpenChange={setClearingCredential}
@@ -594,6 +628,8 @@ function CreateConnectionDialog({ snapshot, presets, saved, onClose, onResult }:
   const agent = snapshot.agent!;
   const [presetId, setPresetId] = useState("");
   const [identity, setIdentity] = useState("");
+  const [autoFilledId, setAutoFilledId] = useState("");
+  const [autoFilledName, setAutoFilledName] = useState("");
   const [values, setValues] = useState<ConnectionFormValues>(() => ({
     display_name: "",
     enabled: true,
@@ -608,9 +644,27 @@ function CreateConnectionDialog({ snapshot, presets, saved, onClose, onResult }:
   const applyPreset = (nextPresetId: string) => {
     setPresetId(nextPresetId);
     const preset = presets.find((candidate) => candidate.id === nextPresetId);
-    setValues((current) => preset
-      ? { ...current, kind: preset.kind, base_url: preset.base_url, auth_header: preset.auth_header, auth_scheme: preset.auth_scheme }
-      : { ...current, kind: "openai_compatible" });
+    if (preset) {
+      // 用户尚未手填 ID / 显示名称（或仍为上一个预设的自动填充值）时，自动填入规范预设值以减少手抄。
+      if (identity.trim() === "" || identity === autoFilledId) {
+        setIdentity(preset.id);
+        setAutoFilledId(preset.id);
+      }
+      setValues((current) => {
+        const shouldFillName = current.display_name.trim() === "" || current.display_name === autoFilledName;
+        if (shouldFillName) setAutoFilledName(preset.name);
+        return {
+          ...current,
+          display_name: shouldFillName ? preset.name : current.display_name,
+          kind: preset.kind,
+          base_url: preset.base_url,
+          auth_header: preset.auth_header,
+          auth_scheme: preset.auth_scheme,
+        };
+      });
+    } else {
+      setValues((current) => ({ ...current, kind: "openai_compatible" }));
+    }
   };
 
   const create = useMutation({

@@ -72,23 +72,39 @@ export function buildProviderAvailabilityMap(
   const map = new Map<string, ProviderAvailability>();
   const fields: readonly ConfigFieldSnapshot[] = snapshot.fields ?? [];
   const credentials = snapshot.providers?.credentials ?? {};
+  const managedProviders = snapshot.providers?.managed_providers === true;
 
-  for (const id of BUILTIN_IDS) {
-    const enabledField = fields.find((field) => field.key === `provider.${id}.enabled`);
-    const enabledRaw = enabledField ? (publicDraft[enabledField.key] ?? configInputValue(enabledField)) : "true";
-    const enabled = enabledRaw !== "false";
-    const configured =
-      credentials[id]?.configured === true
-      || fields.some((field) => field.key === `provider.${id}.api_key` && field.configured);
-    map.set(id, { exists: true, enabled, configured });
+  if (!managedProviders) {
+    for (const id of BUILTIN_IDS) {
+      const enabledField = fields.find((field) => field.key === `provider.${id}.enabled`);
+      const enabledRaw = enabledField ? (publicDraft[enabledField.key] ?? configInputValue(enabledField)) : "true";
+      const enabled = enabledRaw !== "false";
+      const configured =
+        credentials[id]?.configured === true
+        || fields.some((field) => field.key === `provider.${id}.api_key` && field.configured);
+      map.set(id, { exists: true, enabled, configured });
+    }
   }
 
   const savedCustom = savedProvidersOf(snapshot.agent);
   for (const [rawId, record] of Object.entries(savedCustom)) {
     const id = normalizeProviderPrefix(rawId);
     const override = customEnabledOverrides[rawId] ?? customEnabledOverrides[id];
-    const enabled = override !== undefined ? override : record.enabled !== false;
-    const configured = credentials[rawId]?.configured === true || credentials[id]?.configured === true;
+    const apiKeyEnv = typeof record.api_key_env === "string" ? record.api_key_env : "";
+    const legacyEnabledField =
+      BUILTIN_IDS.has(id) && apiKeyEnv === `${id.toUpperCase()}_API_KEY`
+        ? fields.find((field) => field.key === `provider.${id}.enabled`)
+        : undefined;
+    const legacyEnabled = legacyEnabledField
+      ? (publicDraft[legacyEnabledField.key] ?? configInputValue(legacyEnabledField)) !== "false"
+      : true;
+    const enabled = override !== undefined ? override : record.enabled !== false && legacyEnabled;
+    const configured =
+      credentials[rawId]?.configured === true
+      || credentials[id]?.configured === true
+      || (BUILTIN_IDS.has(id)
+        && apiKeyEnv === `${id.toUpperCase()}_API_KEY`
+        && fields.some((field) => field.key === `provider.${id}.api_key` && field.configured));
     map.set(id, { exists: true, enabled, configured });
   }
 

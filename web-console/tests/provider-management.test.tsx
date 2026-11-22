@@ -328,6 +328,69 @@ describe("ProviderConnections 自定义连接", () => {
     expect(alert).toHaveTextContent("没有剩余可用候选");
   });
 
+  it("统一管理模式下所有供应商平等展示且均可删除，并支持一键清理路由引用", async () => {
+    const managedSnapshot: ConfigurationSnapshot = {
+      ...snapshotFixture({}),
+      providers: {
+        adapters: ["openai_compatible", "openai_responses"],
+        managed_providers: true,
+        presets: [
+          { id: "deepseek", name: "DeepSeek", kind: "openai_responses", base_url: "https://api.deepseek.com", auth_header: "Authorization", auth_scheme: "Bearer" },
+          { id: "bigmodel", name: "智谱 BigModel", kind: "openai_compatible", base_url: "https://open.bigmodel.cn/api/paas/v4", auth_header: "Authorization", auth_scheme: "Bearer" },
+        ],
+        credentials: {
+          deepseek: { configured: true, editable: true, revision: "s-ds", pending_restart: false },
+          mimo: { configured: true, editable: true, revision: "s-mm", pending_restart: false },
+        },
+      },
+      agent: {
+        revision: "agent-managed",
+        fileExists: true,
+        source: "agent_toml",
+        editable: true,
+        readOnly: false,
+        pendingRestart: false,
+        savedValue: {
+          managed_providers: true,
+          providers: {
+            deepseek: { display_name: "DeepSeek", enabled: true, kind: "openai_responses", base_url: "https://api.deepseek.com", api_key_env: "DEEPSEEK_API_KEY" },
+            mimo: { display_name: "MiMo", enabled: true, kind: "openai_compatible", base_url: "https://api.xiaomimimo.com/v1", api_key_env: "MIMO_API_KEY" },
+          },
+          model_routes: {
+            private_main: { candidates: ["deepseek:deepseek-v4-flash", "mimo:mimo-v2.5"] },
+          },
+        },
+        runningValue: {},
+      },
+    };
+    const view = renderConnections(managedSnapshot);
+    // 统一管理模式下只显示 agent.toml 中存在的供应商，不再强行渲染已删除的 OpenAI / Gemini / BigModel。
+    expect(within(view.providerList()).queryByRole("button", { name: /OpenAI/ })).not.toBeInTheDocument();
+    expect(within(view.providerList()).getByRole("button", { name: /DeepSeek/ })).toBeInTheDocument();
+    expect(within(view.providerList()).getByRole("button", { name: /MiMo/ })).toBeInTheDocument();
+
+    // 删除 deepseek 时，弹窗列出受影响的私聊主路线，并默认勾选清理引用。
+    const dsCard = screen.getByRole("region", { name: "供应商详情 deepseek" });
+    await userEvent.click(within(dsCard).getByRole("button", { name: "删除供应商" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("私聊主路线");
+    const cleanupCheckbox = within(dialog).getByRole("checkbox");
+    expect(cleanupCheckbox).toBeChecked();
+    await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+    await waitFor(() =>
+      expect(mockedUpdateAgent).toHaveBeenCalledWith("agent-managed", [
+        { action: "remove_provider", id: "deepseek", cleanup_references: true },
+      ]),
+    );
+
+    // 新建供应商选择预设时自动填充规范 ID 和显示名称。
+    await userEvent.click(screen.getByRole("button", { name: "+ 新建供应商" }));
+    const createDialog = screen.getByRole("dialog");
+    await userEvent.selectOptions(within(createDialog).getByLabelText("供应商预设"), "bigmodel");
+    expect(within(createDialog).getByLabelText("Connection ID")).toHaveValue("bigmodel");
+    expect(within(createDialog).getByLabelText("显示名称")).toHaveValue("智谱 BigModel");
+  });
+
   it("revision 冲突时不覆盖服务器新版本，保留本地输入并提示比较", async () => {
     const view = renderConnections(snapshotFixture({}));
     await view.selectProvider("MyProxy");
