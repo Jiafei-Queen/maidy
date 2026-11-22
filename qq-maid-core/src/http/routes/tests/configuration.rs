@@ -25,7 +25,7 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
                 .to_string_lossy()
                 .into_owned(),
         ),
-        ("OPENAI_BASE_URLS".to_owned(), discovery_base),
+        ("OPENAI_BASE_URLS".to_owned(), discovery_base.clone()),
         (
             "OPENAI_API_KEY".to_owned(),
             "must-never-reach-response".to_owned(),
@@ -45,11 +45,9 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
     ]);
     let agent_path = directory.join("config/agent.toml");
     std::fs::create_dir_all(agent_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &agent_path,
-        include_str!("../../../../../runtime/config/agent.example.toml"),
-    )
-    .unwrap();
+    let agent_template = include_str!("../../../../../runtime/config/agent.example.toml")
+        .replace("https://api.openai.com/v1", &discovery_base);
+    std::fs::write(&agent_path, agent_template).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -104,6 +102,16 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
             json!({"id":"openai", "expected_revision":"missing", "model":{"provider":"openai", "id":"private/test"}}),
         ),
         (
+            "DELETE",
+            "/api/v1/console/configuration/providers/model-override",
+            json!({"id":"openai", "expected_revision":"missing", "model_id":"private/test"}),
+        ),
+        (
+            "PUT",
+            "/api/v1/console/configuration/providers/model-selection",
+            json!({"id":"openai", "expected_revision":"missing", "selected_models":["gpt-4o"]}),
+        ),
+        (
             "PATCH",
             "/api/v1/console/configuration/providers/credential",
             json!({
@@ -147,7 +155,7 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
         state.clone(),
         "POST",
         "/api/v1/console/configuration/providers/models",
-        Some(json!({"id": "openai", "expected_revision": json["configuration"]["revision"]})),
+        Some(json!({"id": "openai", "expected_revision": json["configuration"]["agent"]["revision"]})),
         &cookie,
         Some(&csrf),
     )
@@ -206,6 +214,51 @@ async fn configuration_snapshot_never_returns_secret_plaintext() -> Result<(), I
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
+    let (_, latest_metadata) = request_response_with_cookie(
+        state.clone(),
+        "POST",
+        "/api/v1/console/configuration/providers/model-metadata",
+        Some(json!({"id":"openai"})),
+        &cookie,
+        Some(&csrf),
+    )
+    .await;
+    let current_rev = latest_metadata["metadata"]["revision"].as_str().unwrap();
+    let (status, _) = request_response_with_cookie(
+        state.clone(),
+        "PUT",
+        "/api/v1/console/configuration/providers/model-selection",
+        Some(json!({"id":"openai", "expected_revision": current_rev, "selected_models":["private/proxy-model"]})),
+        &cookie,
+        Some(&csrf),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, selected_metadata) = request_response_with_cookie(
+        state.clone(),
+        "POST",
+        "/api/v1/console/configuration/providers/model-metadata",
+        Some(json!({"id":"openai"})),
+        &cookie,
+        Some(&csrf),
+    )
+    .await;
+    assert_eq!(selected_metadata["metadata"]["selection_configured"], true);
+    assert_eq!(
+        selected_metadata["metadata"]["selected_models"],
+        json!(["private/proxy-model"])
+    );
+    let rev_before_delete = selected_metadata["metadata"]["revision"].as_str().unwrap();
+    let (status, _) = request_response_with_cookie(
+        state.clone(),
+        "DELETE",
+        "/api/v1/console/configuration/providers/model-override",
+        Some(json!({"id":"openai", "expected_revision": rev_before_delete, "model_id":"private/new"})),
+        &cookie,
+        Some(&csrf),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
     server.abort();
     let serialized = json.to_string();
     assert!(!serialized.contains("must-never-reach-response"));

@@ -209,6 +209,7 @@ fn config(base_url: String, stream: bool) -> LlmConfig {
         gemini_model: "unused".to_owned(),
         openai_compatible_providers: Vec::new(),
         openai_responses_providers: Vec::new(),
+        disabled_providers: Vec::new(),
         stream,
         request_timeout_seconds: 5,
         media_max_bytes: 1024,

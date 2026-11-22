@@ -56,21 +56,75 @@ fn limiting_provider_forwards_supports_vision() {
 }
 
 #[test]
-fn auto_default_route_appends_deepseek_fallback_for_single_openai_model() {
+fn auto_default_route_does_not_implicitly_append_deepseek_fallback() {
     let mut config = app_config(ProviderMode::Auto, "openai:gpt-5.4-mini");
     config.deepseek_api_key = Some("test-deepseek-key".to_owned());
 
     let route = auto_default_route(&config).unwrap();
     let provider = build_provider(&config).unwrap();
 
-    assert_eq!(
-        route.display(),
-        "openai:gpt-5.4-mini,deepseek:deepseek-chat"
+    assert_eq!(route.display(), "openai:gpt-5.4-mini");
+    assert_eq!(provider.model(), "openai:gpt-5.4-mini");
+}
+
+#[test]
+fn auto_skips_disabled_openai_and_uses_remaining_deepseek_candidate() {
+    let mut config = app_config(
+        ProviderMode::Auto,
+        "openai:gpt-5.4-mini,deepseek:deepseek-chat",
     );
+    config.openai_api_key = Some("test-openai-key".to_owned());
+    config.deepseek_api_key = Some("test-deepseek-key".to_owned());
+    config.disabled_providers.push(ModelProvider::OpenAi);
+
+    let providers = auto_required_provider_kinds(&config).unwrap();
+    preflight_provider_config(&config).unwrap();
+    let provider = build_provider(&config).unwrap();
+
+    assert_eq!(providers, vec![ModelProvider::DeepSeek]);
     assert_eq!(
         provider.model(),
         "openai:gpt-5.4-mini,deepseek:deepseek-chat"
     );
+}
+
+#[test]
+fn auto_skips_disabled_custom_provider_without_undeclared_error() {
+    let mut config = app_config(
+        ProviderMode::Auto,
+        "mimo:mimo-v2.5-pro,deepseek:deepseek-chat",
+    );
+    config.openai_api_key = None;
+    config.deepseek_api_key = Some("test-deepseek-key".to_owned());
+    config
+        .disabled_providers
+        .push(ModelProvider::Custom("mimo".to_owned()));
+
+    let providers = auto_required_provider_kinds(&config).unwrap();
+    preflight_provider_config(&config).unwrap();
+    let provider = build_provider(&config).unwrap();
+
+    assert_eq!(providers, vec![ModelProvider::DeepSeek]);
+    assert_eq!(
+        provider.model(),
+        "mimo:mimo-v2.5-pro,deepseek:deepseek-chat"
+    );
+}
+
+#[test]
+fn auto_rejects_route_when_all_candidates_are_disabled() {
+    let mut config = app_config(ProviderMode::Auto, "openai:gpt-5.4-mini,mimo:mimo-v2.5-pro");
+    config.openai_api_key = Some("test-openai-key".to_owned());
+    config.disabled_providers.push(ModelProvider::OpenAi);
+    config
+        .disabled_providers
+        .push(ModelProvider::Custom("mimo".to_owned()));
+
+    let err = preflight_provider_config(&config).unwrap_err();
+
+    assert_eq!(err.code, "config");
+    assert!(err.message.contains("LLM_MODEL"));
+    assert!(err.message.contains("no available provider"));
 }
 
 #[test]
@@ -715,4 +769,46 @@ fn provider_id_cannot_be_declared_for_two_protocols() {
             .message
             .contains("provider `routera` is declared more than once")
     );
+}
+
+#[test]
+fn configured_standard_providers_assemble_without_legacy_top_level_keys() {
+    let mut config = app_config(
+        ProviderMode::Auto,
+        "deepseek:deepseek-v4-flash,openai:gpt-5.6-luna",
+    );
+    config.openai_api_key = None;
+    config.deepseek_api_key = None;
+    config
+        .openai_responses_providers
+        .push(OpenAiResponsesProviderConfig {
+            id: ModelProvider::DeepSeek,
+            base_url: "https://custom-deepseek.example".to_owned(),
+            api_key_env: "QQ_MAID_CONNECTION_DS".to_owned(),
+            api_key: Some("ds-slot-key".to_owned()),
+            auth: HttpAuthConfig {
+                header: "x-api-key".to_owned(),
+                scheme: None,
+            },
+            request_timeout_seconds: Some(30),
+            chat_fallback: false,
+        });
+    config
+        .openai_compatible_providers
+        .push(OpenAiCompatibleProviderConfig {
+            id: ModelProvider::OpenAi,
+            base_url: "https://custom-openai.example/v1".to_owned(),
+            api_key_env: "QQ_MAID_CONNECTION_OA".to_owned(),
+            api_key: Some("oa-slot-key".to_owned()),
+            auth: HttpAuthConfig::default(),
+            request_timeout_seconds: Some(45),
+        });
+
+    preflight_provider_config(&config).unwrap();
+    let provider = build_provider(&config).unwrap();
+    assert_eq!(
+        provider.model(),
+        "deepseek:deepseek-v4-flash,openai:gpt-5.6-luna"
+    );
+    crate::web_search::build_web_search_executor(&config).unwrap();
 }

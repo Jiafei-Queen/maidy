@@ -45,6 +45,26 @@ impl DeepSeekProvider {
     pub fn new(config: &LlmConfig) -> Result<Self, LlmError> {
         let connection = responses_config(config);
         let model = deepseek_config_model(&config.deepseek_model)?;
+        Self::from_configured(
+            &connection,
+            model,
+            config.stream,
+            config.request_timeout_seconds,
+            config.media_max_bytes,
+            config.max_output_tokens,
+        )
+    }
+
+    /// 按统一 `[providers.deepseek]` 连接配置创建 DeepSeek 实例，
+    /// 保留旧模型走 Chat 兼容路径的规则，同时应用自定义 Base URL、认证头与超时。
+    pub(crate) fn from_configured(
+        connection: &OpenAiResponsesProviderConfig,
+        default_model: String,
+        stream: bool,
+        request_timeout_seconds: u64,
+        media_max_bytes: u64,
+        max_output_tokens: u64,
+    ) -> Result<Self, LlmError> {
         Ok(Self {
             legacy_chat: OpenAiCompatibleProvider::new(
                 &OpenAiCompatibleProviderConfig {
@@ -55,19 +75,19 @@ impl DeepSeekProvider {
                     auth: connection.auth.clone(),
                     request_timeout_seconds: connection.request_timeout_seconds,
                 },
-                model.clone(),
-                config.stream,
-                config.request_timeout_seconds,
-                config.media_max_bytes,
-                config.max_output_tokens,
+                default_model.clone(),
+                stream,
+                request_timeout_seconds,
+                media_max_bytes,
+                max_output_tokens,
             )?,
             inner: ConfiguredResponsesProvider::new(
-                &connection,
-                model,
-                config.stream,
-                config.request_timeout_seconds,
-                config.media_max_bytes,
-                config.max_output_tokens,
+                connection,
+                default_model,
+                stream,
+                request_timeout_seconds,
+                media_max_bytes,
+                max_output_tokens,
             )?,
         })
     }

@@ -11,11 +11,15 @@ import {
 import type {
   CapabilityStatus,
   CapabilityScopeStatus,
+  CandidateDiagnostic,
+  CandidateIssueCode,
   ConfigurationStatus,
   ConsoleStatus,
   DirectionalCapabilityStatus,
   PlatformStatus,
   ProviderStatus,
+  RouteDiagnostic,
+  RouteDiagnosticKind,
   RuntimeState,
   RuntimeStatus,
   StorageStatus,
@@ -681,6 +685,7 @@ function parseConfigurationSnapshot(value: unknown, toolsValue: unknown = [], re
     revision: string(item.revision, "missing"),
     fileExists: item.file_exists === true,
     providers: item.providers as ConfigurationSnapshot["providers"],
+    routeDiagnostics: array(item.route_diagnostics).map(parseRouteDiagnostic),
     fields: array(item.fields).map(parseConfigField),
     registeredTools: array(toolsValue).map(parseRegisteredTool),
     restartAvailable: record(restartValue).available === true,
@@ -694,6 +699,39 @@ function parseConfigurationSnapshot(value: unknown, toolsValue: unknown = [], re
       savedValue: agent.saved_value,
       runningValue: agent.running_value,
     },
+  };
+}
+
+function parseRouteDiagnostic(value: unknown): RouteDiagnostic {
+  const item = record(value);
+  const kind: RouteDiagnosticKind =
+    item.kind === "search_route" || item.kind === "stt_route" ? item.kind : "model_route";
+  return {
+    kind,
+    routeName: string(item.route_name, ""),
+    active: item.active === true,
+    hasAvailableCandidate: item.has_available_candidate === true,
+    candidates: array(item.candidates).map(parseCandidateDiagnostic),
+  };
+}
+
+function parseCandidateDiagnostic(value: unknown): CandidateDiagnostic {
+  const item = record(value);
+  const issues = array(item.issues).filter(
+    (entry): entry is CandidateIssueCode =>
+      entry === "provider_disabled"
+      || entry === "provider_missing"
+      || entry === "missing_credential"
+      || entry === "model_disabled",
+  );
+  return {
+    index: finiteNumber(item.index) ?? 0,
+    candidate: string(item.candidate, ""),
+    provider: string(item.provider, ""),
+    model: string(item.model, ""),
+    available: item.available === true,
+    issues,
+    message: nullableString(item.message),
   };
 }
 
@@ -897,5 +935,19 @@ export async function fetchModelMetadata(id: string): Promise<Record<string, unk
 export async function updateModelOverride(id: string, revision: string, model: unknown): Promise<ConfigurationSnapshot> {
   return parseConfigurationPayload(await mutatingJson("/api/v1/console/configuration/providers/model-override", "PATCH", {
     id, expected_revision: revision, model,
+  }));
+}
+export async function updateModelSelection(
+  id: string,
+  revision: string,
+  selectedModels: string[] | null,
+): Promise<ConfigurationSnapshot> {
+  return parseConfigurationPayload(await mutatingJson("/api/v1/console/configuration/providers/model-selection", "PUT", {
+    id, expected_revision: revision, selected_models: selectedModels,
+  }));
+}
+export async function deleteModelOverride(id: string, revision: string, modelId: string): Promise<ConfigurationSnapshot> {
+  return parseConfigurationPayload(await mutatingJson("/api/v1/console/configuration/providers/model-override", "DELETE", {
+    id, expected_revision: revision, model_id: modelId,
   }));
 }

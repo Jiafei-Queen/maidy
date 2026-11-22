@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Input } from "../../components/ui/field.js";
+import { StatusBadge } from "../../components/ui/status-badge.js";
+import type { CandidateHealth, RouteModelOptionGroup } from "./route-health.js";
 
 /**
  * 模型候选路线 Chip 编辑器。
@@ -76,6 +78,14 @@ export function appendQuickAddCandidate(list: readonly string[], value: string):
   return list.includes(value) ? [...list] : [...list, value];
 }
 
+/** 仅保留健康可用的候选，一键清理已停用/缺失/禁用项，保持原顺序。 */
+export function removeUnavailableCandidates(
+  list: readonly string[],
+  healthList: readonly CandidateHealth[],
+): string[] {
+  return list.filter((_, index) => healthList[index]?.available !== false);
+}
+
 export interface ModelRouteEditorProps {
   label: string;
   candidates: readonly string[];
@@ -85,6 +95,12 @@ export interface ModelRouteEditorProps {
   entityLabel?: string;
   /** 常用候选快捷添加；已存在时按钮禁用，不会重复写入。 */
   quickAdd?: ModelRouteQuickAdd;
+  /** 实时诊断单个候选可用性；不可用时在 Chip 上展示警告徽标与原因。 */
+  diagnoseCandidate?: (candidate: string) => CandidateHealth;
+  /** 该路线当前是否处于活跃业务路径；非活跃路径仅标记单项，不触发整条无可用严重警告。 */
+  routeActive?: boolean;
+  /** 已启用供应商的可选模型分组；非空时在手动输入旁提供下拉快捷添加。 */
+  modelOptionGroups?: readonly RouteModelOptionGroup[] | undefined;
 }
 
 /** Chip 编辑器：排序即时生效（上移/下移/拖动），删除与添加同样即时；错误经 aria-live 播报。 */
@@ -95,11 +111,19 @@ export function ModelRouteEditor({
   onChange,
   entityLabel = "模型",
   quickAdd,
+  diagnoseCandidate,
+  routeActive = true,
+  modelOptionGroups,
 }: ModelRouteEditorProps) {
   const [addValue, setAddValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const healthList = diagnoseCandidate ? candidates.map((candidate) => diagnoseCandidate(candidate)) : null;
+  const unavailableCount = healthList ? healthList.filter((item) => !item.available).length : 0;
+  const allUnavailable = routeActive && candidates.length > 0 && healthList !== null && unavailableCount === candidates.length;
+  const hasModelOptions = Boolean(modelOptionGroups && modelOptionGroups.some((group) => group.models.length > 0));
 
   const tryAdd = (): void => {
     const result = addCandidate(candidates, addValue, entityLabel);
@@ -112,6 +136,23 @@ export function ModelRouteEditor({
     onChange(result.list);
   };
 
+  const trySelectOption = (candidate: string): void => {
+    if (!candidate) return;
+    const result = addCandidate(candidates, candidate, entityLabel);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    onChange(result.list);
+  };
+
+  const clearUnavailable = (): void => {
+    if (!healthList || unavailableCount === 0) return;
+    setError(null);
+    onChange(removeUnavailableCandidates(candidates, healthList));
+  };
+
   const quickAddPresent = quickAdd ? candidates.includes(quickAdd.value) : false;
   const tryQuickAdd = (): void => {
     if (!quickAdd || quickAddPresent) return;
@@ -121,73 +162,149 @@ export function ModelRouteEditor({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="m-0 text-sm font-semibold text-ink">{label}</p>
-      <div role="list" aria-label={`${label}候选${entityLabel}`} className="flex flex-wrap gap-1.5">
-        {candidates.map((candidate, index) => (
-          <span
-            key={candidate}
-            role="listitem"
-            aria-label={`候选 ${candidate}，拖动或使用上移/下移调整顺序`}
-            draggable={!disabled}
-            onDragStart={() => setDragFrom(index)}
-            onDragEnd={() => {
-              setDragFrom(null);
-              setDragOverIndex(null);
-            }}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragOverIndex(index);
-            }}
-            onDragLeave={() => setDragOverIndex((current) => (current === index ? null : current))}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragOverIndex(null);
-              if (dragFrom !== null && dragFrom !== index) {
-                onChange(moveCandidate(candidates, dragFrom, index));
-              }
-              setDragFrom(null);
-            }}
-            className={`flex items-center gap-1 border border-line bg-glass-muted px-2 py-1 text-xs font-mono text-ink ${
-              dragOverIndex === index && dragFrom !== null && dragFrom !== index ? "border-accent" : ""
-            } ${disabled ? "opacity-70" : ""}`}
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="m-0 text-sm font-semibold text-ink">{label}</p>
+        {allUnavailable ? (
+          <StatusBadge tone="error" label="无可用候选" />
+        ) : unavailableCount > 0 ? (
+          <StatusBadge tone="warning" label={`含 ${unavailableCount} 个不可用候选`} />
+        ) : null}
+        {!disabled && unavailableCount > 0 ? (
+          <button
+            type="button"
+            aria-label={`清理 ${label} 中的失效候选`}
+            onClick={clearUnavailable}
+            className="rounded-console border border-warning/60 bg-warning-soft/40 px-2 py-0.5 text-xs font-semibold text-warning transition-colors hover:bg-warning-soft"
           >
-            <span aria-hidden="true" className={disabled ? "hidden" : "text-muted"}>≡</span>
-            <span>{candidate}</span>
-            {disabled ? null : (
-              <>
-                <button
-                  type="button"
-                  aria-label={`上移 ${candidate}`}
-                  onClick={() => onChange(moveCandidate(candidates, index, index - 1))}
-                  className="px-0.5 text-muted hover:text-accent"
+            清理失效项（{unavailableCount}）
+          </button>
+        ) : null}
+      </div>
+      <div role="list" aria-label={`${label}候选${entityLabel}`} className="flex flex-wrap gap-1.5">
+        {candidates.map((candidate, index) => {
+          const health = healthList?.[index];
+          const chipToneClass =
+            health && !health.available
+              ? health.severity === "error"
+                ? "border-error/60 bg-error-soft/60 text-ink"
+                : "border-warning/60 bg-warning-soft/60 text-ink"
+              : "border-line bg-glass-muted text-ink";
+          return (
+            <span
+              key={candidate}
+              role="listitem"
+              aria-label={
+                health?.message
+                  ? `候选 ${candidate}，${health.message}，拖动或使用上移/下移调整顺序`
+                  : `候选 ${candidate}，拖动或使用上移/下移调整顺序`
+              }
+              title={health?.message ?? undefined}
+              draggable={!disabled}
+              onDragStart={() => setDragFrom(index)}
+              onDragEnd={() => {
+                setDragFrom(null);
+                setDragOverIndex(null);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragOverIndex(index);
+              }}
+              onDragLeave={() => setDragOverIndex((current) => (current === index ? null : current))}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragOverIndex(null);
+                if (dragFrom !== null && dragFrom !== index) {
+                  onChange(moveCandidate(candidates, dragFrom, index));
+                }
+                setDragFrom(null);
+              }}
+              className={`flex items-center gap-1 border px-2 py-1 text-xs font-mono ${chipToneClass} ${
+                dragOverIndex === index && dragFrom !== null && dragFrom !== index ? "border-accent" : ""
+              } ${disabled ? "opacity-70" : ""}`}
+            >
+              <span aria-hidden="true" className={disabled ? "hidden" : "text-muted"}>≡</span>
+              <span>{candidate}</span>
+              {health?.badge ? (
+                <span
+                  className={`rounded-console-sm px-1 py-0.25 font-sans text-[10px] font-semibold ${
+                    health.severity === "error" ? "bg-error/15 text-error" : "bg-warning/15 text-warning"
+                  }`}
                 >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  aria-label={`下移 ${candidate}`}
-                  onClick={() => onChange(moveCandidate(candidates, index, index + 1))}
-                  className="px-0.5 text-muted hover:text-accent"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  aria-label={`删除 ${candidate}`}
-                  onClick={() => onChange(removeCandidate(candidates, index))}
-                  className="px-0.5 text-muted hover:text-error"
-                >
-                  ×
-                </button>
-              </>
-            )}
-          </span>
-        ))}
+                  {health.badge}
+                </span>
+              ) : null}
+              {disabled ? null : (
+                <>
+                  <button
+                    type="button"
+                    aria-label={`上移 ${candidate}`}
+                    onClick={() => onChange(moveCandidate(candidates, index, index - 1))}
+                    className="px-0.5 text-muted hover:text-accent"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`下移 ${candidate}`}
+                    onClick={() => onChange(moveCandidate(candidates, index, index + 1))}
+                    className="px-0.5 text-muted hover:text-accent"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`删除 ${candidate}`}
+                    onClick={() => onChange(removeCandidate(candidates, index))}
+                    className="px-0.5 text-muted hover:text-error"
+                  >
+                    ×
+                  </button>
+                </>
+              )}
+            </span>
+          );
+        })}
         {candidates.length === 0 ? (
           <span className="text-xs text-muted">暂无候选{entityLabel}</span>
         ) : null}
       </div>
+      {allUnavailable ? (
+        <p role="alert" className="m-0 text-xs font-medium text-error">
+          当前路线所有候选均不可用，运行时无法调用模型；请启用对应供应商、配置 API Key 或添加可用模型。
+        </p>
+      ) : unavailableCount > 0 ? (
+        <p className="m-0 text-xs text-warning">
+          标黄/红的候选在运行时会被自动跳过，悬停可查看具体原因。
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
+        {hasModelOptions ? (
+          <select
+            aria-label={`从已保留模型为 ${label} 添加候选${entityLabel}`}
+            disabled={disabled}
+            value=""
+            onChange={(event) => trySelectOption(event.target.value)}
+            className="max-w-72 rounded-console border border-line bg-input px-2.5 py-1.5 text-sm text-ink outline-none disabled:opacity-50"
+          >
+            <option value="">从已保留模型选择…</option>
+            {modelOptionGroups!.map((group) => (
+              <optgroup
+                key={group.providerId}
+                label={group.configured ? `${group.providerLabel}（${group.providerId}）` : `${group.providerLabel}（${group.providerId} · 未配 Key）`}
+              >
+                {group.models.map((modelId) => {
+                  const candidateValue = `${group.providerId.toLowerCase()}:${modelId}`;
+                  const exists = candidates.includes(candidateValue);
+                  return (
+                    <option key={candidateValue} value={candidateValue} disabled={exists}>
+                      {exists ? `${modelId}（已在路线中）` : modelId}
+                    </option>
+                  );
+                })}
+              </optgroup>
+            ))}
+          </select>
+        ) : null}
         <Input
           type="text"
           placeholder="provider:model"

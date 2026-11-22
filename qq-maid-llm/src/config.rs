@@ -143,6 +143,11 @@ pub struct LlmConfig {
     pub openai_compatible_providers: Vec<OpenAiCompatibleProviderConfig>,
     /// 配置文件声明的 OpenAI Responses provider 列表。
     pub openai_responses_providers: Vec<OpenAiResponsesProviderConfig>,
+    /// 已声明但当前停用的 provider 列表。
+    ///
+    /// 停用的 provider 不得初始化运行实例，但在候选链预检中视为“已声明可跳过”，
+    /// 避免将停用的自定义 provider 误判为拼写错误或阻断同一路由上的其他可用候选。
+    pub disabled_providers: Vec<ModelProvider>,
     /// 是否启用流式输出。
     pub stream: bool,
     /// 请求超时秒数。

@@ -16,8 +16,39 @@ pub struct ProviderPreset {
 
 pub fn provider_presets() -> Vec<ProviderPreset> {
     use AgentProviderKind::{OpenAiCompatible as Chat, OpenAiResponses as Responses};
-    // 地址复用现有公开配置和已支持的 Adapter，不引入未实现协议的品牌模板。
+    // 所有供应商平等可增删；预设只提供受信协议模板与默认地址，不包含任何凭据。
     [
+        (
+            "openai",
+            "OpenAI (Responses)",
+            Responses,
+            "https://api.openai.com/v1",
+        ),
+        (
+            "openai_chat",
+            "OpenAI (Chat Completions)",
+            Chat,
+            "https://api.openai.com/v1",
+        ),
+        (
+            "gemini",
+            "Gemini",
+            Chat,
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+        ),
+        (
+            "deepseek",
+            "DeepSeek",
+            Responses,
+            "https://api.deepseek.com",
+        ),
+        (
+            "bigmodel",
+            "智谱 BigModel",
+            Chat,
+            "https://open.bigmodel.cn/api/paas/v4",
+        ),
+        ("mimo", "MiMo", Chat, "https://api.xiaomimimo.com/v1"),
         (
             "opencode_zen",
             "OpenCode Zen Responses",
@@ -35,30 +66,6 @@ pub fn provider_presets() -> Vec<ProviderPreset> {
             "OpenCode Go",
             Chat,
             "https://opencode.ai/zen/go/v1",
-        ),
-        (
-            "openai_custom",
-            "OpenAI Responses",
-            Responses,
-            "https://api.openai.com/v1",
-        ),
-        (
-            "deepseek_custom",
-            "DeepSeek",
-            Chat,
-            "https://api.deepseek.com",
-        ),
-        (
-            "bigmodel_custom",
-            "智谱 BigModel",
-            Chat,
-            "https://open.bigmodel.cn/api/paas/v4",
-        ),
-        (
-            "gemini_custom",
-            "Gemini Chat",
-            Chat,
-            "https://generativelanguage.googleapis.com/v1beta/openai",
         ),
     ]
     .into_iter()

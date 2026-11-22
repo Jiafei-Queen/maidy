@@ -4,12 +4,14 @@
 //! 数据库外的独立文件。这里提供领域模型和安全写入能力，管理员认证与页面由后续任务接入。
 
 mod agent_file;
+mod discovery_cache;
 mod field;
 mod managed_file;
 mod models;
 mod provider_presets;
 mod providers;
 mod registry;
+mod route_diagnostics;
 mod secret;
 
 #[cfg(test)]
@@ -37,6 +39,9 @@ pub use managed_file::{ManagedConfigChange, ManagedConfigFile, ManagedConfigSnap
 pub use provider_presets::{ProviderPreset, provider_presets};
 pub use providers::ProviderManagementSnapshot;
 pub use registry::ConfigRegistry;
+pub use route_diagnostics::{
+    CandidateDiagnostic, CandidateIssueCode, RouteDiagnostic, RouteDiagnosticKind,
+};
 pub use secret::{
     CONFIG_SECRET_SCHEMA_V1, SECRET_MISSING_REVISION, SecretConfigChange, SecretStore,
 };
@@ -159,6 +164,8 @@ pub struct ConfigCenterSnapshot {
     pub file_exists: bool,
     /// Agent 策略使用独立 revision，不能与 runtime.toml 的 revision 混用。
     pub agent: Option<AgentConfigSnapshot>,
+    /// 各模型路线、搜索路线与 STT 路线的候选可用性诊断，驱动停用影响与路由告警。
+    pub route_diagnostics: Vec<RouteDiagnostic>,
     pub fields: Vec<ConfigFieldSnapshot>,
 }
 
@@ -375,15 +382,45 @@ impl ConfigCenter {
             });
         }
 
+        let agent_snapshot = self
+            .agent_file
+            .as_ref()
+            .map(AgentConfigFile::snapshot)
+            .transpose()?;
+        let route_diagnostics = match self
+            .agent_file
+            .as_ref()
+            .and_then(|file| file.current_runtime().ok())
+        {
+            Some(agent_runtime) => {
+                let catalog = self
+                    .load_models()
+                    .ok()
+                    .and_then(|(_, local)| {
+                        qq_maid_llm::model_catalog::EffectiveModelCatalog::from_embedded(Some(
+                            &local,
+                        ))
+                        .ok()
+                    })
+                    .unwrap_or_else(|| {
+                        qq_maid_llm::model_catalog::EffectiveModelCatalog::from_embedded(None)
+                            .expect("embedded model catalog must remain valid")
+                    });
+                route_diagnostics::collect_route_diagnostics(
+                    &agent_runtime,
+                    &candidate_environment,
+                    &catalog,
+                )
+            }
+            None => Vec::new(),
+        };
+
         Ok(ConfigCenterSnapshot {
             providers: self.provider_snapshot()?,
             revision: managed.revision,
             file_exists: managed.exists,
-            agent: self
-                .agent_file
-                .as_ref()
-                .map(AgentConfigFile::snapshot)
-                .transpose()?,
+            agent: agent_snapshot,
+            route_diagnostics,
             fields,
         })
     }
@@ -430,12 +467,19 @@ impl ConfigCenter {
             &self.external_environment,
         )?;
         let changes = self.prepare_provider_changes(changes)?;
-        self.agent_file
+        let updated = self
+            .agent_file
             .as_ref()
             .ok_or_else(|| ConfigCenterError::invalid("agent config domain is not initialized"))?
             .update_with_validator(expected_revision, &changes, |candidate_agent| {
                 self.validate_candidate_for_write(&environment, Some(candidate_agent))
-            })
+            })?;
+        for change in &changes {
+            if let AgentConfigChange::RemoveProvider { id, .. } = change {
+                let _ = discovery_cache::remove_cached_discovery(&self.discovery_cache_path(), id);
+            }
+        }
+        Ok(updated)
     }
 
     pub fn replace_secret(
@@ -607,8 +651,6 @@ impl ConfigCenter {
                 qq_maid_llm::model_catalog::EffectiveModelCatalog::from_embedded(Some(&local))
                     .map_err(|error| ConfigCenterError::invalid(error.message))?;
             super::model_management::validate_disabled_models(agent, &catalog)
-                .map_err(|error| ConfigCenterError::invalid(error.message))?;
-            super::provider_config::validate_builtin_connection_environment(agent, environment)
                 .map_err(|error| ConfigCenterError::invalid(error.message))?;
         }
         match self.validate_candidate(environment, candidate_agent) {

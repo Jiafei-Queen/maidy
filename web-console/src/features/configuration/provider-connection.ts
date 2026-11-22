@@ -68,7 +68,9 @@ export function setProviderChange(id: string, values: ConnectionFormValues, exis
   return { action: "set_provider", id: validateConnectionId(id, exists), provider: buildProviderPayload(values) };
 }
 
-/** 构造 remove_provider 变更；引用校验由服务端执行，前端不伪造成功。 */
-export function removeProviderChange(id: string): Record<string, unknown> {
-  return { action: "remove_provider", id };
+/** 构造 remove_provider 变更；cleanupReferences 为 true 时服务端原子清理受影响路由中的该供应商候选。 */
+export function removeProviderChange(id: string, cleanupReferences = false): Record<string, unknown> {
+  return cleanupReferences
+    ? { action: "remove_provider", id, cleanup_references: true }
+    : { action: "remove_provider", id };
 }

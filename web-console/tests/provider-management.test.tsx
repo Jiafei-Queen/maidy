@@ -5,12 +5,14 @@ import { Provider as JotaiProvider } from "jotai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConsoleApiError,
+  deleteModelOverride,
   discoverConnectionModels,
   fetchModelMetadata,
   testProviderConnection,
   updateAgentConfiguration,
   updateConnectionCredential,
   updateModelOverride,
+  updateModelSelection,
 } from "../src/api.js";
 import { ModelManagerPanel } from "../src/features/configuration/model-manager-panel.js";
 import { ProviderConnections } from "../src/features/configuration/provider-connections.js";
@@ -26,6 +28,8 @@ vi.mock("../src/api.js", async (importOriginal) => {
     discoverConnectionModels: vi.fn(),
     fetchModelMetadata: vi.fn(),
     updateModelOverride: vi.fn(),
+    updateModelSelection: vi.fn(),
+    deleteModelOverride: vi.fn(),
   };
 });
 
@@ -35,6 +39,8 @@ const mockedUpdateCredential = vi.mocked(updateConnectionCredential);
 const mockedDiscover = vi.mocked(discoverConnectionModels);
 const mockedFetchMetadata = vi.mocked(fetchModelMetadata);
 const mockedUpdateOverride = vi.mocked(updateModelOverride);
+const mockedUpdateSelection = vi.mocked(updateModelSelection);
+const mockedDeleteOverride = vi.mocked(deleteModelOverride);
 
 const legacyProvider = {
   display_name: null,
@@ -311,6 +317,86 @@ describe("ProviderConnections 自定义连接", () => {
     expect(view.onResult).toHaveBeenCalledWith({ error: true, text: expect.stringContaining("仍引用 Connection MyProxy") });
   });
 
+  it("停用仍被路由引用的自定义供应商时立即弹出受影响路由告警", async () => {
+    const view = renderConnections(
+      snapshotFixture({
+        modelRoutes: {
+          private_main: { candidates: ["MyProxy:gpt-test"] },
+        },
+      }),
+    );
+    await view.selectProvider("MyProxy");
+    const card = view.customCard();
+    await userEvent.click(within(card).getByRole("switch", { name: "启用供应商 MyProxy" }));
+    const alert = await within(card).findByRole("alert");
+    expect(alert).toHaveTextContent("停用提醒");
+    expect(alert).toHaveTextContent("私聊主路线");
+    expect(alert).toHaveTextContent("没有剩余可用候选");
+  });
+
+  it("统一管理模式下所有供应商平等展示且均可删除，并支持一键清理路由引用", async () => {
+    const managedSnapshot: ConfigurationSnapshot = {
+      ...snapshotFixture({}),
+      providers: {
+        adapters: ["openai_compatible", "openai_responses"],
+        managed_providers: true,
+        presets: [
+          { id: "deepseek", name: "DeepSeek", kind: "openai_responses", base_url: "https://api.deepseek.com", auth_header: "Authorization", auth_scheme: "Bearer" },
+          { id: "bigmodel", name: "智谱 BigModel", kind: "openai_compatible", base_url: "https://open.bigmodel.cn/api/paas/v4", auth_header: "Authorization", auth_scheme: "Bearer" },
+        ],
+        credentials: {
+          deepseek: { configured: true, editable: true, revision: "s-ds", pending_restart: false },
+          mimo: { configured: true, editable: true, revision: "s-mm", pending_restart: false },
+        },
+      },
+      agent: {
+        revision: "agent-managed",
+        fileExists: true,
+        source: "agent_toml",
+        editable: true,
+        readOnly: false,
+        pendingRestart: false,
+        savedValue: {
+          managed_providers: true,
+          providers: {
+            deepseek: { display_name: "DeepSeek", enabled: true, kind: "openai_responses", base_url: "https://api.deepseek.com", api_key_env: "DEEPSEEK_API_KEY" },
+            mimo: { display_name: "MiMo", enabled: true, kind: "openai_compatible", base_url: "https://api.xiaomimimo.com/v1", api_key_env: "MIMO_API_KEY" },
+          },
+          model_routes: {
+            private_main: { candidates: ["deepseek:deepseek-v4-flash", "mimo:mimo-v2.5"] },
+          },
+        },
+        runningValue: {},
+      },
+    };
+    const view = renderConnections(managedSnapshot);
+    // 统一管理模式下只显示 agent.toml 中存在的供应商，不再强行渲染已删除的 OpenAI / Gemini / BigModel。
+    expect(within(view.providerList()).queryByRole("button", { name: /OpenAI/ })).not.toBeInTheDocument();
+    expect(within(view.providerList()).getByRole("button", { name: /DeepSeek/ })).toBeInTheDocument();
+    expect(within(view.providerList()).getByRole("button", { name: /MiMo/ })).toBeInTheDocument();
+
+    // 删除 deepseek 时，弹窗列出受影响的私聊主路线，并默认勾选清理引用。
+    const dsCard = screen.getByRole("region", { name: "供应商详情 deepseek" });
+    await userEvent.click(within(dsCard).getByRole("button", { name: "删除供应商" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("私聊主路线");
+    const cleanupCheckbox = within(dialog).getByRole("checkbox");
+    expect(cleanupCheckbox).toBeChecked();
+    await userEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+    await waitFor(() =>
+      expect(mockedUpdateAgent).toHaveBeenCalledWith("agent-managed", [
+        { action: "remove_provider", id: "deepseek", cleanup_references: true },
+      ]),
+    );
+
+    // 新建供应商选择预设时自动填充规范 ID 和显示名称。
+    await userEvent.click(screen.getByRole("button", { name: "+ 新建供应商" }));
+    const createDialog = screen.getByRole("dialog");
+    await userEvent.selectOptions(within(createDialog).getByLabelText("供应商预设"), "bigmodel");
+    expect(within(createDialog).getByLabelText("Connection ID")).toHaveValue("bigmodel");
+    expect(within(createDialog).getByLabelText("显示名称")).toHaveValue("智谱 BigModel");
+  });
+
   it("revision 冲突时不覆盖服务器新版本，保留本地输入并提示比较", async () => {
     const view = renderConnections(snapshotFixture({}));
     await view.selectProvider("MyProxy");
@@ -551,5 +637,56 @@ describe("模型管理面板", () => {
     mockedUpdateOverride.mockRejectedValueOnce(new ConsoleApiError("model conflict", "config_conflict", 409));
     await userEvent.click(screen.getByRole("switch", { name: "启用模型 known" }));
     expect(await screen.findByText(/未覆盖服务器版本/)).toBeInTheDocument();
+  });
+
+  it("自动展示持久化同步模型缓存，支持通过弹窗批量勾选精选模型与删除本地自定义条目", async () => {
+    const cachedMetadata = {
+      revision: "models-r5",
+      provider: "myproxy",
+      models: [
+        { id: "custom-local", display_name: "私有模型", enabled: true, provenance: { display_name: "local_override" } },
+      ],
+      overrides: [{ provider: "myproxy", id: "custom-local", display_name: "私有模型" }],
+      discovered: {
+        state: "success",
+        category: "ok",
+        synced_at: "2026-11-22T09:00:00Z",
+        models: [{ id: "gpt-5-mini" }, { id: "gpt-4o" }],
+      },
+      selection_configured: true,
+      selected_models: ["gpt-5-mini", "custom-local"],
+      catalog_source: {},
+    };
+    mockedFetchMetadata.mockResolvedValue(cachedMetadata);
+    const view = renderConnections(snapshotFixture({}));
+    await view.selectProvider("MyProxy");
+
+    // 无需再次点击“同步模型”，已持久化发现缓存与精选列表立即生效，未勾选的 gpt-4o 不占主列表。
+    expect(await screen.findByText("模型 ID：gpt-5-mini")).toBeInTheDocument();
+    expect(screen.getByText("模型 ID：custom-local")).toBeInTheDocument();
+    expect(screen.queryByText("模型 ID：gpt-4o")).not.toBeInTheDocument();
+    const modelSection = screen.getByRole("region", { name: "模型管理 MyProxy" });
+    expect(within(modelSection).getByRole("status")).toHaveTextContent(/上次同步/);
+
+    // 打开“管理 / 选择模型”批量选择弹窗，勾选 gpt-4o 并取消 custom-local 后提交批量保存。
+    mockedUpdateSelection.mockResolvedValueOnce({ revision: "runtime-r" } as never);
+    await userEvent.click(screen.getByRole("button", { name: "管理 / 选择模型" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByLabelText("选择模型 gpt-5-mini")).toBeChecked();
+    expect(within(dialog).getByLabelText("选择模型 gpt-4o")).not.toBeChecked();
+    await userEvent.click(within(dialog).getByLabelText("选择模型 gpt-4o"));
+    await userEvent.click(within(dialog).getByLabelText("选择模型 custom-local"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存精选模型（2）" }));
+    await waitFor(() =>
+      expect(mockedUpdateSelection).toHaveBeenCalledWith("MyProxy", "models-r5", ["gpt-4o", "gpt-5-mini"]),
+    );
+
+    // 本地自定义模型支持直接删除条目。
+    mockedDeleteOverride.mockResolvedValueOnce({ revision: "runtime-r" } as never);
+    const customRow = screen.getByText("模型 ID：custom-local").closest("article")!;
+    await userEvent.click(within(customRow).getByRole("button", { name: "删除模型" }));
+    await waitFor(() =>
+      expect(mockedDeleteOverride).toHaveBeenCalledWith("MyProxy", "models-r5", "custom-local"),
+    );
   });
 });

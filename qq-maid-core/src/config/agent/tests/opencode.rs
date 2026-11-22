@@ -77,7 +77,6 @@ chat_fallback = true\n"
 #[test]
 fn provider_connection_metadata_is_strictly_validated() {
     for (id, base_url, api_key_env, expected) in [
-        ("openai", "https://example.com/v1", "KEY", "built-in"),
         ("9bad", "https://example.com/v1", "KEY", "invalid providers"),
         ("custom", "not-a-url", "KEY", "valid URL"),
         (

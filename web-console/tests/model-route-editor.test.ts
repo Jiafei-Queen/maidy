@@ -6,6 +6,7 @@ import {
   moveCandidate,
   normalizeCandidates,
   removeCandidate,
+  removeUnavailableCandidates,
 } from "../src/features/configuration/model-route-editor.js";
 
 describe("模型路线候选编辑", () => {
@@ -56,5 +57,18 @@ describe("模型路线候选编辑", () => {
 
   it("归一化去除空白与重复并保持顺序", () => {
     expect(normalizeCandidates([" a:1 ", "", "b:2", "a:1", "  c:3  ", "b:2"])).toEqual(["a:1", "b:2", "c:3"]);
+  });
+
+  it("removeUnavailableCandidates 仅移除不可用候选并保持原顺序", () => {
+    const cleaned = removeUnavailableCandidates(
+      ["openai:old", "deepseek:chat", "ghost:x", "mimo:v2"],
+      [
+        { available: false, severity: "warning", badge: "供应商已停用", message: "已停用", issues: ["provider_disabled"] },
+        { available: true, severity: "ok", badge: null, message: null, issues: [] },
+        { available: false, severity: "error", badge: "未配置", message: "未配置", issues: ["provider_missing"] },
+        { available: true, severity: "ok", badge: null, message: null, issues: [] },
+      ],
+    );
+    expect(cleaned).toEqual(["deepseek:chat", "mimo:v2"]);
   });
 });

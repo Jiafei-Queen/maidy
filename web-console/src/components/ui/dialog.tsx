@@ -13,6 +13,7 @@ type ConfirmDialogProps = {
   onConfirm: () => void;
   /** 确认动作进行中时禁用按钮，防止重复提交。 */
   busy?: boolean;
+  children?: ReactNode;
 };
 
 /**
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   busy = false,
+  children,
 }: ConfirmDialogProps) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -40,6 +42,7 @@ export function ConfirmDialog({
               {description}
             </DialogPrimitive.Description>
           ) : null}
+          {children ? <div className="mt-3">{children}</div> : null}
           <div className="mt-6 flex justify-end gap-2.5">
             <DialogPrimitive.Close asChild>
               <Button variant="secondary" disabled={busy}>

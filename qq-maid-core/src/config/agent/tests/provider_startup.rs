@@ -96,32 +96,30 @@ profile = "balanced"
 }
 
 #[test]
-fn bare_routes_reject_disabled_default_provider_for_every_mode() {
-    use qq_maid_llm::config::ProviderMode;
-    let agent = AgentRuntimeConfig::from_toml(
-        &format!("{DEFAULT_AGENT_CONFIG}\n[model_routes.unused]\ncandidates = [\"test-model\"]\n"),
-        AgentConfigSource::File("test.toml".into()),
-    )
-    .unwrap();
-    for (mode, disabled) in [
-        (ProviderMode::Auto, "OPENAI"),
-        (ProviderMode::OpenAi, "OPENAI"),
-        (ProviderMode::DeepSeek, "DEEPSEEK"),
-        (ProviderMode::BigModel, "BIGMODEL"),
-        (ProviderMode::Gemini, "GEMINI"),
-    ] {
-        let _guard = crate::config::ValidationEnvironmentGuard::install(HashMap::from([
-            (format!("{disabled}_ENABLED"), "false".into()),
-            ("DEEPSEEK_API_KEY".into(), "test-key".into()),
-        ]));
-        let error = crate::config::provider_config::validate_builtin_connections(&agent, &mode)
-            .unwrap_err();
-        assert!(error.message.contains("unused.candidates[0]"));
-        assert!(error.message.contains(&format!(
-            "provider `{}` is disabled",
-            disabled.to_ascii_lowercase()
-        )));
-    }
+fn disabled_openai_does_not_block_deepseek_in_default_routes() {
+    let directory = TestDirectory::new("disabled-openai-allows-deepseek");
+    let path = directory.0.join("agent.toml");
+    std::fs::write(&path, DEFAULT_AGENT_CONFIG).unwrap();
+    let environment = HashMap::from([
+        (
+            AGENT_CONFIG_FILE_ENV.into(),
+            path.to_string_lossy().into_owned(),
+        ),
+        ("OPENAI_ENABLED".into(), "false".into()),
+        ("OPENAI_API_KEY".into(), "stale-openai-key".into()),
+        ("DEEPSEEK_API_KEY".into(), "test-deepseek-key".into()),
+    ]);
+    crate::config::AppConfig::preflight_environment(&environment, None).unwrap();
+    let _guard = crate::config::ValidationEnvironmentGuard::install(environment);
+    let app = crate::config::AppConfig::from_env().unwrap();
+    assert!(app.openai_api_key.is_none());
+    assert!(
+        app.disabled_builtin_providers
+            .contains(&ModelProvider::OpenAi)
+    );
+    let llm = app.llm_config();
+    assert!(llm.disabled_providers.contains(&ModelProvider::OpenAi));
+    build_provider(&llm).unwrap();
 }
 
 #[test]
@@ -165,16 +163,22 @@ profile = "balanced"
             .contains_key("MyProxy")
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
-    let error = AgentRuntimeConfig::from_toml(
+    // 停用后允许解析 agent.toml，但因为该路线没有其他可用候选，启动预检会拒绝。
+    let disabled_agent = AgentRuntimeConfig::from_toml(
         &text.replace("kind =", "enabled = false\nkind ="),
         AgentConfigSource::File("test.toml".into()),
     )
+    .unwrap();
+    let error = crate::config::AppConfig::preflight_environment(
+        &HashMap::from([("TEST_PROXY_KEY".into(), "test-key".into())]),
+        Some(&disabled_agent),
+    )
     .unwrap_err();
-    assert!(error.message.contains("provider `myproxy` is disabled"));
+    assert!(error.message.contains("no available provider"));
 }
 
 #[test]
-fn startup_rejects_bare_openai_route_even_with_deepseek_fallback() {
+fn startup_preflight_rejects_route_when_only_bare_openai_candidate_is_disabled() {
     let directory = TestDirectory::new("disabled-bare-startup");
     let path = directory.0.join("agent.toml");
     std::fs::write(
@@ -190,12 +194,9 @@ fn startup_rejects_bare_openai_route_even_with_deepseek_fallback() {
         ("OPENAI_ENABLED".into(), "false".into()),
         ("DEEPSEEK_API_KEY".into(), "test-key".into()),
     ]);
-    let error = crate::config::AppConfig::validate_environment(&environment).unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("unused.candidates[0]: provider `openai` is disabled")
-    );
+    let error = crate::config::AppConfig::preflight_environment(&environment, None).unwrap_err();
+    assert!(error.message.contains("unused"));
+    assert!(error.message.contains("no available provider"));
 }
 
 #[test]

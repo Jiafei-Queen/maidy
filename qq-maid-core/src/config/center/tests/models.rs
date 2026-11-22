@@ -217,3 +217,182 @@ fn custom_connection_does_not_guess_catalog_and_keeps_local_metadata() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn discovered_models_persist_across_metadata_reads_without_mutating_models_revision() {
+    use axum::{Router, routing::get};
+    use qq_maid_llm::provider::discovery::DiscoveryState;
+
+    let app = Router::new().route(
+        "/v1/models",
+        get(|| async { r#"{"data":[{"id":"sync-alpha"},{"id":"sync-beta"}]}"# }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (center, _database, directory) = model_center();
+    let initial = center.current_snapshot().unwrap().agent.unwrap();
+    let saved = center
+        .update_agent(
+            &initial.revision,
+            &[AgentConfigChange::SetProvider {
+                id: "sync_proxy".into(),
+                provider: AgentProviderUpdate {
+                    display_name: Some("Sync Proxy".into()),
+                    enabled: true,
+                    kind: AgentProviderKind::OpenAiCompatible,
+                    base_url: base,
+                    api_key_env: String::new(),
+                    auth_header: "Authorization".into(),
+                    auth_scheme: Some("Bearer".into()),
+                    request_timeout_seconds: Some(3),
+                    chat_fallback: None,
+                },
+            }],
+        )
+        .unwrap();
+    center
+        .update_connection_credential("sync_proxy", &saved.revision, "missing", Some("test-key"))
+        .unwrap();
+
+    let before_metadata = center.connection_model_metadata("sync_proxy").unwrap();
+    assert!(before_metadata["discovered"].is_null());
+    let before_revision = before_metadata["revision"].as_str().unwrap().to_owned();
+
+    let discovery = center
+        .discover_connection_models("sync_proxy", &saved.revision)
+        .await
+        .unwrap();
+    assert_eq!(discovery.state, DiscoveryState::Success);
+
+    // 同步后立即落盘到独立缓存文件，且不改变 models.json 的 revision。
+    assert!(directory.join("models-discovery-cache.json").is_file());
+    let after_metadata = center.connection_model_metadata("sync_proxy").unwrap();
+    assert_eq!(after_metadata["revision"], before_revision);
+    assert_eq!(after_metadata["discovered"]["state"], "success");
+    assert!(
+        after_metadata["discovered"]["synced_at"]
+            .as_str()
+            .is_some_and(|ts| !ts.is_empty())
+    );
+    let ids = after_metadata["discovered"]["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["sync-alpha", "sync-beta"]);
+
+    // 删除供应商时顺带清理该连接的发现缓存。
+    center
+        .update_agent(
+            &saved.revision,
+            &[AgentConfigChange::RemoveProvider {
+                id: "sync_proxy".into(),
+                cleanup_references: false,
+            }],
+        )
+        .unwrap();
+    let cache_text =
+        std::fs::read_to_string(directory.join("models-discovery-cache.json")).unwrap();
+    assert!(!cache_text.contains("sync_proxy"));
+
+    server.abort();
+}
+
+#[test]
+fn model_selection_batch_save_auto_append_and_delete_override_work_with_cas() {
+    let (center, _database, _directory) = model_center();
+    let initial = center.connection_model_metadata("openai").unwrap();
+    assert_eq!(initial["selection_configured"], false);
+    assert_eq!(initial["selected_models"], json!([]));
+
+    // 批量保存精选白名单（含去重和裁剪空白）。
+    center
+        .update_model_selection(
+            "openai",
+            "missing",
+            Some(vec![
+                "gpt-4o".into(),
+                " gpt-4o-mini ".into(),
+                "gpt-4o".into(),
+            ]),
+        )
+        .unwrap();
+    let after_select = center.connection_model_metadata("openai").unwrap();
+    assert_eq!(after_select["selection_configured"], true);
+    assert_eq!(
+        after_select["selected_models"],
+        json!(["gpt-4o", "gpt-4o-mini"])
+    );
+    let snapshot_models = center.provider_snapshot().unwrap().available_models;
+    assert_eq!(
+        snapshot_models.get("openai"),
+        Some(&vec!["gpt-4o".to_owned(), "gpt-4o-mini".to_owned()])
+    );
+    let rev1 = after_select["revision"].as_str().unwrap().to_owned();
+
+    // 旧 revision 必须触发 CAS 冲突。
+    assert_eq!(
+        center
+            .update_model_selection("openai", "missing", Some(vec!["gpt-4o".into()]))
+            .unwrap_err()
+            .code(),
+        "config_conflict"
+    );
+    // 非法路线分隔符必须被拒绝。
+    assert!(
+        center
+            .update_model_selection("openai", &rev1, Some(vec!["gpt-4o,bad".into()]))
+            .is_err()
+    );
+
+    // 精选模式下新增本地自定义模型时，自动纳入精选白名单。
+    center
+        .update_model_override(
+            "openai",
+            &rev1,
+            json!({"provider":"openai", "id":"custom/private-v1", "display_name":"私有模型"}),
+        )
+        .unwrap();
+    let after_add = center.connection_model_metadata("openai").unwrap();
+    assert_eq!(
+        after_add["selected_models"],
+        json!(["gpt-4o", "gpt-4o-mini", "custom/private-v1"])
+    );
+    let rev2 = after_add["revision"].as_str().unwrap().to_owned();
+
+    // 删除本地模型条目时同步移出 overrides 和 selected_models。
+    center
+        .delete_model_override("openai", &rev2, "custom/private-v1")
+        .unwrap();
+    let after_delete = center.connection_model_metadata("openai").unwrap();
+    assert!(
+        after_delete["overrides"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["id"] != "custom/private-v1")
+    );
+    assert_eq!(
+        after_delete["selected_models"],
+        json!(["gpt-4o", "gpt-4o-mini"])
+    );
+    let rev3 = after_delete["revision"].as_str().unwrap().to_owned();
+
+    // 删除不存在的条目返回错误。
+    assert!(
+        center
+            .delete_model_override("openai", &rev3, "nonexistent-model")
+            .is_err()
+    );
+
+    // 传入 None 清除精选限制，恢复默认全部展示状态。
+    center
+        .update_model_selection("openai", &rev3, None)
+        .unwrap();
+    let cleared = center.connection_model_metadata("openai").unwrap();
+    assert_eq!(cleared["selection_configured"], false);
+    assert_eq!(cleared["selected_models"], json!([]));
+}

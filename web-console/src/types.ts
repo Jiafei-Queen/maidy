@@ -99,11 +99,38 @@ export interface RegisteredTool {
   description: string;
 }
 
+export type RouteDiagnosticKind = "model_route" | "search_route" | "stt_route";
+
+export type CandidateIssueCode =
+  | "provider_disabled"
+  | "provider_missing"
+  | "missing_credential"
+  | "model_disabled";
+
+export interface CandidateDiagnostic {
+  index: number;
+  candidate: string;
+  provider: string;
+  model: string;
+  available: boolean;
+  issues: CandidateIssueCode[];
+  message: string | null;
+}
+
+export interface RouteDiagnostic {
+  kind: RouteDiagnosticKind;
+  routeName: string;
+  active: boolean;
+  hasAvailableCandidate: boolean;
+  candidates: CandidateDiagnostic[];
+}
+
 export interface ConfigurationSnapshot {
   providers?: ProviderManagementSnapshot | undefined;
   revision: string;
   fileExists: boolean;
   agent: AgentConfigSnapshot | null;
+  routeDiagnostics?: RouteDiagnostic[] | undefined;
   fields: ConfigFieldSnapshot[];
   registeredTools: RegisteredTool[];
   restartAvailable: boolean;
@@ -112,7 +139,9 @@ export interface ConfigurationSnapshot {
 export interface ProviderManagementSnapshot {
   presets: Array<{ id: string; name: string; kind: string; base_url: string; auth_header: string; auth_scheme: string }>;
   adapters: string[];
+  managed_providers?: boolean | undefined;
   credentials: Record<string, { configured: boolean; editable: boolean; revision: string; pending_restart: boolean }>;
+  available_models?: Record<string, string[]> | undefined;
 }
 
 export interface ProviderStatus {

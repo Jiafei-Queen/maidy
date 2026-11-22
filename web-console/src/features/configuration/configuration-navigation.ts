@@ -95,7 +95,7 @@ export type ConfigurationBusinessGroup =
   | "advanced";
 
 export const BUSINESS_GROUPS: ReadonlyArray<{ id: ConfigurationBusinessGroup; label: string; description: string }> = [
-  { id: "models-providers", label: "模型与供应商", description: "配置内置模型服务、自定义 Provider 及对应凭据。" },
+  { id: "models-providers", label: "模型与供应商", description: "统一管理模型供应商连接、凭据与模型列表；所有供应商均支持独立启停、删除与预设重建。" },
   { id: "model-routing", label: "文本模型路由", description: "为私聊、群聊、辅助任务和搜索场景设置文本候选模型链。" },
   { id: "stt-routing", label: "转录模型路由", description: "配置语音转写开关、平台转写策略和 STT 提供商的转录模型链。" },
   { id: "online-tools", label: "联网与工具", description: "管理联网搜索、天气服务、Tool Calling 与场景白名单。" },

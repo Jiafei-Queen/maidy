@@ -82,8 +82,13 @@ describe("Connection ID 规则与 set_provider 变更", () => {
     expect("chat_fallback" in payload).toBe(false);
   });
 
-  it("remove_provider change 只携带原始 ID", () => {
+  it("remove_provider change 默认只携带原始 ID，支持显式清理路由引用", () => {
     expect(removeProviderChange("MyProxy")).toEqual({ action: "remove_provider", id: "MyProxy" });
+    expect(removeProviderChange("deepseek", true)).toEqual({
+      action: "remove_provider",
+      id: "deepseek",
+      cleanup_references: true,
+    });
   });
 
   it("savedProvidersOf 读取 agent.toml providers 表并容忍缺失", () => {

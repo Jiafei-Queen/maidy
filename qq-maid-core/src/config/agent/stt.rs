@@ -167,6 +167,7 @@ impl SttSettings {
     pub(in crate::config) fn from_file(
         file: SttConfigFile,
         providers: &std::collections::HashMap<String, AgentProviderConfig>,
+        managed_providers: bool,
     ) -> Result<Self, LlmError> {
         validate_range(
             "stt.timeout_seconds",
@@ -199,18 +200,21 @@ impl SttSettings {
                 &file.routes.default,
                 providers,
                 file.enabled,
+                managed_providers,
             )?,
             private: parse_candidates(
                 "stt.routes.private",
                 &file.routes.private,
                 providers,
                 file.enabled,
+                managed_providers,
             )?,
             group: parse_candidates(
                 "stt.routes.group",
                 &file.routes.group,
                 providers,
                 file.enabled,
+                managed_providers,
             )?,
         };
         if file.enabled && routes.is_empty() {
@@ -247,6 +251,7 @@ fn parse_candidates(
     values: &[String],
     providers: &std::collections::HashMap<String, AgentProviderConfig>,
     validate_providers: bool,
+    managed_providers: bool,
 ) -> Result<Vec<ModelId>, LlmError> {
     let mut candidates = Vec::with_capacity(values.len());
     for (index, value) in values.iter().enumerate() {
@@ -266,29 +271,27 @@ fn parse_candidates(
                 )));
             }
         } else if validate_providers {
-            match &provider {
-                ModelProvider::OpenAi
-                | ModelProvider::DeepSeek
-                | ModelProvider::BigModel
-                | ModelProvider::Gemini => {}
-                ModelProvider::Custom(name) => {
-                    let Some(configured) = providers.values().find(|item| item.id.as_str() == name)
-                    else {
+            let configured = providers.values().find(|item| item.id == provider);
+            match configured {
+                Some(configured) => {
+                    // OpenAI 官方 /v1 同时暴露 Responses 与 /audio/transcriptions；其余连接需显式兼容。
+                    if configured.kind != AgentProviderKind::OpenAiCompatible
+                        && provider != ModelProvider::OpenAi
+                    {
                         return Err(LlmError::config(format!(
-                            "{location} references custom provider `{name}`, but providers.{name} is not configured"
-                        )));
-                    };
-                    if !configured.enabled {
-                        return Err(LlmError::config(format!(
-                            "{location} references disabled provider `{name}`"
-                        )));
-                    }
-                    if configured.kind != AgentProviderKind::OpenAiCompatible {
-                        return Err(LlmError::config(format!(
-                            "{location} references provider `{name}` with kind openai_responses; transcription requires an openai_compatible provider"
+                            "{location} references provider `{}` with kind openai_responses; transcription requires an openai_compatible provider",
+                            provider.as_str()
                         )));
                     }
                 }
+                None if managed_providers || matches!(provider, ModelProvider::Custom(_)) => {
+                    return Err(LlmError::config(format!(
+                        "{location} references provider `{}`, but providers.{} is not configured",
+                        provider.as_str(),
+                        provider.as_str()
+                    )));
+                }
+                None => {}
             }
         }
         if candidates

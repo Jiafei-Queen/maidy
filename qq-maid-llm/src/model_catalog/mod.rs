@@ -17,7 +17,7 @@
 //! - Catalog 不作为 Route 白名单：Route 中引用但 Catalog 未收录的模型按
 //!   “未知模型 / 能力未知”处理，不阻断启动。
 
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -69,7 +69,7 @@ const FORBIDDEN_LOCAL_KEYS: &[&str] = &[
 /// [`ModelProvider`](crate::provider::types::ModelProvider) 的 `google -> gemini`、
 /// `glm/zhipu -> bigmodel` 等 Connection alias。一个 Catalog Provider 后续可以映射到
 /// 多个 Connection，但 ID 本身不因连接规则被改写。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct CatalogProviderId(String);
 
@@ -339,6 +339,10 @@ pub struct LocalModelOverrides {
     pub schema_version: u32,
     #[serde(default)]
     pub models: Vec<LocalModelEntry>,
+    /// 按连接 ID 记录用户精选保留的模型 ID 列表；未配置的键表示未启用精选过滤，
+    /// 空列表表示明确保留 0 个模型。不充当 Route 强制白名单。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub selections: BTreeMap<CatalogProviderId, Vec<String>>,
 }
 
 /// 本地覆盖 / 追加条目；所有元数据字段可选，缺失即继承目录值。
@@ -503,6 +507,15 @@ pub fn parse_local_overrides(bytes: &[u8]) -> Result<LocalModelOverrides, LlmErr
     for entry in &overrides.models {
         if entry.id.trim().is_empty() {
             return Err(LlmError::config("models.json 存在缺少 id 的模型条目"));
+        }
+    }
+    for (provider, ids) in &overrides.selections {
+        for id in ids {
+            if id.trim().is_empty() {
+                return Err(LlmError::config(format!(
+                    "models.json 中 provider `{provider}` 的精选模型列表存在空模型 ID"
+                )));
+            }
         }
     }
     Ok(overrides)

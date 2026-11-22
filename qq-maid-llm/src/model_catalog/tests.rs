@@ -69,6 +69,7 @@ fn overrides(entries: Vec<LocalModelEntry>) -> LocalModelOverrides {
     LocalModelOverrides {
         schema_version: LOCAL_SCHEMA_VERSION,
         models: entries,
+        selections: BTreeMap::new(),
     }
 }
 
@@ -563,4 +564,22 @@ fn snapshot_rejects_adapter_and_verified_capability_fields() {
           "capabilities":{"reasoning":{"advertised":true,"verified":"yes"}}
         }]}]}"#;
     assert!(parse_snapshot(with_verified).is_err());
+}
+
+#[test]
+fn local_overrides_support_curated_model_selections_and_reject_empty_ids() {
+    let raw = br#"{"schema_version":1,"models":[],"selections":{"OpenAI":["gpt-5","gpt-4o-mini"],"deepseek":[]}}"#;
+    let parsed = parse_local_overrides(raw).expect("精选模型列表应可解析");
+    assert_eq!(
+        parsed.selections.get(&catalog_provider_id("openai")),
+        Some(&vec!["gpt-5".to_owned(), "gpt-4o-mini".to_owned()])
+    );
+    assert_eq!(
+        parsed.selections.get(&catalog_provider_id("deepseek")),
+        Some(&Vec::<String>::new())
+    );
+
+    let invalid = br#"{"schema_version":1,"models":[],"selections":{"openai":["gpt-5","   "]}}"#;
+    let error = parse_local_overrides(invalid).unwrap_err();
+    assert!(error.message.contains("空模型 ID"));
 }

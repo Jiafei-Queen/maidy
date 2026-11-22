@@ -1,4 +1,6 @@
 //! 供应商凭证与诊断复用管理员认证、同源、CSRF 及审计边界。
+use axum::routing::put;
+
 use super::*;
 
 pub(super) fn router() -> Router<OpsHttpState> {
@@ -9,7 +11,11 @@ pub(super) fn router() -> Router<OpsHttpState> {
         )
         .route(
             "/api/v1/console/configuration/providers/model-override",
-            patch(model_override),
+            patch(model_override).delete(delete_model_override),
+        )
+        .route(
+            "/api/v1/console/configuration/providers/model-selection",
+            put(model_selection),
         )
         .route(
             "/api/v1/console/configuration/providers/credential",
@@ -256,5 +262,79 @@ async fn model_override(
     match center.update_model_override(&payload.id, &payload.expected_revision, payload.model) {
         Ok(()) => configuration_success(&state, &headers, actor, "config.models.update"),
         Err(error) => configuration_failure(&state, &headers, actor, "config.models.update", error),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelSelectionRequest {
+    id: String,
+    expected_revision: String,
+    selected_models: Option<Vec<String>>,
+}
+
+async fn model_selection(
+    State(state): State<OpsHttpState>,
+    headers: HeaderMap,
+    Json(payload): Json<ModelSelectionRequest>,
+) -> Response {
+    let (_, _, _, actor) = match admin_context(&state, &headers, true) {
+        Ok(value) => value,
+        Err(response) => return respond(&state, &headers, *response),
+    };
+    let Some(center) = &state.config_center else {
+        return respond(
+            &state,
+            &headers,
+            api_error(
+                StatusCode::NOT_FOUND,
+                "configuration_unavailable",
+                "配置中心不可用",
+            ),
+        );
+    };
+    match center.update_model_selection(
+        &payload.id,
+        &payload.expected_revision,
+        payload.selected_models,
+    ) {
+        Ok(()) => configuration_success(&state, &headers, actor, "config.models.selection"),
+        Err(error) => {
+            configuration_failure(&state, &headers, actor, "config.models.selection", error)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeleteOverrideRequest {
+    id: String,
+    expected_revision: String,
+    model_id: String,
+}
+
+async fn delete_model_override(
+    State(state): State<OpsHttpState>,
+    headers: HeaderMap,
+    Json(payload): Json<DeleteOverrideRequest>,
+) -> Response {
+    let (_, _, _, actor) = match admin_context(&state, &headers, true) {
+        Ok(value) => value,
+        Err(response) => return respond(&state, &headers, *response),
+    };
+    let Some(center) = &state.config_center else {
+        return respond(
+            &state,
+            &headers,
+            api_error(
+                StatusCode::NOT_FOUND,
+                "configuration_unavailable",
+                "配置中心不可用",
+            ),
+        );
+    };
+    match center.delete_model_override(&payload.id, &payload.expected_revision, &payload.model_id) {
+        Ok(()) => configuration_success(&state, &headers, actor, "config.models.delete"),
+        Err(error) => configuration_failure(&state, &headers, actor, "config.models.delete", error),
     }
 }

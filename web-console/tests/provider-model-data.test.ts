@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { discoveryLabel, filterModels, mergeModels } from "../src/features/configuration/provider-model-data.js";
+import {
+  applyCuratedSelection,
+  discoveryLabel,
+  effectiveDiscovery,
+  filterModels,
+  groupModelsBySeries,
+  mergeModels,
+  modelSeriesOf,
+  selectionStateOf,
+} from "../src/features/configuration/provider-model-data.js";
 
 describe("模型 discovery 与本地 metadata 合并", () => {
   const metadata = {
@@ -43,5 +52,59 @@ describe("模型 discovery 与本地 metadata 合并", () => {
     expect(filterModels(rows, "", "deprecated")[0]?.id).toBe("catalog-only");
     expect(filterModels(rows, "", "beta")[0]?.id).toBe("known");
     expect(filterModels(rows, "不存在", "all")).toEqual([]);
+  });
+
+  it("未触发实时同步时自动回退到持久化发现缓存，并展示上次同步时间", () => {
+    const withCache = {
+      ...metadata,
+      discovered: {
+        state: "success",
+        category: "ok",
+        synced_at: "2026-11-22T08:30:00Z",
+        models: [{ id: "cached-alpha", source: "connection_discovery" }],
+      },
+    };
+    const rows = mergeModels(null, withCache);
+    expect(rows[0]?.id).toBe("cached-alpha");
+    expect(rows[0]?.sources).toEqual(["connection discovery"]);
+    const active = effectiveDiscovery(null, withCache);
+    expect(discoveryLabel(active)).toMatch(/获取成功：1 个模型.*上次同步/);
+  });
+
+  it("applyCuratedSelection 与 groupModelsBySeries 按精选白名单和系列分组展示", () => {
+    const rows = mergeModels(
+      {
+        state: "success",
+        models: [
+          { id: "gpt-5-mini" },
+          { id: "gpt-4o" },
+          { id: "deepseek-chat" },
+          { id: "openai/gpt-5-nano" },
+        ],
+      },
+      {
+        ...metadata,
+        selection_configured: true,
+        selected_models: ["gpt-5-mini", "missing-but-selected"],
+      },
+    );
+    const sel = selectionStateOf({
+      selection_configured: true,
+      selected_models: ["gpt-5-mini", "missing-but-selected"],
+    });
+    expect(sel).toEqual({ configured: true, selectedIds: ["gpt-5-mini", "missing-but-selected"] });
+
+    const curated = applyCuratedSelection(rows, sel.configured, sel.selectedIds);
+    expect(curated.map((row) => row.id)).toEqual(["gpt-5-mini", "missing-but-selected"]);
+    expect(applyCuratedSelection(rows, false, [])).toHaveLength(rows.length);
+
+    expect(modelSeriesOf("gpt-5-mini")).toBe("GPT-5");
+    expect(modelSeriesOf("gpt-4o")).toBe("GPT-4");
+    expect(modelSeriesOf("deepseek-chat")).toBe("DeepSeek");
+    expect(modelSeriesOf("openai/gpt-5-nano")).toBe("openai");
+
+    const groups = groupModelsBySeries(rows);
+    expect(groups.map((g) => g.series)).toContain("GPT-5");
+    expect(groups.map((g) => g.series)).toContain("DeepSeek");
   });
 });

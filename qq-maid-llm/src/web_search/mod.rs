@@ -643,47 +643,68 @@ pub fn build_web_search_executor(config: &LlmConfig) -> Result<DynWebSearchExecu
         None => Arc::new(MissingFirecrawlWebSearchExecutor),
     };
     let mut native_providers = HashMap::new();
-    insert_native_provider(&mut native_providers, ModelProvider::OpenAi, openai)?;
-    insert_native_provider(&mut native_providers, ModelProvider::Gemini, gemini)?;
-
-    let deepseek_config = crate::provider::deepseek::responses_config(config);
-    let deepseek: DynWebSearchExecutor = match deepseek_config.api_key.as_deref() {
-        Some(key) if !key.trim().is_empty() => {
-            Arc::new(ResponsesWebSearchExecutor::new_configured(
-                &deepseek_config,
-                config.web_search.default_model.clone(),
-                config.request_timeout_seconds,
-            )?)
-        }
-        _ => Arc::new(MissingConfiguredResponsesWebSearchExecutor {
-            api_key_env: deepseek_config.api_key_env.clone(),
-        }),
-    };
-    insert_native_provider(&mut native_providers, ModelProvider::DeepSeek, deepseek)?;
-
-    let mut custom_provider_ids = std::collections::HashSet::new();
+    let mut configured_provider_ids = std::collections::HashSet::new();
     for provider in &config.openai_compatible_providers {
-        if !custom_provider_ids.insert(provider.id.clone()) {
+        if !configured_provider_ids.insert(provider.id.clone()) {
             return Err(duplicate_provider_error(&provider.id));
         }
     }
     for provider in &config.openai_responses_providers {
-        if !custom_provider_ids.insert(provider.id.clone()) {
+        if !configured_provider_ids.insert(provider.id.clone()) {
             return Err(duplicate_provider_error(&provider.id));
         }
-        let executor: DynWebSearchExecutor = match provider.api_key.as_deref() {
-            Some(api_key) if !api_key.trim().is_empty() => {
+        // OpenAI 在默认 Bearer 认证且无自定义超时时优先沿用 ResponsesWebSearchExecutor::new_openai，
+        // 保持多 Base URL 与原有行为一致；其余连接统一使用配置驱动执行器。
+        let executor: DynWebSearchExecutor = if provider.id == ModelProvider::OpenAi
+            && provider.auth == Default::default()
+            && provider.request_timeout_seconds.is_none()
+        {
+            if config.openai_api_key.is_none() {
+                Arc::new(MissingWebSearchExecutor)
+            } else if config.openai_api_mode == OpenAiApiMode::ChatOnly {
+                Arc::new(ChatOnlyWebSearchExecutor)
+            } else {
+                Arc::new(ResponsesWebSearchExecutor::new_openai(config)?)
+            }
+        } else {
+            match provider.api_key.as_deref() {
+                Some(api_key) if !api_key.trim().is_empty() => {
+                    Arc::new(ResponsesWebSearchExecutor::new_configured(
+                        provider,
+                        config.web_search.default_model.clone(),
+                        config.request_timeout_seconds,
+                    )?)
+                }
+                _ => Arc::new(MissingConfiguredResponsesWebSearchExecutor {
+                    api_key_env: provider.api_key_env.clone(),
+                }),
+            }
+        };
+        insert_native_provider(&mut native_providers, provider.id.clone(), executor)?;
+    }
+
+    if !native_providers.contains_key(&ModelProvider::OpenAi) {
+        insert_native_provider(&mut native_providers, ModelProvider::OpenAi, openai)?;
+    }
+    if !native_providers.contains_key(&ModelProvider::Gemini) {
+        insert_native_provider(&mut native_providers, ModelProvider::Gemini, gemini)?;
+    }
+
+    if !native_providers.contains_key(&ModelProvider::DeepSeek) {
+        let deepseek_config = crate::provider::deepseek::responses_config(config);
+        let deepseek: DynWebSearchExecutor = match deepseek_config.api_key.as_deref() {
+            Some(key) if !key.trim().is_empty() => {
                 Arc::new(ResponsesWebSearchExecutor::new_configured(
-                    provider,
+                    &deepseek_config,
                     config.web_search.default_model.clone(),
                     config.request_timeout_seconds,
                 )?)
             }
             _ => Arc::new(MissingConfiguredResponsesWebSearchExecutor {
-                api_key_env: provider.api_key_env.clone(),
+                api_key_env: deepseek_config.api_key_env.clone(),
             }),
         };
-        insert_native_provider(&mut native_providers, provider.id.clone(), executor)?;
+        insert_native_provider(&mut native_providers, ModelProvider::DeepSeek, deepseek)?;
     }
 
     Ok(Arc::new(RoutedWebSearchExecutor::new(

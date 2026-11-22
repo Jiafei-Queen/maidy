@@ -2,10 +2,11 @@
 use super::{ConfigCenter, ConfigCenterError, managed_file};
 use crate::config::model_management::{catalog_identity, validate_disabled_models};
 use qq_maid_llm::model_catalog::{
-    CatalogSnapshot, EffectiveModelCatalog, LocalModelOverrides, parse_local_overrides,
+    CatalogProviderId, CatalogSnapshot, EffectiveModelCatalog, LocalModelOverrides,
+    parse_local_overrides,
 };
 use serde_json::{Value, json};
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 impl ConfigCenter {
     fn models_path(&self) -> PathBuf {
@@ -15,6 +16,16 @@ impl ConfigCenter {
             .filter(|path| !path.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("config/models.json"))
+    }
+
+    pub(super) fn discovery_cache_path(&self) -> PathBuf {
+        self.external_environment
+            .get("MODELS_CONFIG_FILE")
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.managed_file.path().to_path_buf())
+            .with_file_name("models-discovery-cache.json")
     }
 
     pub(super) fn load_models(&self) -> Result<(String, LocalModelOverrides), ConfigCenterError> {
@@ -35,19 +46,21 @@ impl ConfigCenter {
     pub fn connection_model_metadata(&self, id: &str) -> Result<Value, ConfigCenterError> {
         let canonical = id.to_ascii_lowercase();
         let (identity, builtin) = catalog_identity(&canonical);
-        if !builtin
-            && !self
-                .agent_file
-                .as_ref()
-                .map(|f| f.current_runtime())
-                .transpose()?
-                .is_some_and(|agent| {
-                    agent
-                        .provider_configs()
-                        .iter()
-                        .any(|p| p.id.as_str() == canonical)
-                })
-        {
+        let agent_runtime = self
+            .agent_file
+            .as_ref()
+            .map(|f| f.current_runtime())
+            .transpose()?;
+        let exists_in_agent = agent_runtime.as_ref().is_some_and(|agent| {
+            agent
+                .provider_configs()
+                .iter()
+                .any(|p| p.id.as_str() == canonical)
+        });
+        let managed = agent_runtime
+            .as_ref()
+            .is_some_and(crate::config::AgentRuntimeConfig::managed_providers);
+        if !exists_in_agent && (managed || !builtin) {
             return Err(ConfigCenterError::invalid("Connection 不存在"));
         }
         let (revision, local) = self.load_models()?;
@@ -79,8 +92,20 @@ impl ConfigCenter {
             .iter()
             .filter(|m| m.provider.as_str() == identity)
             .collect();
+        let discovered = super::discovery_cache::load_cached_discovery(
+            &self.discovery_cache_path(),
+            &canonical,
+        )?;
+        let selected_entry = CatalogProviderId::parse(&canonical)
+            .ok()
+            .and_then(|key| local.selections.get(&key));
+        let selection_configured = selected_entry.is_some();
+        let selected_models = selected_entry.cloned().unwrap_or_default();
         Ok(
             json!({"revision": revision, "provider": identity, "models": models, "overrides": overrides,
+            "discovered": discovered,
+            "selection_configured": selection_configured,
+            "selected_models": selected_models,
             "catalog_source": if builtin { Some(embedded.base_source()) } else { None },
             "verified_capabilities": "unknown", "apply_mode": "restart"}),
         )
@@ -119,18 +144,121 @@ impl ConfigCenter {
             ));
         }
         // 必须可以无歧义地写入 provider:model-id 候选链。
-        if entry.id.trim() != entry.id || entry.id.chars().any(|c| c.is_control() || c == ',') {
-            return Err(ConfigCenterError::invalid(
-                "模型 ID 含有非法路线分隔符或空白",
-            ));
-        }
+        validate_model_id_syntax(&entry.id)?;
         validate_metadata(&entry)?;
         let (_, mut local) = self.load_models()?;
+        let was_existing = local
+            .models
+            .iter()
+            .any(|m| m.provider == entry.provider && m.id == entry.id);
+        let entry_id = entry.id.clone();
+        let entry_disabled = entry.enabled == Some(false);
         local
             .models
             .retain(|m| !(m.provider == entry.provider && m.id == entry.id));
         local.models.push(entry);
-        let catalog = EffectiveModelCatalog::from_embedded(Some(&local))
+        // 若该连接已开启精选模型白名单，手动新增的模型默认纳入精选列表，避免保存后“消失”。
+        if !was_existing
+            && !entry_disabled
+            && let Ok(selection_key) = CatalogProviderId::parse(&id.to_ascii_lowercase())
+            && let Some(selected) = local.selections.get_mut(&selection_key)
+            && !selected.iter().any(|existing| existing == &entry_id)
+        {
+            selected.push(entry_id);
+        }
+        self.persist_local_models(&local, expected_revision)
+    }
+
+    /// 批量保存供应商的精选保留模型列表；传入 `None` 时清除精选限制并恢复展示全部模型。
+    pub fn update_model_selection(
+        &self,
+        id: &str,
+        expected_revision: &str,
+        selected_models: Option<Vec<String>>,
+    ) -> Result<(), ConfigCenterError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ConfigCenterError::io("配置写锁不可用"))?;
+        managed_file::ensure_expected_revision(
+            &self.models_path(),
+            expected_revision,
+            "models.json",
+        )?;
+        self.connection_model_metadata(id)?;
+        let selection_key = CatalogProviderId::parse(&id.to_ascii_lowercase())
+            .map_err(|e| ConfigCenterError::invalid(e.message))?;
+        let (_, mut local) = self.load_models()?;
+        match selected_models {
+            Some(items) => {
+                let mut seen = HashSet::new();
+                let mut normalized = Vec::with_capacity(items.len());
+                for raw in items {
+                    let trimmed = raw.trim();
+                    validate_model_id_syntax(trimmed)?;
+                    if seen.insert(trimmed.to_owned()) {
+                        normalized.push(trimmed.to_owned());
+                    }
+                }
+                local.selections.insert(selection_key, normalized);
+            }
+            None => {
+                local.selections.remove(&selection_key);
+            }
+        }
+        self.persist_local_models(&local, expected_revision)
+    }
+
+    /// 删除指定供应商下的本地模型覆盖/自定义条目，并同步从精选列表中移除。
+    pub fn delete_model_override(
+        &self,
+        id: &str,
+        expected_revision: &str,
+        model_id: &str,
+    ) -> Result<(), ConfigCenterError> {
+        let _guard = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ConfigCenterError::io("配置写锁不可用"))?;
+        managed_file::ensure_expected_revision(
+            &self.models_path(),
+            expected_revision,
+            "models.json",
+        )?;
+        let metadata = self.connection_model_metadata(id)?;
+        let target_id = model_id.trim();
+        if target_id.is_empty() {
+            return Err(ConfigCenterError::invalid("模型 ID 不能为空"));
+        }
+        let identity = metadata["provider"].as_str().unwrap_or_default();
+        let (_, mut local) = self.load_models()?;
+        let before_models = local.models.len();
+        local
+            .models
+            .retain(|m| !(m.provider.as_str() == identity && m.id == target_id));
+        let removed_override = local.models.len() != before_models;
+        let mut removed_selection = false;
+        if let Ok(selection_key) = CatalogProviderId::parse(&id.to_ascii_lowercase())
+            && let Some(selected) = local.selections.get_mut(&selection_key)
+        {
+            let before_selected = selected.len();
+            selected.retain(|existing| existing != target_id);
+            removed_selection = selected.len() != before_selected;
+        }
+        if !removed_override && !removed_selection {
+            return Err(ConfigCenterError::invalid(
+                "该模型不存在本地自定义条目或精选记录",
+            ));
+        }
+        self.persist_local_models(&local, expected_revision)
+    }
+
+    fn persist_local_models(
+        &self,
+        local: &LocalModelOverrides,
+        expected_revision: &str,
+    ) -> Result<(), ConfigCenterError> {
+        let catalog = EffectiveModelCatalog::from_embedded(Some(local))
             .map_err(|e| ConfigCenterError::invalid(e.message))?;
         if let Some(agent) = self
             .agent_file
@@ -141,7 +269,7 @@ impl ConfigCenter {
             validate_disabled_models(&agent, &catalog)
                 .map_err(|e| ConfigCenterError::invalid(e.message))?;
         }
-        let bytes = serde_json::to_vec_pretty(&local)
+        let bytes = serde_json::to_vec_pretty(local)
             .map_err(|e| ConfigCenterError::invalid(e.to_string()))?;
         if bytes.len() > 1024 * 1024 {
             return Err(ConfigCenterError::invalid("models.json 超出 1 MiB"));
@@ -153,6 +281,19 @@ impl ConfigCenter {
             "models.json",
         )
     }
+}
+
+fn validate_model_id_syntax(id: &str) -> Result<(), ConfigCenterError> {
+    if id.is_empty()
+        || id.len() > 512
+        || id.trim() != id
+        || id.chars().any(|c| c.is_control() || c == ',')
+    {
+        return Err(ConfigCenterError::invalid(
+            "模型 ID 为空、过长或含有非法路线分隔符/空白",
+        ));
+    }
+    Ok(())
 }
 
 /// Web 输入不能保存无意义的 token 数或负价格；不会把声明转成请求参数。

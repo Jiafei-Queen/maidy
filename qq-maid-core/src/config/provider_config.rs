@@ -4,8 +4,9 @@
 //! 避免把 API Key 写回 Agent 文档。
 
 use qq_maid_llm::config::{
-    HttpAuthConfig, OpenAiCompatibleProviderConfig, OpenAiResponsesProviderConfig, ProviderMode,
+    HttpAuthConfig, OpenAiCompatibleProviderConfig, OpenAiResponsesProviderConfig,
 };
+use qq_maid_llm::provider::types::ModelProvider;
 
 use super::{
     agent::{AgentProviderKind, AgentRuntimeConfig},
@@ -20,68 +21,41 @@ pub(super) fn builtin_api_key(prefix: &str) -> Result<Option<String>, crate::err
     })
 }
 
-pub(super) fn validate_builtin_connection_environment(
+/// 结合统一 `[providers.*]` 与旧环境变量解析知名品牌连接的启停、密钥与地址。
+///
+/// - 当 `agent.managed_providers() == true` 时，`[providers.*]` 是唯一来源：被删除的连接绝不
+///   从旧环境变量复活；仍存在的连接优先采用自身配置，仅在仍使用默认 URL/密钥引用时兼容旧 env。
+/// - 当 `agent.managed_providers() == false`（旧手工 TOML）时，完全沿用原环境变量行为。
+pub(super) fn resolve_standard_provider(
     agent: &AgentRuntimeConfig,
-    environment: &std::collections::HashMap<String, String>,
-) -> Result<(), crate::error::LlmError> {
-    let _guard = super::ValidationEnvironmentGuard::install(environment.clone());
-    // AppConfig 固定使用 Auto；LLM_PROVIDER 已移除，不能在诊断中恢复另一套入口。
-    validate_builtin_connections(agent, &ProviderMode::Auto)
-}
-
-/// 内置连接保留原存储来源；停用仍检查全部模型/搜索引用，不能变成候选链静默跳过。
-pub(super) fn validate_builtin_connections(
-    agent: &AgentRuntimeConfig,
-    mode: &ProviderMode,
-) -> Result<(), crate::error::LlmError> {
-    use qq_maid_llm::provider::types::{ModelId, ModelProvider};
-    let mut disabled = Vec::new();
-    for name in ["openai", "deepseek", "bigmodel", "gemini"] {
-        if !super::env_bool(&format!("{}_ENABLED", name.to_ascii_uppercase()), true)? {
-            disabled.push(name);
-        }
-    }
-    let default_provider = mode.default_provider();
-    let mut invalid = Vec::new();
-    let mut check = |model: &ModelId, location: String, search: bool| {
-        let provider = model.provider.as_ref().unwrap_or(if search {
-            &ModelProvider::OpenAi
+    provider: ModelProvider,
+    env_prefix: &str,
+    default_base_url: &str,
+    env_base_url: Option<String>,
+) -> Result<(Option<String>, String, bool), crate::error::LlmError> {
+    let env_enabled = super::env_bool(&format!("{env_prefix}_ENABLED"), true)?;
+    if let Some(configured) = agent.provider_config(&provider) {
+        let uses_legacy_slot = configured.api_key_env == format!("{env_prefix}_API_KEY");
+        let enabled = configured.enabled && (!uses_legacy_slot || env_enabled);
+        let api_key = if enabled {
+            env_optional(&configured.api_key_env)
         } else {
-            &default_provider
-        });
-        if disabled.contains(&provider.as_str()) {
-            invalid.push(format!(
-                "{location}: provider `{}` is disabled",
-                provider.as_str()
-            ));
-        }
-    };
-    for (name, route) in agent.configured_model_routes() {
-        for (index, model) in route.candidates().iter().enumerate() {
-            check(model, format!("{name}.candidates[{index}]"), false);
-        }
+            None
+        };
+        // 若用户未修改默认地址且部署环境显式设置了旧 BASE_URL，保留旧部署兼容。
+        let base_url = if configured.base_url == default_base_url {
+            env_base_url.unwrap_or_else(|| configured.base_url.clone())
+        } else {
+            configured.base_url.clone()
+        };
+        return Ok((api_key, base_url, !enabled));
     }
-    if agent.stt().enabled {
-        for (index, model) in agent.stt().candidate_models().enumerate() {
-            check(model, format!("agent.stt.candidate[{index}]"), false);
-        }
+    if agent.managed_providers() {
+        return Ok((None, default_base_url.to_owned(), true));
     }
-    if let Some(document) = agent.document() {
-        for (name, route) in &document.tools.web_search.routes {
-            let location = format!("tools.web_search.routes.{name}");
-            check(
-                &ModelId::parse_config(&route.model, &location)?,
-                location,
-                true,
-            );
-        }
-    }
-    invalid.sort();
-    if invalid.is_empty() {
-        Ok(())
-    } else {
-        Err(crate::error::LlmError::config(invalid.join("; ")))
-    }
+    let api_key = builtin_api_key(env_prefix)?;
+    let base_url = env_base_url.unwrap_or_else(|| default_base_url.to_owned());
+    Ok((api_key, base_url, !env_enabled))
 }
 
 pub(super) fn llm_provider_configs(
@@ -89,12 +63,25 @@ pub(super) fn llm_provider_configs(
 ) -> (
     Vec<OpenAiCompatibleProviderConfig>,
     Vec<OpenAiResponsesProviderConfig>,
+    Vec<ModelProvider>,
 ) {
     let mut compatible = Vec::new();
     let mut responses = Vec::new();
+    let mut disabled = Vec::new();
     for provider in agent_config.provider_configs() {
-        // Agent 解析已拒绝所有停用项的路线引用，此处只装配启用连接。
-        if !provider.enabled {
+        let legacy_prefix = match provider.id {
+            ModelProvider::OpenAi => Some("OPENAI"),
+            ModelProvider::DeepSeek => Some("DEEPSEEK"),
+            ModelProvider::BigModel => Some("BIGMODEL"),
+            ModelProvider::Gemini => Some("GEMINI"),
+            ModelProvider::Custom(_) => None,
+        };
+        let legacy_enabled = legacy_prefix.is_none_or(|prefix| {
+            provider.api_key_env != format!("{prefix}_API_KEY")
+                || super::env_bool(&format!("{prefix}_ENABLED"), true).unwrap_or(true)
+        });
+        if !provider.enabled || !legacy_enabled {
+            disabled.push(provider.id);
             continue;
         }
         let auth = HttpAuthConfig {
@@ -102,11 +89,12 @@ pub(super) fn llm_provider_configs(
             scheme: provider.auth_scheme,
         };
         let api_key = env_optional(&provider.api_key_env);
+        let base_url = resolve_legacy_base_url_override(&provider.id, &provider.base_url);
         match provider.kind {
             AgentProviderKind::OpenAiCompatible => {
                 compatible.push(OpenAiCompatibleProviderConfig {
                     id: provider.id,
-                    base_url: provider.base_url,
+                    base_url,
                     api_key_env: provider.api_key_env,
                     api_key,
                     auth,
@@ -116,7 +104,7 @@ pub(super) fn llm_provider_configs(
             AgentProviderKind::OpenAiResponses => {
                 responses.push(OpenAiResponsesProviderConfig {
                     id: provider.id,
-                    base_url: provider.base_url,
+                    base_url,
                     api_key_env: provider.api_key_env,
                     api_key,
                     auth,
@@ -126,5 +114,32 @@ pub(super) fn llm_provider_configs(
             }
         }
     }
-    (compatible, responses)
+    (compatible, responses, disabled)
+}
+
+fn resolve_legacy_base_url_override(provider: &ModelProvider, configured: &str) -> String {
+    let (default_url, env_override) = match provider {
+        ModelProvider::OpenAi => (
+            "https://api.openai.com/v1",
+            super::openai_base_url_from_env(),
+        ),
+        ModelProvider::DeepSeek => (
+            super::DEFAULT_DEEPSEEK_BASE_URL,
+            env_optional("DEEPSEEK_BASE_URL"),
+        ),
+        ModelProvider::BigModel => (
+            super::DEFAULT_BIGMODEL_BASE_URL,
+            env_optional("BIGMODEL_BASE_URL"),
+        ),
+        ModelProvider::Gemini => (
+            super::DEFAULT_GEMINI_BASE_URL,
+            env_optional("GEMINI_BASE_URL"),
+        ),
+        ModelProvider::Custom(_) => return configured.to_owned(),
+    };
+    if configured == default_url {
+        env_override.unwrap_or_else(|| configured.to_owned())
+    } else {
+        configured.to_owned()
+    }
 }

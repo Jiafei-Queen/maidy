@@ -351,7 +351,7 @@ pub(crate) fn outcome_to_stream(outcome: ChatOutcome) -> LlmStream {
 /// - `DeepSeek`：仅使用 DeepSeek 提供商。
 /// - `BigModel`：仅使用智谱 BigModel 提供商。
 /// - `Gemini`：仅使用 Google Gemini 提供商。
-/// - `Auto`：根据模型候选链路由；单 OpenAI 主模型仍兼容原 OpenAI -> DeepSeek fallback。
+/// - `Auto`：严格按模型候选链路由，自动跳过已停用或未配置凭证的候选。
 pub fn build_provider(config: &LlmConfig) -> Result<DynLlmProvider, LlmError> {
     let plan = provider_build_plan(config)?;
 
@@ -397,33 +397,29 @@ pub fn build_provider(config: &LlmConfig) -> Result<DynLlmProvider, LlmError> {
             let provider_routes = plan.provider_routes;
             let mut providers: Vec<(ModelProvider, DynLlmProvider)> = Vec::new();
             for provider_kind in plan.provider_kinds {
-                match provider_kind {
-                    ModelProvider::OpenAi => providers.push((
-                        ModelProvider::OpenAi,
-                        Arc::new(openai::OpenAiProvider::new(config)?),
-                    )),
-                    ModelProvider::DeepSeek => providers.push((
-                        ModelProvider::DeepSeek,
-                        Arc::new(deepseek::DeepSeekProvider::new(config)?),
-                    )),
-                    ModelProvider::BigModel => providers.push((
-                        ModelProvider::BigModel,
-                        Arc::new(bigmodel::BigModelProvider::new(config)?),
-                    )),
-                    ModelProvider::Gemini => providers.push((
-                        ModelProvider::Gemini,
-                        Arc::new(gemini::GeminiProvider::new(config)?),
-                    )),
-                    ModelProvider::Custom(_) => {
-                        let default_model =
-                            first_model_for_provider(&provider_routes, &provider_kind)
-                                .unwrap_or_else(|| provider_kind.as_str().to_owned());
-                        let provider: DynLlmProvider = if let Some(provider_config) = config
-                            .openai_responses_providers
-                            .iter()
-                            .find(|entry| entry.id == provider_kind)
+                let default_model = first_model_for_provider(&provider_routes, &provider_kind)
+                    .unwrap_or_else(|| provider_kind.as_str().to_owned());
+                let configured_responses = config
+                    .openai_responses_providers
+                    .iter()
+                    .find(|entry| entry.id == provider_kind);
+                let configured_compatible = config
+                    .openai_compatible_providers
+                    .iter()
+                    .find(|entry| entry.id == provider_kind);
+
+                let provider: DynLlmProvider = if let Some(provider_config) = configured_responses {
+                    match provider_kind {
+                        // OpenAI 在默认 Bearer 认证且无自定义超时时沿用 OpenAiProvider，
+                        // 保留多 Base URL 轮询与原生图片生成支持。
+                        ModelProvider::OpenAi
+                            if provider_config.auth == Default::default()
+                                && provider_config.request_timeout_seconds.is_none() =>
                         {
-                            Arc::new(openai::ConfiguredResponsesProvider::new(
+                            Arc::new(openai::OpenAiProvider::new(config)?)
+                        }
+                        ModelProvider::DeepSeek => {
+                            Arc::new(deepseek::DeepSeekProvider::from_configured(
                                 provider_config,
                                 default_model,
                                 config.stream,
@@ -431,28 +427,44 @@ pub fn build_provider(config: &LlmConfig) -> Result<DynLlmProvider, LlmError> {
                                 config.media_max_bytes,
                                 config.max_output_tokens,
                             )?)
-                        } else if let Some(provider_config) = config
-                            .openai_compatible_providers
-                            .iter()
-                            .find(|entry| entry.id == provider_kind)
-                        {
-                            Arc::new(openai_compatible::OpenAiCompatibleProvider::new(
-                                provider_config,
-                                default_model,
-                                config.stream,
-                                config.request_timeout_seconds,
-                                config.media_max_bytes,
-                                config.max_output_tokens,
-                            )?)
-                        } else {
+                        }
+                        _ => Arc::new(openai::ConfiguredResponsesProvider::new(
+                            provider_config,
+                            default_model,
+                            config.stream,
+                            config.request_timeout_seconds,
+                            config.media_max_bytes,
+                            config.max_output_tokens,
+                        )?),
+                    }
+                } else if let Some(provider_config) = configured_compatible {
+                    Arc::new(openai_compatible::OpenAiCompatibleProvider::new(
+                        provider_config,
+                        default_model,
+                        config.stream,
+                        config.request_timeout_seconds,
+                        config.media_max_bytes,
+                        config.max_output_tokens,
+                    )?)
+                } else {
+                    match provider_kind {
+                        ModelProvider::OpenAi => Arc::new(openai::OpenAiProvider::new(config)?),
+                        ModelProvider::DeepSeek => {
+                            Arc::new(deepseek::DeepSeekProvider::new(config)?)
+                        }
+                        ModelProvider::BigModel => {
+                            Arc::new(bigmodel::BigModelProvider::new(config)?)
+                        }
+                        ModelProvider::Gemini => Arc::new(gemini::GeminiProvider::new(config)?),
+                        ModelProvider::Custom(_) => {
                             return Err(LlmError::config(format!(
                                 "provider `{}` is referenced by model routes but not configured",
                                 provider_kind.as_str()
                             )));
-                        };
-                        providers.push((provider_kind.clone(), provider));
+                        }
                     }
-                }
+                };
+                providers.push((provider_kind, provider));
             }
 
             Ok(Arc::new(ModelRouteProvider::new(
