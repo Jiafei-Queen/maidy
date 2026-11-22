@@ -17,7 +17,7 @@
 * 新增模型可调用的 `send_voice` 工具：模型可把一段口语化文本合成独立语音消息，最终文字回复仍按正常流程发送；私聊和群聊示例白名单默认包含该工具，群聊仍受完整 Tool Loop 开关约束。QQ 官方使用 `msg_type=7`，OneBot 11 使用 `record` segment；字节音频通过 `base64://` 发送。
 * 新增 OneBot 11 私聊连续消息聚合：停止输入 2 秒后把同一用户的多条纯文本合并为一个逻辑回合；命令、pending、媒体和引用消息仍立即处理，群聊不聚合。
 * 新增 `send_message` 拟人发送延迟：首条消息前在可配置区间内随机等待，多条之间保留可配置间隔；OneBot 私聊延迟期间通过 NapCat `set_input_status` 显示“正在输入”。延迟受工具剩余预算裁剪，不会为了拟人而丢消息。
-* `send_voice` 复用同一延迟区间，仅私聊生效；停顿目标是 `配置延迟 + 估算语音时长`（约 4.5 字/秒，不封顶），Gateway 再扣除真实 TTS 合成耗时，不会叠加成双倍等待。
+* `send_voice` 复用同一延迟区间，仅私聊生效；停顿目标是 `配置延迟 + 估算语音时长`（约 4.5 字/秒），Gateway 再扣除真实 TTS 合成耗时。超过 QQ 单条语音约 60 秒上限的文本会在合成前直接失败，不会生成无法播放的语音。
 * 新增 `chat.send.*`、`chat.aggregation.*` 与 `platform.onebot11.agent_typing_enabled` 配置中心字段，可在 Web Console“回复与语音 → 消息节奏”修改并持久化到 `runtime.toml`。
 
 ### Changed
