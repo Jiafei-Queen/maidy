@@ -116,7 +116,7 @@ notepad "$HOME\qq-maid-bot\config\.env"
 
 服务器部署推荐使用 GHCR 镜像与 Docker Compose。运行镜像不包含 Rust 或 Node.js，默认不映射管理端口，并以非 root 用户运行。首次启动、持久化目录、按 digest 升级回滚、多实例和测试环境自动部署见 [Docker 与 Compose 部署](./docs/deployment/docker.md)；配置迁移、备份恢复与 schema 回滚边界见 [配置迁移、备份恢复与安全升级](./docs/deployment/migration-backup.md)。
 
-> 本仓库目前未开启容器镜像自动发布，在应用修改稳定后才会开启 GHCR 发布流水线。感谢您对小女仆的耐心等待。
+> 本仓库已开启 GHCR 容器镜像自动发布：`main` 分支构建并推送 `sha-<完整commit>` 多架构镜像；发布 `vX.Y.Z` 标签后会追加 `vX.Y.Z`、`X.Y`、`X`、`latest` 标签。镜像地址为 `ghcr.io/jiafei-queen/maidy`。
 
 ### 从源码运行
 

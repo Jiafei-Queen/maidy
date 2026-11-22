@@ -74,8 +74,8 @@ sudo chown -R 10001:10001 runtime/config runtime/data runtime/media
 QQ_MAID_IMAGE=ghcr.io/jiafei-queen/maidy:latest
 ```
 
-> 本仓库默认不发布镜像；开启 `CONTAINER_PUBLISH_ENABLED` 并成功运行一次 main
-> Container workflow 后，才会有 `latest` 和版本标签。想固定某个版本，就去
+> 仓库已开启 GHCR 自动发布：`main` 分支会推送 `main` 和 `sha-<完整commit>` 镜像，
+> 成功发布正式 `vX.Y.Z` 版本后才会出现 `latest` 与版本号标签。想固定版本，就去
 > [Releases 页面](https://github.com/Jiafei-Queen/maidy/releases) 抄一个版本号，
 > 把 `latest` 换成它，例如 `:v0.24.1`。
 
