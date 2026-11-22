@@ -118,7 +118,7 @@ export const FIELD_SECTIONS: ReadonlyArray<{
     business: "replies-voice",
     label: "消息节奏",
     prefix: "chat.",
-    description: "控制连续消息合并与 send_message 的拟人发送延迟；保存后需要重启。",
+    description: "控制连续消息合并与 send_message / send_voice 的拟人发送延迟；保存后需要重启。",
   },
   {
     business: "replies-voice",

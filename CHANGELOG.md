@@ -17,6 +17,7 @@
 * 新增模型可调用的 `send_voice` 工具：模型可把一段口语化文本合成独立语音消息，最终文字回复仍按正常流程发送；私聊和群聊示例白名单默认包含该工具，群聊仍受完整 Tool Loop 开关约束。QQ 官方使用 `msg_type=7`，OneBot 11 使用 `record` segment；字节音频通过 `base64://` 发送。
 * 新增 OneBot 11 私聊连续消息聚合：停止输入 2 秒后把同一用户的多条纯文本合并为一个逻辑回合；命令、pending、媒体和引用消息仍立即处理，群聊不聚合。
 * 新增 `send_message` 拟人发送延迟：首条消息前在可配置区间内随机等待，多条之间保留可配置间隔；OneBot 私聊延迟期间通过 NapCat `set_input_status` 显示“正在输入”。延迟受工具剩余预算裁剪，不会为了拟人而丢消息。
+* `send_voice` 复用同一延迟区间，仅私聊生效；停顿目标是包含 TTS 合成耗时的总停顿，合成慢时只补齐剩余差值，不会叠加成双倍等待。
 * 新增 `chat.send.*`、`chat.aggregation.*` 与 `platform.onebot11.agent_typing_enabled` 配置中心字段，可在 Web Console“回复与语音 → 消息节奏”修改并持久化到 `runtime.toml`。
 
 ### Changed
@@ -38,7 +39,7 @@
 * 自动测试使用本地 HTTP 替身，真实 Exa/Firecrawl 凭据、计费和结果质量仍需在部署环境验证。
 * OpenAI Speech TTS 复用 QQ 语音发送链路，`OPENAI_TTS_API_KEY` 缺失时语音工具不注册；TTS 试听只在部署管理员会话内调用已保存配置，不触发 QQ 上传或发送。
 * 消息聚合默认静默窗口改为 2000ms，`MESSAGE_AGGREGATION_MAX_WAIT_MS=0` 表示不设硬上限；需要旧行为时显式配置 `1200` / `3000`。
-* `send_message` 默认增加 1000–2000ms 首条延迟；不需要时设置 `CHAT_SEND_DELAY_MIN_MS=0` 与 `CHAT_SEND_DELAY_MAX_MS=0`。
+* `send_message` 默认增加 1000–2000ms 首条延迟；不需要时设置 `CHAT_SEND_DELAY_MIN_MS=0` 与 `CHAT_SEND_DELAY_MAX_MS=0`。`send_voice` 复用同一区间，只在私聊生效。
 * OneBot 11“正在输入”依赖 NapCat 扩展 `set_input_status`；适配器不支持时只记录 debug，消息发送不受影响。群聊聚合仍不支持。
 
 ## [v0.26.1] - 2026-10-23

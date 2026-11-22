@@ -50,7 +50,16 @@ OneBot 11 的聚合发生在 `OneBotScopeDispatcher` 之前，等待期间不占
 
 ## 延迟发送
 
-延迟发送只作用于模型主动调用 `send_message` 的场景，不影响命令回复、最终文本兜底、状态提示和 `send_voice`。
+延迟发送只作用于模型主动调用 `send_message` / `send_voice` 的场景，不影响命令回复、最终文本兜底和状态提示。
+
+`send_message` 和 `send_voice` 共用同一组 `CHAT_SEND_DELAY_MIN_MS` / `MAX_MS` 区间，但两者的调度方式不同：
+
+| 工具 | 生效范围 | 延迟语义 |
+| --- | --- | --- |
+| `send_message` | 私聊 + 群聊 | 首条消息发送前等待；多条之间保留 `CHAT_SEND_GAP_MS` |
+| `send_voice` | 仅私聊 | 整段停顿目标，包含 TTS 合成耗时 |
+
+语音只在私聊生效：群聊没有“正在输入”配合，单纯等待只会让语音无故变慢。
 
 ### 配置
 
@@ -64,13 +73,24 @@ OneBot 11 的聚合发生在 `OneBotScopeDispatcher` 之前，等待期间不占
 
 ### 预算裁剪
 
-延迟在调用平台投递前执行，因此会消耗工具剩余预算。Core 至少保留 3 秒真实发送时间：
+延迟在调用平台投递前执行，因此会消耗工具剩余预算。不同工具的链路长度不同，安全边际也不同：
 
 ```text
-effective_delay = min(sampled_delay, remaining_budget - 3s)
+send_message: effective_delay = min(sampled_delay, remaining_budget - 3s)
+send_voice:   effective_delay = min(sampled_delay, remaining_budget - 8s)
 ```
 
-剩余预算不足 3 秒时直接放弃本次延迟，优先保证消息送达。工具超时、取消和真实发送结果语义保持不变。
+语音链路包含 TTS 合成、上传和发送，所以预留 8 秒；剩余预算不足对应边际时直接放弃本次延迟，优先保证消息送达。工具超时、取消和真实发送结果语义保持不变。
+
+### 语音停顿
+
+`send_voice` 的延迟是**总停顿目标**，不是额外等待：
+
+```text
+实际等待 = max(0, target_delay - TTS 合成耗时)
+```
+
+TTS 本身通常要 1–3 秒，如果把配置延迟直接叠加在合成之后，用户会明显感到拖沓。所以合成慢时不再补等，合成快时才补齐差值，用户感知的总停顿稳定在配置区间内。
 
 ### 正在输入
 
@@ -82,9 +102,11 @@ effective_delay = min(sampled_delay, remaining_budget - 3s)
 ```
 
 - 只对私聊调用；群聊没有该状态。
-- 调用失败只记 debug，不影响消息发送。
+- 只在确实存在停顿时发送：`target_delay` 缺失或为 0 时不会额外触发 typing。
+- 调用失败只记 debug，不影响消息发送；typing 是独立的 best-effort 任务，适配器响应慢也不会拉长延迟。
 - 不主动清除输入状态，等 QQ 客户端自然超时，避免误发“正在说话”状态。
 - 由 `ONEBOT11_AGENT_TYPING_ENABLED` 控制，默认开启。
+- `send_voice` 复用同一套 typing：OneBot 私聊在合成和等待期间显示输入状态，QQ 官方由回合级 typing guard 覆盖，不重复发送。
 
 ## 配置中心
 
@@ -101,3 +123,4 @@ Web Console 的“回复与语音 → 消息节奏”分节可以直接修改。
 - 聚合和延迟只改变时序，不改变去重、会话作用域、Tool 成功判定和发送结果。
 - 不在 Gateway 中复制 Core 的命令或 pending 关键词规则。
 - 日志只记录脱敏 scope、批次大小、等待时长、封口原因和错误分类，不记录聊天正文或完整平台 ID。
+- `send_voice` 的延迟只决定发送前等待，TTS 失败仍返回真实错误，不会因为等待而被吞掉或改写成成功。
